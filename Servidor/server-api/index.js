@@ -889,11 +889,10 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     }
   }
 
-  // Espelhamento genérico: remover do banco todo registro cujo arquivo não existe mais no disco.
-  const { data: rowsToMirrorDelete } = await supabase
-    .from("fiscal_documents")
-    .select("id, file_path")
-    .not("file_path", "is", null);
+  // Espelhamento: remove do banco os registros cujo arquivo não existe mais na pasta (apagar na VM = some do dashboard).
+  let qDelete = supabase.from("fiscal_documents").select("id, file_path").not("file_path", "is", null);
+  if (officeId) qDelete = qDelete.eq("office_id", officeId);
+  const { data: rowsToMirrorDelete } = await qDelete;
   const idsToDelete = (rowsToMirrorDelete || [])
     .filter((r) => !allPathsOnDisk.has(r.file_path))
     .map((r) => r.id);
@@ -1068,8 +1067,11 @@ function startFiscalWatcher() {
       }, DEBOUNCE_MS);
     });
     console.log("[fiscal-watcher] Monitorando a pasta base da VM — novos XML/PDF serão sincronizados automaticamente.");
-    // Sync inicial ao subir: garante que arquivos já existentes entrem no banco
+    // Sync inicial ao subir
     setTimeout(() => { runSync(); }, 2000);
+    // Sync periódico: no Windows o fs.watch às vezes não dispara ao apagar arquivos; a cada 1 min o espelho é refeito
+    const intervalMs = Number(process.env.FISCAL_SYNC_INTERVAL_MS || 60_000);
+    setInterval(runSync, intervalMs);
   } catch (err) {
     console.error("[fiscal-watcher] Não foi possível monitorar a pasta base da VM:", err.message);
   }
