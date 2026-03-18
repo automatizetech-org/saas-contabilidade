@@ -65,7 +65,7 @@ export async function getProfilesForAdmin(): Promise<AdminUser[]> {
 
 export async function updateProfile(
   id: string,
-  updates: { username?: string; role?: string }
+  updates: { username?: string }
 ) {
   const { data, error } = await supabase.from("profiles").update(updates).eq("id", id).select().single()
   if (error) throw error

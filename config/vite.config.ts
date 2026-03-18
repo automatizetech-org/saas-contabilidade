@@ -49,6 +49,19 @@ export default defineConfig(({ mode }) => {
   const SERVER_API_URL = isDev ? (envFromFile.SERVER_API_URL ?? process.env.SERVER_API_URL ?? "") : (process.env.SERVER_API_URL ?? envFromFile.SERVER_API_URL ?? "");
   const WHATSAPP_API = isDev ? (envFromFile.WHATSAPP_API ?? process.env.WHATSAPP_API ?? "") : (process.env.WHATSAPP_API ?? envFromFile.WHATSAPP_API ?? "");
 
+  if (!isDev) {
+    const missingVars = [
+      !SUPABASE_URL ? "SUPABASE_URL" : null,
+      !SUPABASE_ANON_KEY ? "SUPABASE_ANON_KEY" : null,
+    ].filter(Boolean);
+
+    if (missingVars.length > 0) {
+      throw new Error(
+        `Build de produção bloqueado. Defina no ambiente: ${missingVars.join(", ")}.`
+      );
+    }
+  }
+
   return {
   root: projectRoot,
   envPrefix: "VITE_",

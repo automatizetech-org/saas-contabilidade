@@ -4,22 +4,22 @@ project_id = "jvnywwbqsuhwmbhqjfrz"
 verify_jwt = false
 
 [functions.create-user]
-verify_jwt = true
+verify_jwt = false
 
 [functions.update-user]
-verify_jwt = true
+verify_jwt = false
 
 [functions.get-users-admin]
-verify_jwt = true
+verify_jwt = false
 
 [functions.delete-user]
-verify_jwt = true
+verify_jwt = false
 
 [functions.primeiro-escritorio]
-verify_jwt = true
+verify_jwt = false
 
 [functions.office-server]
-verify_jwt = true
+verify_jwt = false
 
 [functions.btg-create-ir-charge]
 verify_jwt = true
