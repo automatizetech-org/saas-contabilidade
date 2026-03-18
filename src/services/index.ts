@@ -1,0 +1,6 @@
+export { supabase } from "./supabaseClient"
+export { getProfile, getProfilesForAdmin, updateProfile } from "./profilesService"
+export type { Profile, Company } from "./profilesService"
+export { getCompaniesForUser, createCompany } from "./companiesService"
+export { getDashboardCounts, getRecentFiscalDocuments } from "./dashboardService"
+export { getSelectedCompanyIds, setSelectedCompanyIds } from "./selectedCompaniesStorage"

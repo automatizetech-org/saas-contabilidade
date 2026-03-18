@@ -1,0 +1,76 @@
+# === Playwright (navegadores) ===============================================
+# ignora a pasta pesada com o Chromium do Playwright
+/**/Chrome/
+/**/chrome_cdp_profile/
+
+# (fallback para quem escreveu sem hífen)
+# remova se não usar esse nome
+/msplaywrite/
+/**/_internal/
+
+# Perfil local opcional do Playwright (cookies/sessão)
+.pw-profile/
+
+# Relatórios/artefatos do Playwright
+playwright-report/
+blob-report/
+test-results/
+trace.zip
+
+# === Python / Build ==========================================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# builds/empacotamento
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# PyInstaller
+*.spec
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+.venv*/
+venv*/
+
+# Executaveis: ignore todos, exceto o binario do proxy
+*.exe
+!data/proxy/mitmdump.exe
+!data/proxy/mitmproxy-ca-cert.cer
+!data/proxy/mitmproxy.exe
+!data/proxy/mitmweb.exe
+
+
+.zip
+.tar
+
+# Dependências/gerenciadores (se usar)
+.poetry/
+.pdm-build/
+
+# === Ferramentas / Cache =====================================================
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.tox/
+.cache/
+!arquivos.zip
+# === Config/Segredos =========================================================
+.env
+.env.*
+
+# === SO / Editor =============================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+logs/

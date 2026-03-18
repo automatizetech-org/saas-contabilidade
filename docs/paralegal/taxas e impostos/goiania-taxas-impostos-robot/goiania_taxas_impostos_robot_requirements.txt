@@ -1,0 +1,5 @@
+PySide6==6.9.1
+python-dotenv==1.1.1
+playwright==1.55.0
+supabase==2.18.1
+requests==2.32.3

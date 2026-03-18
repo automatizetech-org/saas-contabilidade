@@ -1,0 +1,16 @@
+project_id = "jvnywwbqsuhwmbhqjfrz"
+
+[functions.create-user]
+verify_jwt = false
+
+[functions.update-user]
+verify_jwt = false
+
+[functions.get-users-admin]
+verify_jwt = false
+
+[functions.btg-create-ir-charge]
+verify_jwt = true
+
+[functions.btg-ir-webhook]
+verify_jwt = false

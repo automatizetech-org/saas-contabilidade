@@ -1,0 +1,20 @@
+[
+  {
+    "name": "prime",
+    "subject": "CN=PRIMEON HUB DE NEGOCIOS LTDA:27233655000166, OU=videoconferencia, OU=37743132000113, OU=RFB e-CNPJ A1, OU=Secretaria da Receita Federal do Brasil - RFB, L=JARAGUA, S=GO, O=ICP-Brasil, C=BR",
+    "issuer": "CN=AC SAFEWEB RFB v5, OU=Secretaria da Receita Federal do Brasil - RFB, O=ICP-Brasil, C=BR",
+    "thumbprint": "880DF49B1014A90DBA4F45D8FF5F7D037A8A056A"
+  },
+  {
+    "name": "matheus",
+    "subject": "CN=Matheus Costa Ribeiro:05237015190, OU=AC SyngularID Multipla, OU=41367161000103, OU=Videoconferencia, OU=Certificado Digital PF A1, O=ICP-Brasil, C=BR",
+    "issuer": "CN=AC SyngularID Multipla, O=ICP-Brasil, OU=AC SyngularID, C=BR",
+    "thumbprint": "D4653EFD01E7B0150A349AF1EFA0A2305441D18F"
+  },
+  {
+    "name": "vegyo",
+    "subject": "CN=VEGYO CONTABILIDADE LTDA:49602472000103, OU=videoconferencia, OU=RFB e-CNPJ A1, OU=Secretaria da Receita Federal do Brasil - RFB, OU=34189547000107, L=BELO HORIZONTE, S=MG, O=ICP-Brasil, C=BR",
+    "issuer": "CN=AC CONSULTI BRASIL RFB, OU=Secretaria da Receita Federal do Brasil - RFB, O=ICP-Brasil, C=BR",
+    "thumbprint": "9C82E3CB9B44C49B1E5C30361D5599283910BB7E"
+  }
+]

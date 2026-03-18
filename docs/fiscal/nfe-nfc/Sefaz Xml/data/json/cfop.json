@@ -1,0 +1,3735 @@
+{
+  "cfops": {
+    "1101": {
+      "classe": "despesa",
+      "desc": "Compra para industrialização ou produção rural.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1102": {
+      "classe": "outro",
+      "desc": "Compra para comercialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1111": {
+      "classe": "outro",
+      "desc": "Compra para industrialização de mercadoria recebida anteriormente em consignação industrial.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1113": {
+      "classe": "outro",
+      "desc": "Compra para comercialização, de mercadoria recebida anteriormente em consignação mercantil.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1116": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural originada de encomenda para recebimento futuro.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1117": {
+      "classe": "outro",
+      "desc": "Compra para comercialização originada de encomenda para recebimento futuro.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1118": {
+      "classe": "outro",
+      "desc": "Compra de mercadoria para comercialização pelo adquirente originário, entregue pelo vendedor remetente ao destinatário, em venda à ordem.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1120": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural, em venda à ordem, já recebida do vendedor remetente.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1121": {
+      "classe": "outro",
+      "desc": "Compra para comercialização, em venda à ordem, já recebida do vendedor remetente.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1122": {
+      "classe": "outro",
+      "desc": "Compra para industrialização em que a mercadoria foi remetida pelo fornecedor ao industrializador sem transitar pelo estabelecimento adquirente.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1124": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada por outra empresa.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1125": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada por outra empresa quando a mercadoria remetida para utilização no processo de industrialização não transitou pelo estabelecimento adquirente da mercadoria.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1126": {
+      "classe": "despesa",
+      "desc": "Compra para utilização na prestação de serviço sujeita ao ICMS.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1128": {
+      "classe": "outro",
+      "desc": "Compra para utilização na prestação de serviço sujeita ao ISSQN.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1131": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1132": {
+      "classe": "outro",
+      "desc": "Fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para comercialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1135": {
+      "classe": "outro",
+      "desc": "Fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para industrialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1151": {
+      "classe": "outro",
+      "desc": "Transferência para industrialização ou produção rural.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1152": {
+      "classe": "outro",
+      "desc": "Transferência para comercialização.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1153": {
+      "classe": "outro",
+      "desc": "Transferência de energia elétrica para distribuição.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1154": {
+      "classe": "outro",
+      "desc": "Transferência para utilização na prestação de serviço.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1159": {
+      "classe": "outro",
+      "desc": "Entrada decorrente do fornecimento de produto ou mercadoria em ato cooperativo.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1201": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1202": {
+      "classe": "despesa",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros, ou qualquer devolução de mercadoria efetuada pelo MEI com exceção das classificadas nos códigos 1.503, 1.504, 1.505 e 1.506.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1203": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1204": {
+      "classe": "outro",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1205": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à prestação de serviço de comunicação.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1206": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à prestação de serviço de transporte.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1207": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à venda de energia elétrica.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1208": {
+      "classe": "outro",
+      "desc": "Devolução de produção do estabelecimento, remetida em transferência.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1209": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria adquirida ou recebida de terceiros, remetida em transferência.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1212": {
+      "classe": "outro",
+      "desc": "Devolução de venda no mercado interno de mercadoria industrializada e insumo importado sob o Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped).",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1213": {
+      "classe": "outro",
+      "desc": "Devolução de remessa de produção do estabelecimento, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1214": {
+      "classe": "outro",
+      "desc": "Devolução referente à fixação de preço de produção do estabelecimento produtor em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1215": {
+      "classe": "outro",
+      "desc": "Devolução de fornecimento de produção do estabelecimento em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1216": {
+      "classe": "outro",
+      "desc": "Devolução de fornecimento de mercadoria adquirida ou recebida de terceiros em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "1251": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica para distribuição ou comercialização.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1252": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento industrial.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1253": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento comercial.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1254": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento prestador de serviço de transporte.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1255": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento prestador de serviço de comunicação. - Classificam-se neste código as compras de energia elétrica utilizada por estabelecimento prestador de serviços de comunicação.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1256": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento de produtor rural.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1257": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica para consumo por demanda contratada.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "1301": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação para execução de serviço da mesma natureza.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "1302": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento industrial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "1303": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento comercial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "1304": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento de prestador de serviço de transporte.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "1305": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "1306": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento de produtor rural.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "1351": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte para execução de serviço da mesma natureza.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1352": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento industrial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1353": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento comercial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1354": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de prestador de serviço de comunicação.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1355": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1356": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de produtor rural.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1360": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por contribuinte substituto em relação ao serviço de transporte.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "1401": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1403": {
+      "classe": "outro",
+      "desc": "Compra para comercialização em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1406": {
+      "classe": "outro",
+      "desc": "Compra de bem para o ativo imobilizado cuja mercadoria está sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1407": {
+      "classe": "outro",
+      "desc": "Compra de mercadoria para uso ou consumo cuja mercadoria está sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1408": {
+      "classe": "outro",
+      "desc": "Transferência para industrialização ou produção rural em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1409": {
+      "classe": "outro",
+      "desc": "Transferência para comercialização em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1410": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1411": {
+      "classe": "despesa",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1414": {
+      "classe": "outro",
+      "desc": "Retorno de produção do estabelecimento, remetida para venda fora do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1415": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria adquirida ou recebida de terceiros, remetida para venda fora do estabelecimento em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "1451": {
+      "classe": "outro",
+      "desc": "Entrada de animal - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "1452": {
+      "classe": "outro",
+      "desc": "Entrada de insumo - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "1453": {
+      "classe": "outro",
+      "desc": "Retorno do animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "1454": {
+      "classe": "outro",
+      "desc": "Retorno simbólico do animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "1455": {
+      "classe": "outro",
+      "desc": "Retorno de insumo não utilizado na produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "1456": {
+      "classe": "outro",
+      "desc": "Entrada referente à remuneração do produtor no Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "1501": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida com fim específico de exportação.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "1503": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução de produto remetido com fim específico de exportação, de produção do estabelecimento.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "1504": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução, inclusive simbólica, de mercadoria remetida com fim específico de exportação, adquirida ou recebida de terceiros.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "1505": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução, inclusive simbólica, de mercadorias remetidas para formação de lote de exportação, de produtos industrializados ou produzidos pelo próprio estabelecimento.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "1506": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução, inclusive simbólica, de mercadorias adquiridas ou recebidas de terceiros, remetidas para formação de lote de exportação.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "1551": {
+      "classe": "outro",
+      "desc": "Compra de bem para o ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1552": {
+      "classe": "outro",
+      "desc": "Transferência de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1553": {
+      "classe": "outro",
+      "desc": "Devolução de venda de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1554": {
+      "classe": "outro",
+      "desc": "Retorno de bem do ativo imobilizado remetido para uso fora do estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1555": {
+      "classe": "outro",
+      "desc": "Entrada de bem do ativo imobilizado de terceiro, remetido para uso no estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1556": {
+      "classe": "despesa",
+      "desc": "Compra de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1557": {
+      "classe": "outro",
+      "desc": "Transferência de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "1601": {
+      "classe": "outro",
+      "desc": "Recebimento, por transferência, de crédito de ICMS.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Entrada"
+    },
+    "1602": {
+      "classe": "outro",
+      "desc": "Recebimento, por transferência, de saldo credor de ICMS de outro estabelecimento da mesma empresa, para compensação de saldo devedor de ICMS.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Entrada"
+    },
+    "1603": {
+      "classe": "outro",
+      "desc": "Ressarcimento de ICMS retido por substituição tributária.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Entrada"
+    },
+    "1604": {
+      "classe": "outro",
+      "desc": "Lançamento do crédito relativo à compra de bem para o ativo imobilizado.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Entrada"
+    },
+    "1605": {
+      "classe": "outro",
+      "desc": "Recebimento, por transferência, de saldo devedor de ICMS de outro estabelecimento da mesma empresa.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Entrada"
+    },
+    "1651": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes para industrialização subsequente.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1652": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes para comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1653": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes por consumidor ou usuário final.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1657": {
+      "classe": "outro",
+      "desc": "Retorno de remessa de combustíveis ou lubrificantes para venda fora do estabelecimento.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1658": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes para industrialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1659": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes para comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1660": {
+      "classe": "despesa",
+      "desc": "Devolução de venda de combustíveis ou lubrificantes destinados à industrialização subsequente.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1661": {
+      "classe": "despesa",
+      "desc": "Devolução de venda de combustíveis ou lubrificantes destinados à comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1662": {
+      "classe": "outro",
+      "desc": "Devolução de venda de combustíveis ou lubrificantes destinados a consumidor ou usuário final.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1663": {
+      "classe": "outro",
+      "desc": "Entrada de combustíveis ou lubrificantes para armazenagem.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1664": {
+      "classe": "outro",
+      "desc": "Retorno de combustíveis ou lubrificantes remetidos para armazenagem.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "1901": {
+      "classe": "outro",
+      "desc": "Entrada para industrialização por encomenda.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1902": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria remetida para industrialização por encomenda.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1903": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria remetida para industrialização e não aplicada no referido processo.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1904": {
+      "classe": "outro",
+      "desc": "Retorno de remessa para venda fora do estabelecimento, ou qualquer entrada e retorno de remessa efetuada pelo MEI com exceção dos classificados nos códigos 1.202, 1.503, 1.504, 1.505 e 1.506.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1905": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida para depósito em depósito fechado, armazém geral ou outro estabelecimentoda mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1906": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria remetida para depósito fechado, armazém geral ou outro estabelecimento, da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1907": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de mercadoria remetida para depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1908": {
+      "classe": "outro",
+      "desc": "Entrada de bem por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1909": {
+      "classe": "outro",
+      "desc": "Retorno de bem remetido por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1910": {
+      "classe": "outro",
+      "desc": "Entrada de bonificação, doação ou brinde.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1911": {
+      "classe": "outro",
+      "desc": "Entrada de amostra grátis.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1912": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria ou bem recebido para demonstração ou mostruário.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1913": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem remetido para demonstração, mostruário ou treinamento.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1914": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem remetido para exposição ou feira.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1915": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria ou bem recebido para conserto ou reparo.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1916": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem remetido para conserto ou reparo.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1917": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1918": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria remetida em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1919": {
+      "classe": "outro",
+      "desc": "Devolução simbólica de mercadoria vendida ou utilizada em processo industrial, remetida anteriormente em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1920": {
+      "classe": "outro",
+      "desc": "Entrada de embalagens, bombonas, vasilhames, sacarias, pallets ou assemelhados.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1921": {
+      "classe": "outro",
+      "desc": "Retorno de embalagens, bombonas, vasilhames, sacarias, pallets ou assemelhados.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1922": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de simples faturamento decorrente de compra para recebimento futuro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1923": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida do vendedor remetente, em venda à ordem.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1924": {
+      "classe": "outro",
+      "desc": "Entrada para industrialização por conta e ordem do adquirente da mercadoria, quando esta não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1925": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria remetida para industrialização por conta e ordem do adquirente da mercadoria, quando esta não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1926": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de reclassificação de mercadoria decorrente de formação de kit ou de sua desagregação.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1931": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado pelo tomador do serviço de transporte quando a responsabilidade de retenção do imposto for atribuída ao remetente ou alienante da mercadoria, pelo serviço de transporte realizado por transportador autônomo ou por transportador não inscrito na unidade da Federação onde iniciado o serviço.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1932": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte iniciado em unidade da Federação diversa daquela onde inscrito o prestador.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1933": {
+      "classe": "despesa",
+      "desc": "Aquisição de serviço sujeito ao ISSQN.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1934": {
+      "classe": "outro",
+      "desc": "Entrada simbólica de mercadoria recebida para depósito em depósito fechado ou armazém geral.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "1949": {
+      "classe": "outro",
+      "desc": "Outra entrada de mercadoria ou prestação de serviço não especificada.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2101": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2102": {
+      "classe": "outro",
+      "desc": "Compra para comercialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2111": {
+      "classe": "outro",
+      "desc": "Compra para industrialização de mercadoria recebida anteriormente em consignação industrial.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2113": {
+      "classe": "outro",
+      "desc": "Compra para comercialização, de mercadoria recebida anteriormente em consignação mercantil.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2116": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural originada de encomenda para recebimento futuro.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2117": {
+      "classe": "outro",
+      "desc": "Compra para comercialização originada de encomenda para recebimento futuro.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2118": {
+      "classe": "outro",
+      "desc": "Compra de mercadoria para comercialização pelo adquirente originário, entregue pelo vendedor remetente ao destinatário, em venda à ordem.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2120": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural, em venda à ordem, já recebida do vendedor remetente.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2121": {
+      "classe": "outro",
+      "desc": "Compra para comercialização, em venda à ordem, já recebida do vendedor remetente.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2122": {
+      "classe": "outro",
+      "desc": "Compra para industrialização em que a mercadoria foi remetida pelo fornecedor ao industrializador sem transitar pelo estabelecimento adquirente.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2124": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada por outra empresa.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2125": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada por outra empresa quando a mercadoria remetida para utilização no processo de industrialização não transitou pelo estabelecimento adquirente da mercadoria.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2126": {
+      "classe": "despesa",
+      "desc": "Compra para utilização na prestação de serviço sujeita ao ICMS.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2128": {
+      "classe": "outro",
+      "desc": "Compra para utilização na prestação de serviço sujeita ao ISSQN.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2131": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2132": {
+      "classe": "outro",
+      "desc": "Fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para comercialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2135": {
+      "classe": "outro",
+      "desc": "Fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para industrialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2151": {
+      "classe": "outro",
+      "desc": "Transferência para industrialização ou produção rural.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2152": {
+      "classe": "outro",
+      "desc": "Transferência para comercialização.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2153": {
+      "classe": "outro",
+      "desc": "Transferência de energia elétrica para distribuição.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2154": {
+      "classe": "outro",
+      "desc": "Transferência para utilização na prestação de serviço.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2159": {
+      "classe": "outro",
+      "desc": "Entrada decorrente do fornecimento de produto ou mercadoria em ato cooperativo.",
+      "grupo": "TRANSFERÊNCIAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2201": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2202": {
+      "classe": "outro",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros, ou qualquer devolução de mercadoria efetuada pelo MEI com exceção das classificadas nos códigos 2.503, 2.504, 2.505 e 2.506.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2203": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2204": {
+      "classe": "outro",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2205": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à prestação de serviço de comunicação.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2206": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à prestação de serviço de transporte.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2207": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à venda de energia elétrica.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2208": {
+      "classe": "outro",
+      "desc": "Devolução de produção do estabelecimento, remetida em transferência.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2209": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria adquirida ou recebida de terceiros, remetida em transferência.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2212": {
+      "classe": "outro",
+      "desc": "Devolução de venda no mercado interno de mercadoria industrializada e insumo importado sob o Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped).",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2213": {
+      "classe": "outro",
+      "desc": "Devolução de remessa de produção do estabelecimento, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2214": {
+      "classe": "outro",
+      "desc": "Devolução referente à fixação de preço de produção do estabelecimento produtor, em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2215": {
+      "classe": "outro",
+      "desc": "Devolução de fornecimento de produção do estabelecimento em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2216": {
+      "classe": "outro",
+      "desc": "Devolução de fornecimento de mercadoria adquirida ou recebida de terceiros em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "2251": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica para distribuição ou comercialização.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2252": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento industrial.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2253": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento comercial.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2254": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento prestador de serviço de transporte.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2255": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento prestador de serviço de comunicação.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2256": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica por estabelecimento de produtor rural.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2257": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica para consumo por demanda contratada.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "2301": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação para execução de serviço da mesma natureza.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "2302": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento industrial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "2303": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento comercial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "2304": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento de prestador de serviço de transporte.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "2305": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "2306": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação por estabelecimento de produtor rural.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "2351": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte para execução de serviço da mesma natureza.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "2352": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento industrial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "2353": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento comercial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "2354": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de prestador de serviço de comunicação.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "2355": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "2356": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de produtor rural.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "2401": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2403": {
+      "classe": "outro",
+      "desc": "Compra para comercialização em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2406": {
+      "classe": "outro",
+      "desc": "Compra de bem para o ativo imobilizado cuja mercadoria está sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2407": {
+      "classe": "outro",
+      "desc": "Compra de mercadoria para uso ou consumo cuja mercadoria está sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2408": {
+      "classe": "outro",
+      "desc": "Transferência para industrialização ou produção rural em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2409": {
+      "classe": "outro",
+      "desc": "Transferência para comercialização em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2410": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2411": {
+      "classe": "outro",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2414": {
+      "classe": "outro",
+      "desc": "Retorno de produção do estabelecimento, remetida para venda fora do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2415": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria adquirida ou recebida de terceiros, remetida para venda fora do estabelecimento em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "ENTRADAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Entrada"
+    },
+    "2451": {
+      "classe": "outro",
+      "desc": "Entrada de animal - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "2452": {
+      "classe": "outro",
+      "desc": "Entrada de insumo - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "2453": {
+      "classe": "outro",
+      "desc": "Retorno do animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "2454": {
+      "classe": "outro",
+      "desc": "Retorno simbólico do animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "2455": {
+      "classe": "outro",
+      "desc": "Retorno de insumo não utilizado na produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "2456": {
+      "classe": "outro",
+      "desc": "Entrada referente à remuneração do produtor no Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Entrada"
+    },
+    "2501": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida com fim específico de exportação.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "2503": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução de produto remetido com fim específico de exportação, de produção do estabelecimento.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "2504": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução, inclusive simbólica, de mercadoria remetida com fim específico de exportação, adquirida ou recebida de terceiros.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "2505": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução, inclusive simbólica, de mercadorias remetidas para formação de lote de exportação, de produtos industrializados ou produzidos pelo próprio estabelecimento.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "2506": {
+      "classe": "outro",
+      "desc": "Entrada decorrente de devolução, inclusive simbólica, de mercadorias adquiridas ou recebidas de terceiros, remetidas para formação de lote de exportação.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "2551": {
+      "classe": "outro",
+      "desc": "Compra de bem para o ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2552": {
+      "classe": "outro",
+      "desc": "Transferência de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2553": {
+      "classe": "outro",
+      "desc": "Devolução de venda de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2554": {
+      "classe": "outro",
+      "desc": "Retorno de bem do ativo imobilizado remetido para uso fora do estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2555": {
+      "classe": "outro",
+      "desc": "Entrada de bem do ativo imobilizado de terceiro, remetido para uso no estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2556": {
+      "classe": "outro",
+      "desc": "Compra de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2557": {
+      "classe": "outro",
+      "desc": "Transferência de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "2603": {
+      "classe": "outro",
+      "desc": "Ressarcimento de ICMS retido por substituição tributária.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Entrada"
+    },
+    "2651": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes para industrialização subsequente.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2652": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes para comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2653": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes por consumidor ou usuário final.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2657": {
+      "classe": "outro",
+      "desc": "Retorno de remessa de combustíveis ou lubrificantes para venda fora do estabelecimento.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2658": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes para industrialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2659": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes para comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2660": {
+      "classe": "outro",
+      "desc": "Devolução de venda de combustíveis ou lubrificantes destinados à industrialização subsequente.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2661": {
+      "classe": "outro",
+      "desc": "Devolução de venda de combustíveis ou lubrificantes destinados à comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2662": {
+      "classe": "outro",
+      "desc": "Devolução de venda de combustíveis ou lubrificantes destinados a consumidor ou usuário final.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2663": {
+      "classe": "outro",
+      "desc": "Entrada de combustíveis ou lubrificantes para armazenagem.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2664": {
+      "classe": "outro",
+      "desc": "Retorno de combustíveis ou lubrificantes remetidos para armazenagem.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "2901": {
+      "classe": "outro",
+      "desc": "Entrada para industrialização por encomenda.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2902": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria remetida para industrialização por encomenda.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2903": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria remetida para industrialização e não aplicada no referido processo.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2904": {
+      "classe": "outro",
+      "desc": "Retorno de remessa para venda fora do estabelecimento, ou qualquer entrada e retorno de remessa efetuada pelo MEI com exceção dos classificados nos códigos 2.202, 2.503, 2.504, 2.505 e 2.506.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2905": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida para depósito em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2906": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria remetida para depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2907": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de mercadoria remetida para depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2908": {
+      "classe": "outro",
+      "desc": "Entrada de bem por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2909": {
+      "classe": "outro",
+      "desc": "Retorno de bem remetido por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2910": {
+      "classe": "outro",
+      "desc": "Entrada de bonificação, doação ou brinde.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2911": {
+      "classe": "outro",
+      "desc": "Entrada de amostra grátis.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2912": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria ou bem recebido para demonstração ou mostruário.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2913": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem remetido para demonstração, mostruário ou treinamento.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2914": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem remetido para exposição ou feira.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2915": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria ou bem recebido para conserto ou reparo.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2916": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem remetido para conserto ou reparo.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2917": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2918": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria remetida em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2919": {
+      "classe": "outro",
+      "desc": "Devolução simbólica de mercadoria vendida ou utilizada em processo industrial, remetida anteriormente em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2920": {
+      "classe": "outro",
+      "desc": "Entrada de embalagens, bombonas, vasilhames, sacarias, pallets ou assemelhados.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2921": {
+      "classe": "outro",
+      "desc": "Retorno de embalagens, bombonas, vasilhames, sacarias, pallets ou assemelhados.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2922": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de simples faturamento decorrente de compra para recebimento futuro.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2923": {
+      "classe": "outro",
+      "desc": "Entrada de mercadoria recebida do vendedor remetente, em venda à ordem.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2924": {
+      "classe": "outro",
+      "desc": "Entrada para industrialização por conta e ordem do adquirente da mercadoria, quando esta não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2925": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria remetida para industrialização por conta e ordem do adquirente da mercadoria, quando esta não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2931": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado pelo tomador do serviço de transporte quando a responsabilidade de retenção do imposto for atribuída ao remetente ou alienante da mercadoria, pelo serviço de transporte realizado por transportador autônomo ou por transportador não inscrito na unidade da Federação onde iniciado o serviço.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2932": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte iniciado em unidade da Federação diversa daquela onde inscrito o prestador.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2933": {
+      "classe": "despesa",
+      "desc": "Aquisição de serviço sujeito ao ISSQN.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2934": {
+      "classe": "outro",
+      "desc": "Entrada simbólica de mercadoria recebida para depósito em depósito fechado ou armazém geral.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "2949": {
+      "classe": "outro",
+      "desc": "Outra entrada de mercadoria ou prestação de serviço não especificada.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3101": {
+      "classe": "outro",
+      "desc": "Compra para industrialização ou produção rural.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3102": {
+      "classe": "outro",
+      "desc": "Compra para comercialização.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3126": {
+      "classe": "outro",
+      "desc": "Compra para utilização na prestação de serviço sujeita ao ICMS.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3127": {
+      "classe": "outro",
+      "desc": "Compra para industrialização sob o regime de “drawback”.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3128": {
+      "classe": "outro",
+      "desc": "Compra para utilização na prestação de serviço sujeita ao ISSQN.",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3129": {
+      "classe": "outro",
+      "desc": "Compra para industrialização sob o Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof- Sped).",
+      "grupo": "COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3201": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3202": {
+      "classe": "outro",
+      "desc": "Devolução de venda de mercadoria adquirida ou recebida de terceiros.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3205": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à prestação de serviço de comunicação.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3206": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à prestação de serviço de transporte.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3207": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à venda de energia elétrica.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3211": {
+      "classe": "outro",
+      "desc": "Devolução de venda de produção do estabelecimento sob o regime de “drawback”.",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3212": {
+      "classe": "outro",
+      "desc": "Devolução de venda no mercado externo de mercadoria industrializada sob o Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped)",
+      "grupo": "DEVOLUÇÕES DE VENDAS DE PRODUÇÃO PRÓPRIA, DE TERCEIROS OU ANULAÇÕES DE VALORES",
+      "tipo": "Entrada"
+    },
+    "3251": {
+      "classe": "outro",
+      "desc": "Compra de energia elétrica para distribuição ou comercialização.",
+      "grupo": "COMPRAS DE ENERGIA ELÉTRICA",
+      "tipo": "Entrada"
+    },
+    "3301": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de comunicação para execução de serviço da mesma natureza.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Entrada"
+    },
+    "3351": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte para execução de serviço da mesma natureza.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "3352": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento industrial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "3353": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento comercial.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "3354": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de prestador de serviço de comunicação.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "3355": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "3356": {
+      "classe": "outro",
+      "desc": "Aquisição de serviço de transporte por estabelecimento de produtor rural.",
+      "grupo": "AQUISIÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Entrada"
+    },
+    "3503": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria exportada que tenha sido recebida com fim específico de exportação.",
+      "grupo": "ENTRADAS DE MERCADORIAS REMETIDAS COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Entrada"
+    },
+    "3551": {
+      "classe": "outro",
+      "desc": "Compra de bem para o ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "3552": {
+      "classe": "outro",
+      "desc": "Entrada de produto destinado para uso ou consumo de bordo, em embarcações ou aeronaves exclusivamente em tráfego internacional com destino ao exterior.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "3553": {
+      "classe": "outro",
+      "desc": "Devolução de venda de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "3556": {
+      "classe": "outro",
+      "desc": "Compra de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Entrada"
+    },
+    "3651": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes para industrialização subsequente.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "3652": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes para comercialização.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "3653": {
+      "classe": "outro",
+      "desc": "Compra de combustíveis ou lubrificantes por consumidor ou usuário final.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "3667": {
+      "classe": "outro",
+      "desc": "Entrada de combustíveis ou lubrificantes para consumo final, em embarcações ou aeronaves exclusivamente em tráfego internacional com destino ao exterior.",
+      "grupo": "ENTRADAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Entrada"
+    },
+    "3930": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de entrada de bem sob amparo de regime especial aduaneiro de admissão temporária.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "3949": {
+      "classe": "outro",
+      "desc": "Outra entrada de mercadoria ou prestação de serviço não especificada.",
+      "grupo": "OUTRAS ENTRADAS DE MERCADORIAS OU AQUISIÇÕES DE SERVIÇOS",
+      "tipo": "Entrada"
+    },
+    "5101": {
+      "classe": "venda",
+      "desc": "Venda de produção do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5102": {
+      "classe": "venda",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, ou qualquer venda de mercadoria efetuada pelo MEI com exceção das saídas classificadas nos códigos 5.501, 5.502, 5.504 e 5.505.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5103": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento, efetuada fora do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5104": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, efetuada fora do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5105": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento que não deva por ele transitar.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5106": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, que não deva por ele transitar.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5109": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5110": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5111": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento remetida anteriormente em consignação industrial.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5112": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros remetida anteriormente em consignação industrial.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5113": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento remetida anteriormente em consignação mercantil.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5114": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros remetida anteriormente em consignação mercantil.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5115": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, recebida anteriormente em consignação mercantil.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5116": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento originada de encomenda para entrega futura.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5117": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, originada de encomenda para entrega futura.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5118": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento industrial ou rural, entregue ao destinatário por conta e ordem do adquirente originário, em venda à ordem.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5119": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros entregue ao destinatário por conta e ordem do adquirente originário, em venda à ordem.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5120": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros entregue ao destinatário pelo vendedor remetente, em venda à ordem.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5122": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento remetida para industrialização, por conta e ordem do adquirente, sem transitar pelo estabelecimento do adquirente.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5123": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros remetida para industrialização, por conta e ordem do adquirente, sem transitar pelo estabelecimento do adquirente.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5124": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada para outra empresa.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5125": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada para outra empresa quando a mercadoria recebida para utilização no processo de industrialização não transitar pelo estabelecimento adquirente da mercadoria.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5129": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria industrializada e de insumo importado sob o amparo do Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped).",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5131": {
+      "classe": "outro",
+      "desc": "Remessa de produção do estabelecimento, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5132": {
+      "classe": "outro",
+      "desc": "Fixação de preço de produção do estabelecimento, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5151": {
+      "classe": "outro",
+      "desc": "Transferência de produção do estabelecimento.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5152": {
+      "classe": "outro",
+      "desc": "Transferência de mercadoria adquirida ou recebida de terceiros.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5153": {
+      "classe": "outro",
+      "desc": "Transferência de energia elétrica.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5155": {
+      "classe": "outro",
+      "desc": "Transferência de produção do estabelecimento para depósito em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5156": {
+      "classe": "outro",
+      "desc": "Transferência de mercadoria adquirida ou recebida de terceiros para depósito em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5159": {
+      "classe": "outro",
+      "desc": "Fornecimento de produção do estabelecimento em ato cooperativo.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5160": {
+      "classe": "outro",
+      "desc": "Fornecimento de mercadoria adquirida ou recebida de terceiros em ato cooperativo.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "5201": {
+      "classe": "outro",
+      "desc": "Devolução de compra para industrialização ou produção rural.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5202": {
+      "classe": "outro",
+      "desc": "Devolução de compra para comercialização, ou qualquer devolução de mercadorias efetuada pelo MEI com exceção das classificadas no código 5.503.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5205": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à aquisição de serviço de comunicação.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5206": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à aquisição de serviço de transporte.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5207": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à compra de energia elétrica.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5208": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida em transferência para industrialização ou produção rural.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5209": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida em transferência para comercialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5210": {
+      "classe": "outro",
+      "desc": "Devolução de compra para utilização na prestação de serviço.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5213": {
+      "classe": "outro",
+      "desc": "Devolução de entrada, inclusive simbólica, de mercadoria com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5214": {
+      "classe": "outro",
+      "desc": "Devolução referente à fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para comercialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5215": {
+      "classe": "outro",
+      "desc": "Devolução referente à fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para industrialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5216": {
+      "classe": "outro",
+      "desc": "Devolução de entrada decorrente do fornecimento de produto ou mercadoria em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "5251": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para distribuição ou comercialização.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5252": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento industrial.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5253": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento comercial.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5254": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento prestador de serviço de transporte.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5255": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento prestador de serviço de comunicação.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5256": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento de produtor rural.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5257": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para consumo por demanda contratada.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5258": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica a não contribuinte.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "5301": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação para execução de serviço da mesma natureza.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5302": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento industrial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5303": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento comercial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5304": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento de prestador de serviço de transporte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5305": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5306": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento de produtor rural.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5307": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a não contribuinte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "5351": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte para execução de serviço da mesma natureza.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5352": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento industrial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5353": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento comercial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5354": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento de prestador de serviço de comunicação.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5355": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5356": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento de produtor rural.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5357": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a não contribuinte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5359": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a contribuinte ou a não contribuinte quando a mercadoria transportada está dispensada de emissão de nota fiscal.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5360": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a contribuinte substituto em relação ao serviço de transporte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "5401": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária, na condição de contribuinte substituto.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5402": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento de produto sujeito ao regime de substituição tributária, em operação entre contribuintes substitutos do mesmo produto.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5403": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária, na condição de contribuinte substituto.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5405": {
+      "classe": "venda",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária, na condição de contribuinte substituído.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5408": {
+      "classe": "outro",
+      "desc": "Transferência de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5409": {
+      "classe": "outro",
+      "desc": "Transferência de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5410": {
+      "classe": "outro",
+      "desc": "Devolução de compra para industrialização ou produção rural em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5411": {
+      "classe": "outro",
+      "desc": "Devolução de compra para comercialização em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5412": {
+      "classe": "outro",
+      "desc": "Devolução de bem do ativo imobilizado, em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5413": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria destinada para uso ou consumo, em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5414": {
+      "classe": "outro",
+      "desc": "Remessa de produção do estabelecimento para venda fora do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5415": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria adquirida ou recebida de terceiros para venda fora do estabelecimento, em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "5451": {
+      "classe": "outro",
+      "desc": "Remessa de animal - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "5452": {
+      "classe": "outro",
+      "desc": "Remessa de insumo - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "5453": {
+      "classe": "outro",
+      "desc": "Retorno de animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "5454": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "5455": {
+      "classe": "outro",
+      "desc": "Retorno de insumos não utilizados na produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "5456": {
+      "classe": "outro",
+      "desc": "Saída referente à remuneração do produtor - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "5501": {
+      "classe": "outro",
+      "desc": "Remessa de produção do estabelecimento, com fim específico de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "5502": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria adquirida ou recebida de terceiros, com fim específico de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "5503": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida com fim específico de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "5504": {
+      "classe": "outro",
+      "desc": "Remessa de mercadorias para formação de lote de exportação, de produtos industrializados ou produzidos pelo próprio estabelecimento.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "5505": {
+      "classe": "outro",
+      "desc": "Remessa de mercadorias, adquiridas ou recebidas de terceiros, para formação de lote de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "5551": {
+      "classe": "outro",
+      "desc": "Venda de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5552": {
+      "classe": "outro",
+      "desc": "Transferência de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5553": {
+      "classe": "outro",
+      "desc": "Devolução de compra de bem para o ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5554": {
+      "classe": "outro",
+      "desc": "Remessa de bem do ativo imobilizado para uso fora do estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5555": {
+      "classe": "ignorar",
+      "desc": "Devolução de bem do ativo imobilizado de terceiro, recebido para uso no estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5556": {
+      "classe": "ignorar",
+      "desc": "Devolução de compra de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5557": {
+      "classe": "outro",
+      "desc": "Transferência de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "5601": {
+      "classe": "outro",
+      "desc": "Transferência de crédito de ICMS acumulado.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Saída"
+    },
+    "5602": {
+      "classe": "outro",
+      "desc": "Transferência de saldo credor de ICMS para outro estabelecimento da mesma empresa, destinado à compensação de saldo devedor de ICMS.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Saída"
+    },
+    "5603": {
+      "classe": "outro",
+      "desc": "Ressarcimento de ICMS retido por substituição tributária.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Saída"
+    },
+    "5605": {
+      "classe": "outro",
+      "desc": "Transferência de saldo devedor de ICMS de outro estabelecimento da mesma empresa.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Saída"
+    },
+    "5606": {
+      "classe": "outro",
+      "desc": "Utilização de saldo credor de ICMS para extinção por compensação de débitos fiscais.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Saída"
+    },
+    "5651": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento destinados à industrialização subsequente.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5652": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento destinados à comercialização.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5653": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento destinados a consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5654": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros destinados à industrialização subsequente.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5655": {
+      "classe": "venda",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros destinados à comercialização.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5656": {
+      "classe": "venda",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros destinados a consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5657": {
+      "classe": "outro",
+      "desc": "Remessa de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros para venda fora do estabelecimento.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5658": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes de produção do estabelecimento.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5659": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes adquiridos ou recebidos de terceiro.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5660": {
+      "classe": "outro",
+      "desc": "Devolução de compra de combustíveis ou lubrificantes adquiridos para industrialização subsequente.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5661": {
+      "classe": "outro",
+      "desc": "Devolução de compra de combustíveis ou lubrificantes adquiridos para comercialização.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5662": {
+      "classe": "outro",
+      "desc": "Devolução de compra de combustíveis ou lubrificantes adquiridos por consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5663": {
+      "classe": "outro",
+      "desc": "Remessa para armazenagem de combustíveis ou lubrificantes.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5664": {
+      "classe": "outro",
+      "desc": "Retorno de combustíveis ou lubrificantes recebidos para armazenagem.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5665": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de combustíveis ou lubrificantes recebidos para armazenagem.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5666": {
+      "classe": "outro",
+      "desc": "Remessa por conta e ordem de terceiros de combustíveis ou lubrificantes recebidos para armazenagem.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5667": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes a consumidor ou usuário final estabelecido em outra unidade da Federação.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "5901": {
+      "classe": "outro",
+      "desc": "Remessa para industrialização por encomenda.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5902": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria utilizada na industrialização por encomenda.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5903": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria recebida para industrialização e não aplicada no referido processo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5904": {
+      "classe": "outro",
+      "desc": "Remessa para venda fora do estabelecimento, ou qualquer remessa efetuada pelo MEI com exceção das classificadas nos códigos 5.502 e 5.505.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5905": {
+      "classe": "outro",
+      "desc": "Remessa para depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5906": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria depositada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5907": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de mercadoria depositada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5908": {
+      "classe": "outro",
+      "desc": "Remessa de bem por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5909": {
+      "classe": "outro",
+      "desc": "Retorno de bem recebido por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5910": {
+      "classe": "outro",
+      "desc": "Remessa em bonificação, doação ou brinde.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5911": {
+      "classe": "outro",
+      "desc": "Remessa de amostra grátis.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5912": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria ou bem para demonstração, mostruário ou treinamento.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5913": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem recebido para demonstração ou mostruário.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5914": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria ou bem para exposição ou feira.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5915": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria ou bem para conserto ou reparo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5916": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem recebido para conserto ou reparo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5917": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5918": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5919": {
+      "classe": "outro",
+      "desc": "Devolução simbólica de mercadoria vendida ou utilizada em processo industrial, recebida anteriormente em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5920": {
+      "classe": "outro",
+      "desc": "Remessa de embalagens, bombonas, vasilhames, sacarias, pallets, containers ou assemelhados.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5921": {
+      "classe": "outro",
+      "desc": "Devolução de embalagens, bombonas, vasilhames, sacarias, pallets, containers ou assemelhados.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5922": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de simples faturamento decorrente de venda para entrega futura.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5923": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria por conta e ordem de terceiros, em venda à ordem ou em operações com armazém geral ou depósito fechado.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5924": {
+      "classe": "outro",
+      "desc": "Remessa para industrialização por conta e ordem do adquirente da mercadoria, quando esta não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5925": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria recebida para industrialização por conta e ordem do adquirente da mercadoria, quando aquela não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5926": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de reclassificação de mercadoria decorrente de formação de kit ou de sua desagregação.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5927": {
+      "classe": "ignorar",
+      "desc": "Lançamento efetuado a título de baixa de estoque decorrente de perda, roubo, deterioração.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5928": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de baixa de estoque decorrente do encerramento da atividade do estabelecimento da empresa ou transferência por venda do fundo de comércio.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5929": {
+      "classe": "venda",
+      "desc": "Lançamento efetuado em decorrência de emissão de documento fiscal relativo à operação ou prestação também acobertada por documento fiscal do varejo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5931": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado em decorrência da responsabilidade de retenção do imposto por substituição tributária, atribuída ao remetente ou alienante da mercadoria, pelo serviço de transporte realizado por transportador autônomo ou por transportador não inscrito na unidade da Federação onde iniciado o serviço.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5932": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte iniciada em unidade da Federação diversa daquela onde inscrito o prestador.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5933": {
+      "classe": "outro",
+      "desc": "Prestação de serviço sujeita ao ISSQN.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5934": {
+      "classe": "outro",
+      "desc": "Remessa simbólica de mercadoria depositada em armazém geral ou depósito fechado.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "5949": {
+      "classe": "ignorar",
+      "desc": "Outra saída de mercadoria ou prestação de serviço não especificada.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6101": {
+      "classe": "venda",
+      "desc": "Venda de produção do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6102": {
+      "classe": "venda",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, ou qualquer venda de mercadoria efetuada pelo MEI com exceção das saídas classificadas nos códigos 6.501, 6.502, 6.504 e 6.505.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6103": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento, efetuada fora do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6104": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, efetuada fora do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6105": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento armazenada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6106": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros armazenada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6107": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento, destinada a não contribuinte.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6108": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, destinada a não contribuinte.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6109": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6110": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, destinada à Zona Franca de Manaus ou Áreas de Livre Comércio.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6111": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento remetida anteriormente em consignação industrial.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6112": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de Terceiros remetida anteriormente em consignação industrial.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6113": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento remetida anteriormente em consignação mercantil.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6114": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros remetida anteriormente em consignação mercantil.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6115": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, recebida anteriormente em consignação mercantil.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6116": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento originada de encomenda para entrega futura.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6117": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros, originada de encomenda para entrega futura.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6118": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento industrial ou rural, entregue ao destinatário por conta e ordem do adquirente originário, em venda à ordem.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6119": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros entregue ao destinatário por conta e ordem do adquirente originário, em venda à ordem.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6120": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros entregue ao destinatário pelo vendedor remetente, em venda à ordem.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6122": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento remetida para industrialização, por conta e ordem do adquirente, sem transitar pelo estabelecimento do adquirente.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6123": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros remetida para industrialização, por conta e ordem do adquirente, sem transitar pelo estabelecimento do adquirente.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6124": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada para outra empresa.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6125": {
+      "classe": "outro",
+      "desc": "Industrialização efetuada para outra empresa quando a mercadoria recebida para utilização no processo de industrialização não transitar pelo estabelecimento adquirente da mercadoria.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6129": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria industrializada e de insumo importado sob o amparo do Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped).",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6131": {
+      "classe": "outro",
+      "desc": "Remessa de produção do estabelecimento, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6132": {
+      "classe": "outro",
+      "desc": "Fixação de preço de produção do estabelecimento, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6151": {
+      "classe": "outro",
+      "desc": "Transferência de produção do estabelecimento.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6152": {
+      "classe": "outro",
+      "desc": "Transferência de mercadoria adquirida ou recebida de terceiros.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6153": {
+      "classe": "outro",
+      "desc": "Transferência de energia elétrica.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6155": {
+      "classe": "outro",
+      "desc": "Transferência de produção do estabelecimento armazenada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6156": {
+      "classe": "outro",
+      "desc": "Transferência de mercadoria adquirida ou recebida de terceiros armazenada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6159": {
+      "classe": "outro",
+      "desc": "Fornecimento de produção do estabelecimento em ato cooperativo.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6160": {
+      "classe": "outro",
+      "desc": "Fornecimento de mercadoria adquirida ou recebida de terceiros em ato cooperativo.",
+      "grupo": "TRANSFERÊNCIAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "6201": {
+      "classe": "ignorar",
+      "desc": "Devolução de compra para industrialização ou produção rural.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6202": {
+      "classe": "ignorar",
+      "desc": "Devolução de compra para comercialização, ou qualquer devolução de mercadoria efetuada pelo MEI com exceção das classificadas no código 6.503.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6205": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à aquisição de serviço de comunicação.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6206": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à aquisição de serviço de transporte.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6207": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à compra de energia elétrica.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6208": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida em transferência para industrialização ou produção rural.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6209": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida em transferência para comercialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6210": {
+      "classe": "outro",
+      "desc": "Devolução de compra para utilização na prestação de serviço.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6213": {
+      "classe": "outro",
+      "desc": "Devolução de entrada, inclusive simbólica, de mercadoria, com previsão de posterior ajuste ou fixação de preço, em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6214": {
+      "classe": "outro",
+      "desc": "Devolução referente à fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para comercialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6215": {
+      "classe": "outro",
+      "desc": "Devolução referente à fixação de preço de produção do estabelecimento produtor, inclusive quando remetidas anteriormente com previsão de posterior ajuste ou fixação de preço, em ato cooperativo, para industrialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6216": {
+      "classe": "outro",
+      "desc": "Devolução de entrada decorrente do fornecimento de produto ou mercadoria em ato cooperativo.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "6251": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para distribuição ou comercialização.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6252": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento industrial.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6253": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento comercial.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6254": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento prestador de serviço de transporte.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6255": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento prestador de serviço de comunicação.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6256": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para estabelecimento de produtor rural.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6257": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para consumo por demanda contratada.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6258": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica a não contribuinte.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "6301": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação para execução de serviço da mesma natureza.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6302": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento industrial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6303": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento comercial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6304": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento de prestador de serviço de transporte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6305": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6306": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a estabelecimento de produtor rural.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6307": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação a não contribuinte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "6351": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte para execução de serviço da mesma natureza.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6352": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento industrial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6353": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento comercial.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6354": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento de prestador de serviço de comunicação.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6355": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento de geradora ou de distribuidora de energia elétrica.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6356": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a estabelecimento de produtor rural.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6357": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a não contribuinte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6359": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a contribuinte ou a não contribuinte quando a mercadoria transportada está dispensada de emissão de nota fiscal.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6360": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte a contribuinte substituto em relação ao serviço de transporte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "6401": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária, na condição de contribuinte substituto.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6402": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento de produto sujeito ao regime de substituição tributária, em operação entre contribuintes substitutos do mesmo produto.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6403": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária, na condição de contribuinte substituto.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6404": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria sujeita ao regime de substituição tributária, cujo imposto já tenha sido retido anteriormente.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6408": {
+      "classe": "outro",
+      "desc": "Transferência de produção do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6409": {
+      "classe": "outro",
+      "desc": "Transferência de mercadoria adquirida ou recebida de terceiros em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6410": {
+      "classe": "outro",
+      "desc": "Devolução de compra para industrialização ou produção rural em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6411": {
+      "classe": "outro",
+      "desc": "Devolução de compra para comercialização em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6412": {
+      "classe": "outro",
+      "desc": "Devolução de bem do ativo imobilizado, em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6413": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria destinada para uso ou consumo, em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6414": {
+      "classe": "outro",
+      "desc": "Remessa de produção do estabelecimento para venda fora do estabelecimento em operação com produto sujeito ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6415": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria adquirida ou recebida de terceiros para venda fora do estabelecimento, em operação com mercadoria sujeita ao regime de substituição tributária.",
+      "grupo": "SAÍDAS DE MERCADORIAS SUJEITAS AO REGIME DE SUBSTITUIÇÃO TRIBUTÁRIA",
+      "tipo": "Saída"
+    },
+    "6451": {
+      "classe": "outro",
+      "desc": "Remessa de animal - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "6452": {
+      "classe": "outro",
+      "desc": "Remessa de insumo - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "6453": {
+      "classe": "outro",
+      "desc": "Retorno de animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "6454": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de animal ou da produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "6455": {
+      "classe": "outro",
+      "desc": "Retorno de insumos não utilizados na produção - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "6456": {
+      "classe": "outro",
+      "desc": "Saída referente à remuneração do produtor - Sistema de Integração e Parceria Rural.",
+      "grupo": "SISTEMAS DE INTEGRAÇÃO E PARCERIA RURAL",
+      "tipo": "Saída"
+    },
+    "6501": {
+      "classe": "outro",
+      "desc": "Remessa de produção do estabelecimento, com fim específico de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "6502": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria adquirida ou recebida de terceiros, com fim específico de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "6503": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida com fim específico de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "6504": {
+      "classe": "outro",
+      "desc": "Remessa de mercadorias para formação de lote de exportação, de produtos industrializados ou produzidos pelo próprio estabelecimento.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "6505": {
+      "classe": "outro",
+      "desc": "Remessa de mercadorias, adquiridas ou recebidas de terceiros, para formação de lote de exportação.",
+      "grupo": "REMESSAS PARA FORMAÇÃO DE LOTE OU COM FIM ESPECÍFICO DE EXPORTAÇÃO E EVENTUAIS DEVOLUÇÕES",
+      "tipo": "Saída"
+    },
+    "6551": {
+      "classe": "outro",
+      "desc": "Venda de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6552": {
+      "classe": "outro",
+      "desc": "Transferência de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6553": {
+      "classe": "outro",
+      "desc": "Devolução de compra de bem para o ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6554": {
+      "classe": "outro",
+      "desc": "Remessa de bem do ativo imobilizado para uso fora do estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6555": {
+      "classe": "ignorar",
+      "desc": "Devolução de bem do ativo imobilizado de terceiro, recebido para uso no estabelecimento.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6556": {
+      "classe": "ignorar",
+      "desc": "Devolução de compra de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6557": {
+      "classe": "outro",
+      "desc": "Transferência de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "6603": {
+      "classe": "outro",
+      "desc": "Ressarcimento de ICMS retido por substituição tributária.",
+      "grupo": "LANÇAMENTOS DE CRÉDITOS E RESSARCIMENTOS DE ICMS",
+      "tipo": "Saída"
+    },
+    "6651": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento destinados à industrialização subsequente.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6652": {
+      "classe": "venda",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento destinados à comercialização.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6653": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento destinados a consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6654": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros destinados à industrialização subsequente.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6655": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros destinados à comercialização.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6656": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros destinados a consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6657": {
+      "classe": "outro",
+      "desc": "Remessa de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros para venda fora do estabelecimento.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6658": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes de produção do estabelecimento.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6659": {
+      "classe": "outro",
+      "desc": "Transferência de combustíveis ou lubrificantes adquiridos ou recebidos de terceiro.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6660": {
+      "classe": "outro",
+      "desc": "Devolução de compra de combustíveis ou lubrificantes adquiridos para industrialização subsequente.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6661": {
+      "classe": "outro",
+      "desc": "Devolução de compra de combustíveis ou lubrificantes adquiridos para comercialização.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6662": {
+      "classe": "outro",
+      "desc": "Devolução de compra de combustíveis ou lubrificantes adquiridos por consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6663": {
+      "classe": "outro",
+      "desc": "Remessa para armazenagem de combustíveis ou lubrificantes.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6664": {
+      "classe": "outro",
+      "desc": "Retorno de combustíveis ou lubrificantes recebidos para armazenagem.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6665": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de combustíveis ou lubrificantes recebidos para armazenagem.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6666": {
+      "classe": "outro",
+      "desc": "Remessa por conta e ordem de terceiros de combustíveis ou lubrificantes recebidos para armazenagem.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6667": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes a consumidor ou usuário final estabelecido em outra unidade da Federação diferente da que ocorrer o consumo.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "6901": {
+      "classe": "outro",
+      "desc": "Remessa para industrialização por encomenda.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6902": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria utilizada na industrialização por encomenda.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6903": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria recebida para industrialização e não aplicada no referido processo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6904": {
+      "classe": "outro",
+      "desc": "Remessa para venda fora do estabelecimento, ou qualquer remessa efetuada pelo MEI com exceção das classificadas nos códigos 6.502 e 6.505.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6905": {
+      "classe": "outro",
+      "desc": "Remessa para depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6906": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria depositada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6907": {
+      "classe": "outro",
+      "desc": "Retorno simbólico de mercadoria depositada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6908": {
+      "classe": "outro",
+      "desc": "Remessa de bem por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6909": {
+      "classe": "outro",
+      "desc": "Retorno de bem recebido por conta de contrato de comodato ou locação.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6910": {
+      "classe": "outro",
+      "desc": "Remessa em bonificação, doação ou brinde.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6911": {
+      "classe": "outro",
+      "desc": "Remessa de amostra grátis.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6912": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria ou bem para demonstração, mostruário ou treinamento.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6913": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem recebido para demonstração ou mostruário.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6914": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria ou bem para exposição ou feira.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6915": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria ou bem para conserto ou reparo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6916": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria ou bem recebido para conserto ou reparo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6917": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6918": {
+      "classe": "outro",
+      "desc": "Devolução de mercadoria recebida em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6919": {
+      "classe": "outro",
+      "desc": "Devolução simbólica de mercadoria vendida ou utilizada em processo industrial, recebida anteriormente em consignação mercantil ou industrial.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6920": {
+      "classe": "outro",
+      "desc": "Remessa de embalagens, bombonas, vasilhames, sacarias, pallets, containers ou assemelhados.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6921": {
+      "classe": "outro",
+      "desc": "Devolução de embalagens, bombonas, vasilhames, sacarias, pallets, containers ou assemelhados.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6922": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de simples faturamento decorrente de venda para entrega futura.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6923": {
+      "classe": "outro",
+      "desc": "Remessa de mercadoria por conta e ordem de terceiros, em venda à ordem ou em operações com armazém geral ou depósito fechado.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6924": {
+      "classe": "outro",
+      "desc": "Remessa para industrialização por conta e ordem do adquirente da mercadoria, quando esta não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6925": {
+      "classe": "outro",
+      "desc": "Retorno de mercadoria recebida para industrialização por conta e ordem do adquirente da mercadoria, quando aquela não transitar pelo estabelecimento do adquirente.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6929": {
+      "classe": "venda",
+      "desc": "Lançamento efetuado em decorrência de emissão de documento fiscal relativo à operação ou prestação também acobertada por documento fiscal do varejo.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6931": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado em decorrência da responsabilidade de retenção do imposto por substituição tributária, atribuída ao remetente ou alienante da mercadoria, pelo serviço de transporte realizado por transportador autônomo ou por transportador não inscrito na unidade da Federação onde iniciado o serviço.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6932": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte iniciada em unidade da Federação diversa daquela onde inscrito o prestador.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6933": {
+      "classe": "outro",
+      "desc": "Prestação de serviço sujeita ao ISSQN.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6934": {
+      "classe": "outro",
+      "desc": "Remessa simbólica de mercadoria depositada em armazém geral ou depósito fechado.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "6949": {
+      "classe": "outro",
+      "desc": "Outra saída de mercadoria ou prestação de serviço não especificada.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "7101": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "7102": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "7105": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento armazenada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "7106": {
+      "classe": "outro",
+      "desc": "Venda de mercadoria adquirida ou recebida de terceiros armazenada em depósito fechado, armazém geral ou outro estabelecimento da mesma empresa ou de terceiro, que não deva por ele transitar.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "7127": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento sob o regime de “drawback”.",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "7129": {
+      "classe": "outro",
+      "desc": "Venda de produção do estabelecimento ao mercado externo de mercadoria industrializada sob o amparo do Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped).",
+      "grupo": "VENDAS DE PRODUÇÃO PRÓPRIA OU DE TERCEIROS",
+      "tipo": "Saída"
+    },
+    "7201": {
+      "classe": "outro",
+      "desc": "Devolução de compra para industrialização ou produção rural.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7202": {
+      "classe": "outro",
+      "desc": "Devolução de compra para comercialização.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7205": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à aquisição de serviço de comunicação.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7206": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à aquisição de serviço de transporte.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7207": {
+      "classe": "outro",
+      "desc": "Anulação de valor relativo à compra de energia elétrica.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7210": {
+      "classe": "outro",
+      "desc": "Devolução de compra para utilização na prestação de serviço.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7211": {
+      "classe": "outro",
+      "desc": "Devolução de compras para industrialização sob o regime de “drawback”.",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7212": {
+      "classe": "outro",
+      "desc": "Devolução de compras para industrialização sob o regime de Regime Aduaneiro Especial de Entreposto Industrial sob Controle Informatizado do Sistema Público de Escrituração Digital (Recof-Sped).",
+      "grupo": "DEVOLUÇÕES DE COMPRAS PARA INDUSTRIALIZAÇÃO, PRODUÇÃO RURAL, COMERCIALIZAÇÃO OU ANULAÇÕES DE VALORES",
+      "tipo": "Saída"
+    },
+    "7251": {
+      "classe": "outro",
+      "desc": "Venda de energia elétrica para o exterior.",
+      "grupo": "VENDAS DE ENERGIA ELÉTRICA",
+      "tipo": "Saída"
+    },
+    "7301": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de comunicação para execução de serviço da mesma natureza.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE COMUNICAÇÃO",
+      "tipo": "Saída"
+    },
+    "7358": {
+      "classe": "outro",
+      "desc": "Prestação de serviço de transporte.",
+      "grupo": "PRESTAÇÕES DE SERVIÇOS DE TRANSPORTE",
+      "tipo": "Saída"
+    },
+    "7501": {
+      "classe": "outro",
+      "desc": "Exportação de mercadorias recebidas com fim específico de exportação.",
+      "grupo": "EXPORTAÇÕES DE MERCADORIAS RECEBIDAS COM FIM ESPECÍFICO DE EXPORTAÇÃO",
+      "tipo": "Saída"
+    },
+    "7504": {
+      "classe": "outro",
+      "desc": "Exportação de mercadoria que foi objeto de formação de lote de exportação.",
+      "grupo": "EXPORTAÇÕES DE MERCADORIAS RECEBIDAS COM FIM ESPECÍFICO DE EXPORTAÇÃO",
+      "tipo": "Saída"
+    },
+    "7551": {
+      "classe": "outro",
+      "desc": "Venda de bem do ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "7552": {
+      "classe": "outro",
+      "desc": "Saída de produto destinado para uso ou consumo de bordo, em embarcações ou aeronaves exclusivamente em tráfego internacional com destino ao exterior.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "7553": {
+      "classe": "outro",
+      "desc": "Devolução de compra de bem para o ativo imobilizado.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "7556": {
+      "classe": "outro",
+      "desc": "Devolução de compra de material para uso ou consumo.",
+      "grupo": "OPERAÇÕES COM BENS DO ATIVO IMOBILIZADO E MATERIAIS PARA USO OU CONSUMO",
+      "tipo": "Saída"
+    },
+    "7651": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes de produção do estabelecimento.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "7654": {
+      "classe": "outro",
+      "desc": "Venda de combustíveis ou lubrificantes adquiridos ou recebidos de terceiros.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "7667": {
+      "classe": "outro",
+      "desc": "Saída de combustíveis ou lubrificantes a consumidor ou usuário final.",
+      "grupo": "SAÍDAS DE COMBUSTÍVEIS, DERIVADOS OU NÃO DE PETRÓLEO, E LUBRIFICANTES",
+      "tipo": "Saída"
+    },
+    "7930": {
+      "classe": "outro",
+      "desc": "Lançamento efetuado a título de devolução de bem cuja entrada tenha ocorrido sob amparo de regime especial aduaneiro de admissão temporária.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    },
+    "7949": {
+      "classe": "outro",
+      "desc": "Outra saída de mercadoria ou prestação de serviço não especificada.",
+      "grupo": "OUTRAS SAÍDAS DE MERCADORIAS OU PRESTAÇÕES DE SERVIÇOS",
+      "tipo": "Saída"
+    }
+  },
+  "meta": {
+    "classes": {
+      "despesa": "CFOP que entra como despesa (Entrada) em valores",
+      "ignorar": "CFOP contado em XML, mas ignorado em valores (remessa/retorno/transferência etc.)",
+      "outro": "CFOP não classificado para valores por padrão",
+      "venda": "CFOP que entra como faturamento (Saída) em valores"
+    },
+    "generated_at": "2026-01-18T21:21:30",
+    "notes": [
+      "Regras priorizam grupos oficiais (SINIEF) e palavras-chave; 5929/6929 são forçados como venda; 5949/6949 forçados como ignorar."
+    ],
+    "source": "lista_cfop_completa_ajuste_sinief_03_24_v2.csv"
+  },
+  "flags": {
+    "venda_ignore_same_party": true,
+    "despesa_ignore_same_party": true
+  }
+}

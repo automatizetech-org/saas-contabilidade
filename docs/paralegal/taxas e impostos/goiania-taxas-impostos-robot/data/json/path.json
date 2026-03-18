@@ -1,0 +1,15 @@
+{
+  "output_base": "C:\\Users",
+  "report_path": "C:\\Users",
+  "preferences": {
+    "default_date_mode": "previous_month",
+    "folder_structure": {
+      "year": true,
+      "month": true,
+      "day": true,
+      "usar_pasta_cliente": true,
+      "pastas_cliente": [],
+      "nome_pasta_cliente": ""
+    }
+  }
+}

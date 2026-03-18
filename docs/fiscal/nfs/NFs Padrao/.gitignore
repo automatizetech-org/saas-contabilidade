@@ -1,0 +1,68 @@
+# === Playwright (navegadores) ===============================================
+# ignora a pasta pesada com o Chromium do Playwright
+/data/ms-playwright
+/**/Chrome/
+
+# (fallback para quem escreveu sem hífen)
+# remova se não usar esse nome
+# /Instalador/
+/**/_internal/
+
+.exe
+.zip
+
+# Perfil local opcional do Playwright (cookies/sessão)
+.pw-profile/
+
+# Relatórios/artefatos do Playwright
+playwright-report/
+blob-report/
+test-results/
+trace.zip
+
+# === Python / Build ==========================================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# builds/empacotamento
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# PyInstaller
+*.spec
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+.venv*/
+venv*/
+
+# Dependências/gerenciadores (se usar)
+.poetry/
+.pdm-build/
+
+# === Ferramentas / Cache =====================================================
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.tox/
+.cache/
+
+# === Config/Segredos =========================================================
+.env
+.env.*
+
+# === SO / Editor =============================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+logs/

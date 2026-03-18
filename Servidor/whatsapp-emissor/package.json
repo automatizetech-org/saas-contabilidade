@@ -1,0 +1,16 @@
+{
+  "name": "whatsapp-emissor",
+  "version": "1.0.0",
+  "description": "Módulo WhatsApp emissor — estrutura padronizada. Ver também WhatsApp_emissor na raiz (legado).",
+  "main": "bot.js",
+  "scripts": {
+    "connect": "node bot.js connect",
+    "disconnect": "node bot.js disconnect",
+    "server": "node server.js"
+  },
+  "dependencies": {
+    "qr-image": "^3.2.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}

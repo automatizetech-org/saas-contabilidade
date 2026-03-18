@@ -1,0 +1,953 @@
+{
+    "paths": {
+        "base_empresas": "C:\\Users\\Victor\\Downloads\\teste\\Nova pasta",
+        "relatorios_pdf": "C:\\Users\\Victor\\Downloads\\teste\\Nova pasta",
+        "estrutura_pastas": {
+            "usar_nome_empresa": true,
+            "usar_pasta_cliente": false,
+            "pastas_cliente": [],
+            "nome_pasta_cliente": "",
+            "separar_entrada_saida": true,
+            "usar_ano": true,
+            "usar_mes": true,
+            "case_sensitive": false
+        },
+        "dashboard_busca_empresa_em_qualquer_pasta": true,
+        "dashboard_mostrar_quantidade_real_xml": true,
+        "dashboard_considerar_xml_duplicados": false
+    },
+    "empresas": {
+        "201570548": {
+            "display_name": "3 IRMÃOS SUPERM LTDA",
+            "cnpj": "55463224000121"
+        },
+        "106641883": {
+            "display_name": "A E B AUTO CENTER LTDA",
+            "cnpj": "24878106000150",
+            "login_cpf": "86873598100"
+        },
+        "103843108": {
+            "display_name": "ABACAXI.COM COMERCIO DE FRUTAS LTDA",
+            "cnpj": "07132222000107",
+            "login_cpf": "71361170115"
+        },
+        "201605333": {
+            "display_name": "ABACAXI.COM COMERCIO DE FRUTAS LTDA",
+            "cnpj": "07132222000298",
+            "login_cpf": "71361170115"
+        },
+        "107852144": {
+            "display_name": "ACRILICOS SF LTDA",
+            "cnpj": "36046145000170",
+            "login_cpf": "71361170115"
+        },
+        "108663337": {
+            "display_name": "AEVA INTERIORES LTDA",
+            "cnpj": "43732404000182",
+            "login_cpf": "86873598100"
+        },
+        "108989100": {
+            "display_name": "AG IRRIGACAO JARDINS",
+            "cnpj": "45351320000124",
+            "login_cpf": "86873598100"
+        },
+        "107045370": {
+            "display_name": "AJ COM E REP MAT CONST LTDA",
+            "cnpj": "28612080000155",
+            "login_cpf": "71361170115"
+        },
+        "106870734": {
+            "display_name": "ANA PAULA MARINELLI LTDA",
+            "cnpj": "27292014000182",
+            "login_cpf": "86873598100"
+        },
+        "104583690": {
+            "display_name": "ANDRADE E BARRETO AUTO SERVICE LTDA",
+            "cnpj": "11351170000137",
+            "login_cpf": "86873598100"
+        },
+        "201581850": {
+            "display_name": "ARMIX REFRIGERACAO LTDA",
+            "cnpj": "46468725000100",
+            "login_cpf": "86873598100"
+        },
+        "108722309": {
+            "display_name": "ATIVA PROJETOS AMBIENTAIS LTDA",
+            "cnpj": "15746867000168",
+            "login_cpf": "86873598100"
+        },
+        "108512398": {
+            "display_name": "AVANTTE SERVICOS E ASSESSORIA LTDA",
+            "cnpj": "42565162000117",
+            "login_cpf": "71361170115"
+        },
+        "202510891": {
+            "display_name": "BEGROW ARAGUAIA PROD NATURAIS LTDA",
+            "cnpj": "59897809000100",
+            "login_cpf": "71361170115"
+        },
+        "200267485": {
+            "display_name": "BEGROW ORION  PRODUTOS NATURAIS LTDA",
+            "cnpj": "50208746000163",
+            "login_cpf": "86873598100"
+        },
+        "103263209": {
+            "display_name": "BELAFRUTA ATACADISTA DE FRUTAS LTDA",
+            "cnpj": "03565475000113",
+            "login_cpf": "71361170115"
+        },
+        "103465656": {
+            "display_name": "BJ MAGAZINE E DISTRIBUICAO LTDA",
+            "cnpj": "42417274000120",
+            "login_cpf": "71361170115"
+        },
+        "201657988": {
+            "display_name": "CASAHORT COMIDA BRASILEIRA LTDA",
+            "cnpj": "50888390000156"
+        },
+        "201437481": {
+            "display_name": "CENTRO OESTE DESEMP DISTRIB LTDA",
+            "cnpj": "54899445000184",
+            "login_cpf": "71361170115"
+        },
+        "102718350": {
+            "display_name": "CIMAVEL BOMBAS INJETORAS LTDA",
+            "cnpj": "00339373000191",
+            "login_cpf": "71361170115"
+        },
+        "105396214": {
+            "display_name": "COLISEUM RESTAURANTE LTDA",
+            "cnpj": "15675080000152"
+        },
+        "108543358": {
+            "display_name": "COMFORT SILVA LTDA",
+            "cnpj": "42417106000135"
+        },
+        "105053112": {
+            "display_name": "CRIANCA FELIZ COM BRINQUEDOS LTDA",
+            "cnpj": "13916265000186",
+            "login_cpf": "86873598100"
+        },
+        "108224279": {
+            "display_name": "CRISTIANE RODRIGUES LEMES 94858551172",
+            "cnpj": "40505824000138",
+            "login_cpf": "86873598100"
+        },
+        "200391780": {
+            "display_name": "CRUZ INDUSTRIA LTDA",
+            "cnpj": "50707756000143",
+            "login_cpf": "71361170115"
+        },
+        "106881140": {
+            "display_name": "DATAFORTE SISTEMAS LTDA",
+            "cnpj": "27174407000191",
+            "login_cpf": "71361170115"
+        },
+        "106036416": {
+            "display_name": "DIGITAL COPIAS LTDA",
+            "cnpj": "07719299000188",
+            "login_cpf": "71361170115"
+        },
+        "107219913": {
+            "display_name": "DISTRIBUIDORA DE FRUTAS MIRANDA LTDA",
+            "cnpj": "30011827000161",
+            "login_cpf": "71361170115"
+        },
+        "200228641": {
+            "display_name": "DM INDUSTRIA E DISTRIBUICAO LTDA",
+            "cnpj": "50058532000158",
+            "login_cpf": "71361170115"
+        },
+        "104544449": {
+            "display_name": "DROGARIA SF COM MEDICAMENTOS LTDA",
+            "cnpj": "11050058000166",
+            "login_cpf": "71361170115"
+        },
+        "201628295": {
+            "display_name": "DYCK SAN PINTURAS E ACABAMENTOS LTDA",
+            "cnpj": "22006329000100",
+            "login_cpf": "86873598100"
+        },
+        "108970086": {
+            "display_name": "ED CAR SERVICOS AUTOMOTIVOS LTDA",
+            "cnpj": "45291413000100",
+            "login_cpf": "71361170115"
+        },
+        "103099093": {
+            "display_name": "ELIANE CRISTINA DIAS DE OLIVEIRA",
+            "cnpj": "02710780000199",
+            "login_cpf": "71361170115"
+        },
+        "105521671": {
+            "display_name": "ELISANDRA FLEURY NEGOCIOS",
+            "cnpj": "17139678000152",
+            "login_cpf": "71361170115"
+        },
+        "108341186": {
+            "display_name": "EMPORIO ALPHA COMERCIO DE BEBIDAS LTDA",
+            "cnpj": "37994854000140",
+            "login_cpf": "71361170115"
+        },
+        "102865590": {
+            "display_name": "ESQUINAO COMERCIO DE AUTO PECAS LTDA",
+            "cnpj": "01509468000179",
+            "login_cpf": "86873598100"
+        },
+        "107316072": {
+            "display_name": "F. A. C. RODRIGUES LIMA",
+            "cnpj": "30893626000135",
+            "login_cpf": "71361170115"
+        },
+        "107386968": {
+            "display_name": "FABRICA SAUD LANCHES EIRELI",
+            "cnpj": "31535061000187",
+            "login_cpf": "86873598100"
+        },
+        "201709295": {
+            "display_name": "FG COMERCIO IMP E EXP LTDA",
+            "cnpj": "56039865000116",
+            "login_cpf": "71361170115"
+        },
+        "202536777": {
+            "display_name": "FJA LAVANDERIA ESPECIALIZADA LTDA",
+            "cnpj": "54807175000134",
+            "login_cpf": "86873598100"
+        },
+        "107186560": {
+            "display_name": "FLEURY EMP NEG SERVICOS LTDA",
+            "cnpj": "06922545000131",
+            "login_cpf": "71361170115"
+        },
+        "107462982": {
+            "display_name": "FM INSPECOES E ENG E COM LTDA",
+            "cnpj": "23294852000134",
+            "login_cpf": "86873598100"
+        },
+        "200385178": {
+            "display_name": "FMA INSPECOES INDUST E DISTRIB  LTDA",
+            "cnpj": "50680749000103",
+            "login_cpf": "86873598100"
+        },
+        "201510766": {
+            "display_name": "FRIGOGYN ALIMENTOS LTDA",
+            "cnpj": "55209116000127",
+            "login_cpf": "71361170115"
+        },
+        "107945525": {
+            "display_name": "G O ALIMENTOS LTDA",
+            "cnpj": "37163879000100",
+            "login_cpf": "71361170115"
+        },
+        "108151506": {
+            "display_name": "GCR COM IMP EXP DE PECAS LTDA",
+            "cnpj": "39846325000125",
+            "login_cpf": "71361170115"
+        },
+        "105580520": {
+            "display_name": "GELATERIA VENEZIA LTDA",
+            "cnpj": "17600139000179",
+            "login_cpf": "71361170115"
+        },
+        "107353962": {
+            "display_name": "GOIAS COMMON RAIL LTDA",
+            "cnpj": "31258697000129",
+            "login_cpf": "71361170115"
+        },
+        "105274771": {
+            "display_name": "GR CARNES SUINAS LTDA",
+            "cnpj": "15167258000154",
+            "login_cpf": "86873598100"
+        },
+        "105387240": {
+            "display_name": "H.G.M - SERVICOS LTDA",
+            "cnpj": "15660169000145",
+            "login_cpf": "71361170115"
+        },
+        "108731685": {
+            "display_name": "HAMADI MODA LTDA",
+            "cnpj": "42411969000103",
+            "login_cpf": "71361170115"
+        },
+        "106243284": {
+            "display_name": "HG ARQUIT ENG E CONST  LTDA",
+            "cnpj": "15393031000127",
+            "login_cpf": "71361170115"
+        },
+        "108125076": {
+            "display_name": "HIDRO MOLINA AGRO AMB LTDA",
+            "cnpj": "39543908000187",
+            "login_cpf": "71361170115"
+        },
+        "101662602": {
+            "display_name": "HIPPER DIESEL LTDA",
+            "cnpj": "03385697000154",
+            "login_cpf": "71361170115"
+        },
+        "108269248": {
+            "display_name": "IBCO INDUSTRIA DE BOTOES",
+            "cnpj": "40921917000143",
+            "login_cpf": "86873598100"
+        },
+        "107140314": {
+            "display_name": "IMEPE - INST MULTIPROF EST PESQ E EVENTOS LT",
+            "cnpj": "05240509000125",
+            "login_cpf": "71361170115"
+        },
+        "102302332": {
+            "display_name": "IMPERIO DOS BOTOES LTDA",
+            "cnpj": "26956045000128",
+            "login_cpf": "86873598100"
+        },
+        "104321300": {
+            "display_name": "IMPERIO DOS BOTOES LTDA - FILIAL",
+            "cnpj": "26956045000209",
+            "login_cpf": "86873598100"
+        },
+        "200167103": {
+            "display_name": "INLUZ ARTIGOS DE ILUMINACAO LTDA",
+            "cnpj": "49822184000164",
+            "login_cpf": "71361170115"
+        },
+        "108054861": {
+            "display_name": "JF JR FRUTAS ATACADISTA LTDA",
+            "cnpj": "38266884000101",
+            "login_cpf": "71361170115"
+        },
+        "104528370": {
+            "display_name": "JN BUFFET LTDA",
+            "cnpj": "09360419000129",
+            "login_cpf": "71361170115"
+        },
+        "104434147": {
+            "display_name": "JR COMERCIAL DE FRUTAS LTDA",
+            "cnpj": "10658879000117",
+            "login_cpf": "71361170115"
+        },
+        "201960966": {
+            "display_name": "JR DIESEL MECANICA ESPECIALIZADA LTDA",
+            "cnpj": "57621678000109",
+            "login_cpf": "71361170115"
+        },
+        "200191446": {
+            "display_name": "KETHELYN DA SILVA LTDA",
+            "cnpj": "43595036000178",
+            "login_cpf": "71361170115"
+        },
+        "200038125": {
+            "display_name": "L DA SILVA PEREIRA VARIEDADES LTDA",
+            "cnpj": "49324490000170"
+        },
+        "106572660": {
+            "display_name": "L. S. VELOSO - SU BY MULTIMARCAS LTDA",
+            "cnpj": "24238752000153",
+            "login_cpf": "71361170115"
+        },
+        "105422630": {
+            "display_name": "LACASA MOVEIS LTDA",
+            "cnpj": "16700115000129",
+            "login_cpf": "86873598100"
+        },
+        "107036606": {
+            "display_name": "LEO BALA GAS LTDA",
+            "cnpj": "28461443000107",
+            "login_cpf": "86873598100"
+        },
+        "200718533": {
+            "display_name": "LM ESQUADRIAS DE ALUMINIO LTDA",
+            "cnpj": "51995567000186",
+            "login_cpf": "71361170115"
+        },
+        "109269721": {
+            "display_name": "LOTTUS SISTEMAS GESTAO EMPRES LTDA",
+            "cnpj": "46348395000119",
+            "login_cpf": "71361170115"
+        },
+        "108382729": {
+            "display_name": "MARCO C SANTOS VARIEDADES LTDA",
+            "cnpj": "24799471000170",
+            "login_cpf": "71361170115"
+        },
+        "105226793": {
+            "display_name": "MARIA REGINA DA SILVA 00476256194",
+            "cnpj": "97532341000140",
+            "login_cpf": "86873598100"
+        },
+        "104269120": {
+            "display_name": "MM COMUNICACAO VISUAL LTDA",
+            "cnpj": "09422301000188",
+            "login_cpf": "71361170115"
+        },
+        "107336049": {
+            "display_name": "MODUM TECH SUPRIM TECNOL LTDA",
+            "cnpj": "30820994000153",
+            "login_cpf": "86873598100"
+        },
+        "202502252": {
+            "display_name": "MOHU TABACARIA CAFETERIA BEBIDAS",
+            "cnpj": "59860309000102",
+            "login_cpf": "71361170115"
+        },
+        "103614818": {
+            "display_name": "MONSTRO DISCOS E FITAS MAGNET BRASIL",
+            "cnpj": "03855547000167",
+            "login_cpf": "86873598100"
+        },
+        "201043459": {
+            "display_name": "MV AUTO REPASSE LTDA",
+            "cnpj": "53261241000150"
+        },
+        "105914100": {
+            "display_name": "NOVA ALTERNATIVA COM E SERV LTDA",
+            "cnpj": "19659405000164",
+            "login_cpf": "86873598100"
+        },
+        "201048582": {
+            "display_name": "NS DISTRIB DE EMBALAGENS E ATAC LTDA",
+            "cnpj": "53281795000110",
+            "login_cpf": "71361170115"
+        },
+        "104700629": {
+            "display_name": "NUTRATUS IND E COM DE COSMET E ALIM LTDA",
+            "cnpj": "11938121000103",
+            "login_cpf": "71361170115"
+        },
+        "109730151": {
+            "display_name": "NUTRIMAIS EMPORIO CAFE DA VILA LTDA",
+            "cnpj": "48145383000112",
+            "login_cpf": "71361170115"
+        },
+        "200231197": {
+            "display_name": "OLIVER COSMETICS LTDA",
+            "cnpj": "50067419000139",
+            "login_cpf": "71361170115"
+        },
+        "201690128": {
+            "display_name": "OPEN GATE COM IMP E EXP LTDA",
+            "cnpj": "55952403000122",
+            "login_cpf": "71361170115"
+        },
+        "202458342": {
+            "display_name": "PARANA E-COMMERCE IMP ATAC COM LTDA",
+            "cnpj": "59675965000127"
+        },
+        "109922603": {
+            "display_name": "PLA SOUZA EVENTOS LTDA",
+            "cnpj": "48888844000147"
+        },
+        "202670970": {
+            "display_name": "PORTI E ACESSORIOS SOFISTICADOS LTDA",
+            "cnpj": "19148250000100",
+            "login_cpf": "86873598100"
+        },
+        "106830660": {
+            "display_name": "PORTUGAL CARNES IMP E EXP LTDA FL",
+            "cnpj": "05084979000228",
+            "login_cpf": "86873598100"
+        },
+        "103972382": {
+            "display_name": "PORTUGAL CARNES IMP E EXP MT",
+            "cnpj": "05084979000147",
+            "login_cpf": "86873598100"
+        },
+        "202789985": {
+            "display_name": "PRISMA COMERCIO E REPRESENTACOES LTDA",
+            "cnpj": "39780466000192",
+            "login_cpf": "71361170115"
+        },
+        "103835237": {
+            "display_name": "QUEIJOS 2M INDUSTRIA DE LATICINIOS LTDA",
+            "cnpj": "07120913000190",
+            "login_cpf": "71361170115"
+        },
+        "201741601": {
+            "display_name": "R R DE CASTRO VARIEDADES LTDA",
+            "cnpj": "18563740000100",
+            "login_cpf": "86873598100"
+        },
+        "107530481": {
+            "display_name": "R. DA S. ALVARES DISTRIBUIDORA DE BEBIDAS",
+            "cnpj": "31974858000180",
+            "login_cpf": "71361170115"
+        },
+        "106186841": {
+            "display_name": "RARO DIESEL LTDA",
+            "cnpj": "21510881000160",
+            "login_cpf": "71361170115"
+        },
+        "108060870": {
+            "display_name": "RAYSSA GUILHERME WEAR LTDA",
+            "cnpj": "37123397000119",
+            "login_cpf": "71361170115"
+        },
+        "107321580": {
+            "display_name": "RB COMUNICACAO VISUAL LTDA",
+            "cnpj": "30829223000127",
+            "login_cpf": "71361170115"
+        },
+        "109080661": {
+            "display_name": "REAL PESCA FOODS LTDA",
+            "cnpj": "45705328000141",
+            "login_cpf": "71361170115"
+        },
+        "201706180": {
+            "display_name": "REAL PLUS ESQUADRIAS LTDA",
+            "cnpj": "44219185000103",
+            "login_cpf": "86873598100"
+        },
+        "108474526": {
+            "display_name": "RENATA NASCIMENTO SANTOS",
+            "cnpj": "42234396000181",
+            "login_cpf": "71361170115"
+        },
+        "107833158": {
+            "display_name": "REVENDA VIVA SERVICOS GRAFICOS LTDA",
+            "cnpj": "33210019000111",
+            "login_cpf": "86873598100"
+        },
+        "105158950": {
+            "display_name": "SABOR ARABE RESTAURANTE LTDA",
+            "cnpj": "97529601000128",
+            "login_cpf": "86873598100"
+        },
+        "106380583": {
+            "display_name": "SABOR ARABE RESTAURANTE LTDA - FL",
+            "cnpj": "97529601000209",
+            "login_cpf": "86873598100"
+        },
+        "200873105": {
+            "display_name": "SAFETY SERVICOS LTDA.",
+            "cnpj": "36046568000190",
+            "login_cpf": "86873598100"
+        },
+        "109753330": {
+            "display_name": "SELECT NEGOCIOS IMOBILIARIOS LTDA",
+            "cnpj": "48237406000119"
+        },
+        "106058053": {
+            "display_name": "SIQUEIRA E FREITAS ALIM LTDA",
+            "cnpj": "20661578000104"
+        },
+        "200683160": {
+            "display_name": "SML BELLA ZAYA ROUPAS FEMININAS LTDA",
+            "cnpj": "35003775000103"
+        },
+        "107835894": {
+            "display_name": "STUDIO BEAUTY CHARM LTDA",
+            "cnpj": "35828780000147"
+        },
+        "104418818": {
+            "display_name": "SU BY MULTIMARCAS LTDA",
+            "cnpj": "10618161000105",
+            "login_cpf": "71361170115"
+        },
+        "200905120": {
+            "display_name": "TAINARA M SANTOS - ESCOLA ANITA",
+            "cnpj": "32638855000139",
+            "login_cpf": "71361170115"
+        },
+        "108783332": {
+            "display_name": "TEMPO LIVRE LAVANDERIAS LTDA",
+            "cnpj": "39781537000171",
+            "login_cpf": "86873598100"
+        },
+        "105871168": {
+            "display_name": "TERRA ALIMENTOS LTDA",
+            "cnpj": "19420593000173",
+            "login_cpf": "71361170115"
+        },
+        "104083352": {
+            "display_name": "TERRACO SERVICOS E ASSESSORIA LTDA",
+            "cnpj": "02486936000108",
+            "login_cpf": "71361170115"
+        },
+        "104750901": {
+            "display_name": "TUCARANA INDUSTRIA E COMERCIO LTDA",
+            "cnpj": "01493392000130",
+            "login_cpf": "71361170115"
+        },
+        "202020363": {
+            "display_name": "TUNEL MAQUINAS E FERRAMENTAS LTDA",
+            "cnpj": "57881074000100",
+            "login_cpf": "71361170115"
+        },
+        "202730638": {
+            "display_name": "UQUEIMPORTA NEGOCIOS E IMP LTDA",
+            "cnpj": "60813666000190",
+            "login_cpf": "71361170115"
+        },
+        "104042010": {
+            "display_name": "V. A. VICENTE REST COM ALIM LTDA",
+            "cnpj": "08208149000172",
+            "login_cpf": "71361170115"
+        },
+        "106839454": {
+            "display_name": "VALLIM E BASTREGHI ACRILICOS LTDA",
+            "cnpj": "12094836000181",
+            "login_cpf": "71361170115"
+        },
+        "202143341": {
+            "display_name": "WAY BRINDES E SERVICOS LTDA",
+            "cnpj": "58399805000130",
+            "login_cpf": "71361170115"
+        },
+        "103707832": {
+            "display_name": "2ACRAL DISTRIB E REP LTDA",
+            "cnpj": "06137634000177",
+            "login_cpf": "71361170115"
+        },
+        "109359461": {
+            "display_name": "2V EMPREENDIMENTOS NEG SERV LTDA",
+            "cnpj": "46672831000100",
+            "login_cpf": "71361170115"
+        },
+        "108892484": {
+            "display_name": "45.017.618 LILIANE COIMBRA ROCHA",
+            "cnpj": "45017618000100",
+            "login_cpf": "71361170115"
+        },
+        "104234504": {
+            "display_name": "CURTPOL COUROS TECNOLOGIA E LOGISTICA EM COUROS LTDA",
+            "cnpj": "09274506000163",
+            "login_cpf": "71361170115"
+        },
+        "203643038": {
+            "display_name": "FENIX JAA EMPREENDIMENTOS HOLDING LTDA",
+            "cnpj": "64582437000163",
+            "login_cpf": "71361170115"
+        },
+        "203627113": {
+            "display_name": "WINETRADE COMERCIO E REPRESENTACAO LTDA",
+            "cnpj": "64516332000106",
+            "login_cpf": "71361170115"
+        },
+        "200436627": {
+            "display_name": "LCPR ENGENHARIA E SERVICOS LTDA",
+            "cnpj": "50880206000121",
+            "login_cpf": "71361170115"
+        },
+        "203750691": {
+            "display_name": "TECH VOLTZ LTDA",
+            "cnpj": "64982472000170",
+            "login_cpf": "71361170115"
+        },
+        "203760859": {
+            "display_name": "BMM SERVICOS E NEGOCIOS LTDA",
+            "cnpj": "65029772000100",
+            "login_cpf": "71361170115"
+        },
+        "109788869": {
+            "display_name": "EMPORIO DE MERCADORIAS MELANCIA.COM LTDA",
+            "cnpj": "48375671000163",
+            "login_cpf": "71361170115"
+        },
+        "109067762": {
+            "display_name": "IDEAL REFORMA E CONSTRUCAO LTDA",
+            "cnpj": "41663753000164",
+            "login_cpf": "71361170115"
+        },
+        "203699645": {
+            "display_name": "RAIZES E SONHOS INCORPORADORA LTDA",
+            "cnpj": "64769655000101",
+            "login_cpf": "71361170115"
+        },
+        "203376927": {
+            "display_name": "FLAT 55 RESIDENCIAL LTDA",
+            "cnpj": "63514214000104",
+            "login_cpf": "71361170115"
+        },
+        "107102188": {
+            "display_name": "DONIZETH QUEIROZ DA SILVA 37515225149",
+            "cnpj": "29098864000170",
+            "login_cpf": "86873598100"
+        },
+        "203650409": {
+            "display_name": "VENN ENGENHARIA LTDA",
+            "cnpj": "64473828000140",
+            "login_cpf": "86873598100"
+        },
+        "203284216": {
+            "display_name": "SMILE ECOM E-COMMERCE MARKETING E PROMOCOES LTDA",
+            "cnpj": "63128492000115",
+            "login_cpf": "71361170115"
+        },
+        "202279634": {
+            "display_name": "SCRIPT ASSESSORIA EVENTOS E PESQUISAS LTDA",
+            "cnpj": "26949503000100",
+            "login_cpf": "71361170115"
+        },
+        "108063461": {
+            "display_name": "SUPERMERCADO BURITIS MIRANDA LTDA",
+            "cnpj": "38394308000131",
+            "login_cpf": "71361170115"
+        },
+        "203298519": {
+            "display_name": "ELSHADAY MORANGOS DISTRIBUICAO LTDA",
+            "cnpj": "63182330000165",
+            "login_cpf": "71361170115"
+        },
+        "107709546": {
+            "display_name": "CT STORE SERVICOS E CONVENIENCIA LTDA",
+            "cnpj": "33791733000140",
+            "login_cpf": "71361170115"
+        },
+        "202940497": {
+            "display_name": "ALPHA DIGITAL MARKETING E PROMOCOES LTDA",
+            "cnpj": "61692888000165",
+            "login_cpf": "71361170115"
+        },
+        "107986930": {
+            "display_name": "D.C.A ELETRONICOS LTDA",
+            "cnpj": "37605910000108",
+            "login_cpf": "71361170115"
+        },
+        "109568214": {
+            "display_name": "L R VIANA HMA CONSTR PLANEJ E CONSULT LTDA",
+            "cnpj": "23186211000166",
+            "login_cpf": "71361170115"
+        },
+        "107673533": {
+            "display_name": "PRODUTOS DA TERRA ALIMENTOS LTDA",
+            "cnpj": "34212469000106",
+            "login_cpf": "71361170115"
+        },
+        "106150634": {
+            "display_name": "CURTIDORA GOIAS LTDA",
+            "cnpj": "20725698000110",
+            "login_cpf": "71361170115"
+        },
+        "105232696": {
+            "display_name": "AR EVOLUTION LTDA",
+            "cnpj": "14894197000164",
+            "login_cpf": "71361170115"
+        },
+        "201466872": {
+            "display_name": "MELANCIA ATACADISTA DE FRUTAS LTDA",
+            "cnpj": "34279056000149",
+            "login_cpf": "71361170115"
+        },
+        "202754707": {
+            "display_name": "NELL CEL COMERCIO, SERVICOS E NEGOCIOS LTDA",
+            "cnpj": "60910971000109",
+            "login_cpf": "71361170115"
+        },
+        "103405348": {
+            "display_name": "JR FRUTAS ATACADISTA CEASA GO YPER LTDA",
+            "cnpj": "04326285000106",
+            "login_cpf": "71361170115"
+        },
+        "203525981": {
+            "display_name": "MIX REPRESENTACAO E DISTRIBUIDORA LTDA",
+            "cnpj": "64107686000105",
+            "login_cpf": "86873598100"
+        },
+        "200739220": {
+            "display_name": "ILP SOLUCOES LTDA",
+            "cnpj": "52068733000161",
+            "login_cpf": "86873598100"
+        },
+        "202751180": {
+            "display_name": "RAMOA SOLUCOES E PROJETOS LTDA",
+            "cnpj": "60895608000153",
+            "login_cpf": "86873598100"
+        },
+        "203820339": {
+            "display_name": "HANNUM E ASSOCIADOS LTDA",
+            "cnpj": "65269705000154",
+            "login_cpf": "86873598100"
+        },
+        "108051471": {
+            "display_name": "TALITHA ARIANA MAGALHAES 01566259118",
+            "cnpj": "37743872000150",
+            "login_cpf": "86873598100"
+        },
+        "108886441": {
+            "display_name": "CL CONSTRUTORA LTDA",
+            "cnpj": "44997629000123",
+            "login_cpf": "86873598100"
+        },
+        "105716928": {
+            "display_name": "18.151.638 WANESSA CRISTINA RIBEIRO FLEURY",
+            "cnpj": "18151638000199",
+            "login_cpf": "86873598100"
+        },
+        "104943513": {
+            "display_name": "JOABE BARBOSA COSTA",
+            "cnpj": "13131236000109",
+            "login_cpf": "86873598100"
+        },
+        "107994585": {
+            "display_name": "37.595.611 NICOLE CORREIA FLEURY",
+            "cnpj": "37595611000130",
+            "login_cpf": "71361170115"
+        },
+        "202949524": {
+            "display_name": "FORTES FABRICACAO DE PRE-MOLDADOS LTDA",
+            "cnpj": "61734070000168",
+            "login_cpf": "71361170115"
+        },
+        "106148087": {
+            "display_name": "BARTOLOMEU COMERCIO, IMPORTACAO E EXPORTACAO LTDA",
+            "cnpj": "14914021000127",
+            "login_cpf": "71361170115"
+        },
+        "103437827": {
+            "display_name": "DISTRIBUIDORA DE FRUTAS CONQUISTA LTDA",
+            "cnpj": "04643921000123",
+            "login_cpf": "71361170115"
+        },
+        "104078022": {
+            "display_name": "TRIP LOCACOES E EVENTOS LTDA",
+            "cnpj": "07030637000170",
+            "login_cpf": "71361170115"
+        },
+        "202925676": {
+            "display_name": "NUTRICAO ANIMAL AGRO 060 LTDA",
+            "cnpj": "41161044000180",
+            "login_cpf": "71361170115"
+        }
+    },
+    "selecoes_empresas": {
+        "marcadas": [
+            "105716928",
+            "201570548",
+            "107994585",
+            "108892484",
+            "106641883",
+            "103843108",
+            "201605333",
+            "108663337",
+            "108989100",
+            "202940497",
+            "106870734",
+            "104583690",
+            "105232696",
+            "201581850",
+            "108722309",
+            "108512398",
+            "200267485",
+            "103465656",
+            "203760859",
+            "201657988",
+            "108886441",
+            "105396214",
+            "108543358",
+            "105053112",
+            "108224279",
+            "200391780",
+            "107709546",
+            "106150634",
+            "104234504",
+            "107986930",
+            "106881140",
+            "106036416",
+            "200228641",
+            "107102188",
+            "201628295",
+            "103099093",
+            "109788869",
+            "102865590",
+            "107386968",
+            "203643038",
+            "201709295",
+            "202536777",
+            "203376927",
+            "107186560",
+            "107462982",
+            "200385178",
+            "202949524",
+            "107945525",
+            "108151506",
+            "105274771",
+            "105387240",
+            "108731685",
+            "203820339",
+            "106243284",
+            "108269248",
+            "109067762",
+            "200739220",
+            "107140314",
+            "102302332",
+            "104321300",
+            "200167103",
+            "108054861",
+            "104528370",
+            "104943513",
+            "104434147",
+            "201960966",
+            "103405348",
+            "200191446",
+            "200038125",
+            "109568214",
+            "106572660",
+            "105422630",
+            "200436627",
+            "107036606",
+            "200718533",
+            "109269721",
+            "108382729",
+            "105226793",
+            "201466872",
+            "203525981",
+            "104269120",
+            "107336049",
+            "202502252",
+            "103614818",
+            "201043459",
+            "202754707",
+            "105914100",
+            "201048582",
+            "104700629",
+            "202925676",
+            "109730151",
+            "200231197",
+            "201690128",
+            "202458342",
+            "109922603",
+            "202670970",
+            "106830660",
+            "103972382",
+            "202789985",
+            "107673533",
+            "103835237",
+            "201741601",
+            "107530481",
+            "203699645",
+            "202751180",
+            "106186841",
+            "108060870",
+            "107321580",
+            "109080661",
+            "201706180",
+            "108474526",
+            "107833158",
+            "105158950",
+            "106380583",
+            "200873105",
+            "202279634",
+            "109753330",
+            "106058053",
+            "203284216",
+            "200683160",
+            "107835894",
+            "104418818",
+            "108063461",
+            "200905120",
+            "108051471",
+            "203750691",
+            "108783332",
+            "105871168",
+            "104083352",
+            "104078022",
+            "104750901",
+            "202020363",
+            "202730638",
+            "104042010",
+            "106839454",
+            "203650409",
+            "202143341",
+            "203627113"
+        ],
+        "diario": []
+    },
+    "enviar_supabase": true
+}

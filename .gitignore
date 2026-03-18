@@ -1,0 +1,140 @@
+# =============================================================================
+# Dependências e build
+# =============================================================================
+node_modules
+.pnp
+.pnp.js
+dist
+dist-ssr
+*.local
+
+# =============================================================================
+# Ambiente (nunca commitar chaves ou secrets)
+# =============================================================================
+.env
+.env.local
+.env.development
+.env.development.local
+.env.production
+.env.production.local
+.env.*.local
+!.env.example
+
+# =============================================================================
+# Logs e debug
+# =============================================================================
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# =============================================================================
+# Cache e temporários (Vite, bundlers, etc.)
+# =============================================================================
+*.timestamp*
+*.ts.timestamp*.mjs
+.cache
+.parcel-cache
+.turbo
+.vite
+
+# =============================================================================
+# WhatsApp (backend) — sessão e cache (sensível e pesado)
+# =============================================================================
+backend/whatsapp-emissor/.wwebjs_auth/
+backend/whatsapp-emissor/.wwebjs_cache/
+backend/whatsapp-emissor/data/
+backend/whatsapp-emissor/**/session/
+backend/whatsapp-emissor/**/Default/
+backend/whatsapp-emissor/**/*.ldb
+backend/whatsapp-emissor/**/Cookies
+backend/whatsapp-emissor/**/LOCK
+backend/whatsapp-emissor/**/LOG
+backend/whatsapp-emissor/**/LOG.old
+Servidor/whatsapp-emissor/.wwebjs_auth/
+Servidor/whatsapp-emissor/.wwebjs_cache/
+Servidor/whatsapp-emissor/data/
+Servidor/whatsapp-emissor/**/session/
+Servidor/whatsapp-emissor/**/Default/
+Servidor/whatsapp-emissor/**/*.ldb
+Servidor/whatsapp-emissor/**/Cookies
+Servidor/whatsapp-emissor/**/LOCK
+Servidor/whatsapp-emissor/**/LOG
+Servidor/whatsapp-emissor/**/LOG.old
+
+# =============================================================================
+# Testes e cobertura
+# =============================================================================
+coverage
+*.lcov
+.nyc_output
+
+# =============================================================================
+# TypeScript / build info
+# =============================================================================
+*.tsbuildinfo
+
+# =============================================================================
+# Editores e IDEs
+# =============================================================================
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# =============================================================================
+# Sistema operacional
+# =============================================================================
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================================================
+# Arquivos pesados / binários (evitar commit acidental)
+# =============================================================================
+# Documentos na pasta public (não versionar para não aparecer em changes):
+public/contratos/*.docx
+public/contratos/*.pdf
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.tgz
+*.pfx
+*.p12
+*.key
+*.pem
+*.exe
+*.msi
+
+# Robô NFS / instaladores e dados (arquivos muito grandes)
+docs/fiscal/nfs/**/data/
+docs/fiscal/**/Instalador/
+docs/fiscal/**/Output/
+**/Automacao_*_Setup.exe
+docs/paralegal/taxas e impostos/goiania-taxas-impostos-robot/data/Chrome/
+docs/paralegal/taxas e impostos/goiania-taxas-impostos-robot/data/chrome_cdp_profile/
+docs/paralegal/taxas e impostos/goiania-taxas-impostos-robot/data/chrome_start.log
+
+# eCAC Login (build/executável PyInstaller)
+docs/ecac/eCAC Login/
+
+# =============================================================================
+# Deploy / plataformas (opcional)
+# =============================================================================
+.vercel
+.netlify
+
+# Supabase local (se usar supabase start)
+supabase/.branches
+supabase/.temp

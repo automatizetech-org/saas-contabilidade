@@ -1,0 +1,294 @@
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getBranding,
+  upsertBranding,
+  uploadLogoAndFavicon as uploadLogoAndFaviconService,
+  removeLogo as removeLogoService,
+  type ClientBrandingRow,
+  type ClientBrandingInput,
+} from "@/services/brandingService";
+import {
+  BRANDING_CLIENT_ID,
+  deriveBrandTokens,
+} from "@/lib/brandingTheme";
+import defaultLogoUrl from "@/assets/images/logo.png";
+
+const BRANDING_QUERY_KEY = ["branding", BRANDING_CLIENT_ID];
+
+/** Nome da marca (ex.: "Contabilidade"). Vazio = usa "Dashboard" / "Analytics" sem sufixo. */
+export function getBrandDisplayName(clientName: string | null | undefined): string {
+  return (clientName ?? "").trim();
+}
+
+/** Título da sidebar: "Dashboard" ou "Dashboard {nome}" */
+export function getSidebarTitle(clientName: string | null | undefined): string {
+  const name = getBrandDisplayName(clientName);
+  return name ? `Dashboard ${name}` : "Dashboard";
+}
+
+/** Título tipo Analytics: "Analytics" ou "{nome} Analytics" */
+export function getAnalyticsTitle(clientName: string | null | undefined): string {
+  const name = getBrandDisplayName(clientName);
+  return name ? `${name} Analytics` : "Analytics";
+}
+
+type BrandingState = {
+  branding: ClientBrandingRow | null;
+  isLoading: boolean;
+  error: Error | null;
+  brandName: string;
+  logoUrl: string;
+  faviconUrl: string | null;
+  useCustomPalette: boolean;
+  primaryColor: string | null;
+  secondaryColor: string | null;
+  tertiaryColor: string | null;
+  refetch: () => void;
+  applyBranding: (row: ClientBrandingRow | null) => void;
+  saveBranding: (input: ClientBrandingInput) => Promise<ClientBrandingRow>;
+  uploadLogo: (file: File) => Promise<string>;
+  removeLogo: () => Promise<void>;
+};
+
+const BrandingContext = createContext<BrandingState | null>(null);
+
+const DEFAULT_APPLE_TOUCH_ICON = "/icons/apple-touch-icon.png";
+
+/** Atualiza favicon, apple-touch-icon e meta og/twitter image no head. Quando url é null, restaura padrões. */
+function setIconsAndMetaInHead(url: string | null): void {
+  const iconUrl = url || defaultLogoUrl;
+  const appleTouchUrl = url || DEFAULT_APPLE_TOUCH_ICON;
+  const ogImageUrl = url || defaultLogoUrl;
+
+  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (link) link.href = iconUrl;
+  else {
+    link = document.createElement("link");
+    link.rel = "icon";
+    link.href = iconUrl;
+    document.head.appendChild(link);
+  }
+  document.querySelectorAll('link[rel="icon"]').forEach((el, i) => { if (i > 0) el.remove(); });
+
+  let appleTouch = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
+  if (appleTouch) appleTouch.href = appleTouchUrl;
+  else {
+    appleTouch = document.createElement("link");
+    appleTouch.rel = "apple-touch-icon";
+    appleTouch.href = appleTouchUrl;
+    document.head.appendChild(appleTouch);
+  }
+
+  const ogImage = document.querySelector('meta[property="og:image"]');
+  if (ogImage) ogImage.setAttribute("content", ogImageUrl);
+  const twitterImage = document.querySelector('meta[name="twitter:image"]');
+  if (twitterImage) twitterImage.setAttribute("content", ogImageUrl);
+}
+
+const DEFAULT_MANIFEST_URL = "/manifest.webmanifest";
+let manifestBlobUrl: string | null = null;
+
+/** Atualiza o link do manifest PWA para usar a logo e o título customizados, ou restaura o estático. */
+function setManifestInHead(iconUrl: string | null, title: string): void {
+  let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "manifest";
+    document.head.appendChild(link);
+  }
+
+  if (manifestBlobUrl) {
+    URL.revokeObjectURL(manifestBlobUrl);
+    manifestBlobUrl = null;
+  }
+
+  if (!iconUrl) {
+    link.href = DEFAULT_MANIFEST_URL;
+    return;
+  }
+
+  const manifest = {
+    name: title,
+    short_name: title,
+    start_url: "/",
+    scope: "/",
+    display: "standalone" as const,
+    background_color: "#0F172C",
+    theme_color: "#0F172C",
+    description: `${title} - Gestão e acompanhamento`,
+    icons: [
+      { src: iconUrl, sizes: "192x192", type: "image/png", purpose: "any" as const },
+      { src: iconUrl, sizes: "512x512", type: "image/png", purpose: "any" as const },
+      { src: iconUrl, sizes: "192x192", type: "image/png", purpose: "maskable" as const },
+      { src: iconUrl, sizes: "512x512", type: "image/png", purpose: "maskable" as const },
+    ],
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
+  manifestBlobUrl = URL.createObjectURL(blob);
+  link.href = manifestBlobUrl;
+}
+
+const PALETTE_VARS = [
+  "--primary", "--primary-foreground", "--primary-icon", "--accent", "--accent-foreground", "--ring",
+  "--sidebar-primary", "--sidebar-primary-foreground", "--sidebar-ring",
+  "--chart-1", "--chart-2", "--chart-3",
+  "--background", "--foreground", "--card", "--card-foreground",
+  "--muted", "--muted-foreground", "--border",
+  "--sidebar-background", "--sidebar-foreground", "--sidebar-accent", "--sidebar-accent-foreground", "--sidebar-border",
+];
+
+function applyCustomPaletteToDocument(row: ClientBrandingRow | null): void {
+  const root = document.documentElement;
+  if (!row?.use_custom_palette || !row.primary_color) {
+    PALETTE_VARS.forEach((key) => root.style.removeProperty(key));
+    return;
+  }
+  const tokens = deriveBrandTokens(row.primary_color, row.secondary_color, row.tertiary_color);
+  Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value, "important"));
+}
+
+function setDocumentTitle(clientName: string | null | undefined): void {
+  const name = getBrandDisplayName(clientName);
+  const title = name ? `Dashboard ${name}` : "Dashboard";
+  document.title = title;
+  const ogTitle = document.querySelector('meta[property="og:title"]');
+  if (ogTitle) ogTitle.setAttribute("content", title);
+  const twitterTitle = document.querySelector('meta[name="twitter:title"]');
+  if (twitterTitle) twitterTitle.setAttribute("content", title);
+  const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+  if (appleTitle) appleTitle.setAttribute("content", `${title} - Web`);
+}
+
+export function BrandingProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+  const [logoUrl, setLogoUrl] = useState<string>(defaultLogoUrl);
+  const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
+
+  const { data: branding = null, isLoading, error, refetch } = useQuery({
+    queryKey: BRANDING_QUERY_KEY,
+    queryFn: () => getBranding(BRANDING_CLIENT_ID),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const applyBranding = useCallback((row: ClientBrandingRow | null) => {
+    if (!row) {
+      setLogoUrl(defaultLogoUrl);
+      setFaviconUrl(null);
+      setIconsAndMetaInHead(null);
+      setManifestInHead(null, "Dashboard");
+      setDocumentTitle(null);
+      applyCustomPaletteToDocument(null);
+      return;
+    }
+    const title = getBrandDisplayName(row.client_name) ? `Dashboard ${getBrandDisplayName(row.client_name)}` : "Dashboard";
+    setDocumentTitle(row.client_name);
+    if (row.use_custom_logo && row.logo_url) {
+      const iconUrl = row.favicon_url || row.logo_url;
+      setLogoUrl(row.logo_url);
+      setFaviconUrl(iconUrl);
+      setIconsAndMetaInHead(iconUrl);
+      setManifestInHead(iconUrl, title);
+    } else {
+      setLogoUrl(defaultLogoUrl);
+      setFaviconUrl(null);
+      setIconsAndMetaInHead(null);
+      setManifestInHead(null, title);
+    }
+    applyCustomPaletteToDocument(row);
+  }, []);
+
+  useEffect(() => {
+    applyBranding(branding ?? null);
+  }, [branding, applyBranding]);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (branding?.use_custom_palette && branding.primary_color) {
+        applyCustomPaletteToDocument(branding);
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, [branding]);
+
+  const saveBranding = useCallback(
+    async (input: ClientBrandingInput): Promise<ClientBrandingRow> => {
+      const row = await upsertBranding(input, BRANDING_CLIENT_ID);
+      queryClient.setQueryData(BRANDING_QUERY_KEY, row);
+      applyBranding(row);
+      return row;
+    },
+    [queryClient, applyBranding]
+  );
+
+  const uploadLogo = useCallback(
+    async (file: File): Promise<string> => {
+      const url = await uploadLogoAndFaviconService(file, BRANDING_CLIENT_ID);
+      const row = await upsertBranding(
+        { logo_url: url, favicon_url: url, use_custom_logo: true, use_custom_favicon: true },
+        BRANDING_CLIENT_ID
+      );
+      queryClient.setQueryData(BRANDING_QUERY_KEY, row);
+      setLogoUrl(url);
+      setFaviconUrl(url);
+      setIconsAndMetaInHead(url);
+      applyBranding(row);
+      return url;
+    },
+    [queryClient, applyBranding]
+  );
+
+  const removeLogo = useCallback(async () => {
+    await removeLogoService(BRANDING_CLIENT_ID);
+    const row = await getBranding(BRANDING_CLIENT_ID);
+    queryClient.setQueryData(BRANDING_QUERY_KEY, row);
+    setFaviconUrl(null);
+    setIconsAndMetaInHead(null);
+    applyBranding(row ?? null);
+  }, [queryClient, applyBranding]);
+
+  const value = useMemo<BrandingState>(
+    () => ({
+      branding,
+      isLoading,
+      error: error instanceof Error ? error : null,
+      brandName: getBrandDisplayName(branding?.client_name),
+      logoUrl,
+      faviconUrl,
+      useCustomPalette: branding?.use_custom_palette ?? false,
+      primaryColor: branding?.primary_color ?? null,
+      secondaryColor: branding?.secondary_color ?? null,
+      tertiaryColor: branding?.tertiary_color ?? null,
+      refetch,
+      applyBranding,
+      saveBranding,
+      uploadLogo,
+      removeLogo,
+    }),
+    [
+      branding,
+      isLoading,
+      error,
+      logoUrl,
+      faviconUrl,
+      refetch,
+      applyBranding,
+      saveBranding,
+      uploadLogo,
+      removeLogo,
+    ]
+  );
+
+  return <BrandingContext.Provider value={value}>{children}</BrandingContext.Provider>;
+}
+
+export function useBranding(): BrandingState {
+  const ctx = useContext(BrandingContext);
+  if (!ctx) throw new Error("useBranding must be used within BrandingProvider");
+  return ctx;
+}
+
+export function useBrandingOptional(): BrandingState | null {
+  return useContext(BrandingContext);
+}
