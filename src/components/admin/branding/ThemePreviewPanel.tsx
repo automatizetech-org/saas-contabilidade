@@ -51,6 +51,15 @@ export function ThemePreviewPanel({
         >
           Badge
         </span>
+        <span
+          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium"
+          style={{
+            backgroundColor: tertiary,
+            color: "hsl(var(--tertiary-foreground))",
+          }}
+        >
+          Destaque
+        </span>
         <div
           className="h-6 rounded w-16 border"
           style={{
@@ -58,6 +67,31 @@ export function ThemePreviewPanel({
             backgroundColor: `${primary}15`,
           }}
         />
+      </div>
+      <div
+        className="rounded-lg border border-border p-3"
+        style={{
+          background:
+            `linear-gradient(135deg, ${primary}20, ${secondary}18 55%, ${tertiary}20)`,
+        }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Cor terciária aplicada
+            </p>
+            <p className="text-xs text-foreground">
+              Usada em destaques, gradientes e cartões auxiliares.
+            </p>
+          </div>
+          <div
+            className="h-10 w-10 rounded-xl border"
+            style={{
+              backgroundColor: tertiary,
+              borderColor: `${tertiary}55`,
+            }}
+          />
+        </div>
       </div>
       <div className="flex gap-2 pt-2 border-t border-border">
         <div

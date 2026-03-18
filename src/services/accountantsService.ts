@@ -1,16 +1,15 @@
 import { supabase } from "./supabaseClient"
 import type { Tables } from "@/types/database"
+import { formatCpf as formatCpfValue, isValidCpf, onlyDigits as digitsOnly } from "@/lib/brazilDocuments"
 
 export type Accountant = Tables<"accountants">
 
 export function onlyDigits(value: string) {
-  return value.replace(/\D/g, "")
+  return digitsOnly(value)
 }
 
 export function formatCpf(value: string) {
-  const digits = onlyDigits(value)
-  if (digits.length !== 11) return value
-  return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
+  return formatCpfValue(value)
 }
 
 export async function getAccountants(activeOnly = true): Promise<Accountant[]> {
@@ -30,7 +29,7 @@ export function findAccountantByCpf(accountants: Accountant[], cpf: string | nul
 
 export async function createAccountant(params: { name: string; cpf: string }): Promise<Accountant> {
   const cpfDigits = onlyDigits(params.cpf)
-  if (cpfDigits.length !== 11) throw new Error("CPF deve ter 11 dígitos.")
+  if (!isValidCpf(cpfDigits)) throw new Error("Informe um CPF válido para o contador.")
   const { data, error } = await supabase
     .from("accountants")
     .insert({ name: params.name.trim(), cpf: cpfDigits })
@@ -48,7 +47,7 @@ export async function updateAccountant(
   if (updates.name !== undefined) payload.name = updates.name.trim()
   if (updates.cpf !== undefined) {
     const digits = onlyDigits(updates.cpf)
-    if (digits.length !== 11) throw new Error("CPF deve ter 11 dígitos.")
+    if (!isValidCpf(digits)) throw new Error("Informe um CPF válido para o contador.")
     payload.cpf = digits
   }
   if (updates.active !== undefined) payload.active = updates.active

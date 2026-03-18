@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { createCompany, upsertCompanyRobotConfig, ROBOT_NFS_TECHNICAL_ID } from "@/services/companiesService"
@@ -17,9 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { formatCnpjInput, isValidCnpj } from "@/lib/brazilDocuments"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
 import { cn } from "@/utils"
+import { AccountantsManagerPanel } from "@/components/companies/AccountantsManagerPanel"
 
 function onlyDigits(s: string) {
   return s.replace(/\D/g, "")
@@ -28,6 +30,30 @@ function onlyDigits(s: string) {
 function formatCnpjDigits(d: string) {
   if (d.length !== 14) return d
   return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+}
+
+function normalizeLocationName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/'/g, "")
+    .toLowerCase()
+    .trim()
+}
+
+function resolveCityNameFromOptions(requestedCityName: string, availableCities: Array<{ name: string }>) {
+  const normalizedRequested = normalizeLocationName(requestedCityName)
+  if (!normalizedRequested) return ""
+
+  const exactMatch = availableCities.find((city) => normalizeLocationName(city.name) === normalizedRequested)
+  if (exactMatch) return exactMatch.name
+
+  const partialMatch = availableCities.find((city) => {
+    const normalizedCityName = normalizeLocationName(city.name)
+    return normalizedCityName.includes(normalizedRequested) || normalizedRequested.includes(normalizedCityName)
+  })
+
+  return partialMatch?.name ?? ""
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -57,6 +83,7 @@ export default function EmpresasNovaPage() {
   const [stateRegistration, setStateRegistration] = useState("")
   const [stateCode, setStateCode] = useState("")
   const [cityName, setCityName] = useState("")
+  const [pendingAutoCityName, setPendingAutoCityName] = useState("")
   const [cae, setCae] = useState("")
   const [useCertificate, setUseCertificate] = useState(false)
   const [certFile, setCertFile] = useState<File | null>(null)
@@ -83,13 +110,24 @@ export default function EmpresasNovaPage() {
     staleTime: 24 * 60 * 60 * 1000,
   })
 
+  useEffect(() => {
+    if (!pendingAutoCityName || cities.length === 0) return
+
+    const matchedCityName = resolveCityNameFromOptions(pendingAutoCityName, cities)
+    if (matchedCityName) {
+      setCityName(matchedCityName)
+    }
+
+    setPendingAutoCityName("")
+  }, [pendingAutoCityName, cities])
+
   const [nfsRobotEnabled, setNfsRobotEnabled] = useState(false)
   const [nfsRobotAuthMode, setNfsRobotAuthMode] = useState<"password" | "certificate">("password")
   const [nfsRobotPassword, setNfsRobotPassword] = useState("")
 
   const fetchByCnpj = async () => {
     const digits = onlyDigits(document)
-    if (digits.length !== 14) {
+    if (!isValidCnpj(digits)) {
       setError("Informe um CNPJ válido (14 dígitos) para buscar.")
       return
     }
@@ -104,7 +142,7 @@ export default function EmpresasNovaPage() {
       if (data.razao_social && !name.trim()) setName(data.razao_social)
       if (data.inscricao_estadual && !stateRegistration.trim()) setStateRegistration(data.inscricao_estadual)
       if (data.state_code) setStateCode(data.state_code)
-      if (data.city_name) setCityName(data.city_name)
+      if (data.city_name) setPendingAutoCityName(data.city_name)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erro ao consultar a Receita. Verifique a conexão.")
     } finally {
@@ -115,6 +153,11 @@ export default function EmpresasNovaPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    const documentDigits = onlyDigits(document)
+    if (documentDigits && !isValidCnpj(documentDigits)) {
+      setError("Informe um CNPJ válido para cadastrar a empresa.")
+      return
+    }
     if (useCertificate && (!certFile || !certPassword.trim())) {
       setError("Ao usar certificado digital, selecione o arquivo .pfx e informe a senha.")
       return
@@ -133,8 +176,8 @@ export default function EmpresasNovaPage() {
           toast.error("Senha do certificado incorreta.")
           return
         }
-        const docDigits = onlyDigits(document)
-        if (docDigits.length !== 14) {
+        const docDigits = documentDigits
+        if (!isValidCnpj(docDigits)) {
           setError("Para vincular o certificado corretamente, informe um CNPJ válido (14 dígitos) antes de enviar o .pfx.")
           toast.error("Informe um CNPJ válido antes de enviar o certificado.")
           return
@@ -184,8 +227,9 @@ export default function EmpresasNovaPage() {
         <p className="text-sm text-muted-foreground mt-1">Cadastre uma nova empresa para gerenciar no dashboard.</p>
       </div>
 
-      <GlassCard className="p-6 max-w-md">
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid gap-6 min-[2100px]:grid-cols-[minmax(0,1fr)_440px] min-[2100px]:items-start">
+        <GlassCard className="p-6">
+          <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">Nome</Label>
             <Input
@@ -199,13 +243,13 @@ export default function EmpresasNovaPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="document">Documento (CNPJ)</Label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 id="document"
                 value={document}
-                onChange={(e) => setDocument(e.target.value)}
+                onChange={(e) => setDocument(formatCnpjInput(e.target.value))}
                 onBlur={() => {
-                  if (!name.trim() && onlyDigits(document).length === 14) fetchByCnpj()
+                  if (!name.trim() && isValidCnpj(document)) fetchByCnpj()
                 }}
                 placeholder="00.000.000/0001-00"
                 disabled={loading}
@@ -217,6 +261,7 @@ export default function EmpresasNovaPage() {
                 onClick={fetchByCnpj}
                 disabled={loading || loadingCnpj}
                 title="Preencher nome pela Receita Federal se estiver vazio"
+                className="sm:self-auto"
               >
                 {loadingCnpj ? "Buscando..." : "Buscar"}
               </Button>
@@ -245,6 +290,7 @@ export default function EmpresasNovaPage() {
                   const nextState = value === "none" ? "" : value
                   setStateCode(nextState)
                   setCityName("")
+                  setPendingAutoCityName("")
                 }}
                 disabled={loading}
               >
@@ -445,8 +491,26 @@ export default function EmpresasNovaPage() {
               Cancelar
             </Button>
           </div>
-        </form>
-      </GlassCard>
+          </form>
+        </GlassCard>
+
+        <GlassCard className="p-6 h-fit">
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold font-display tracking-tight">Gerenciar contadores</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Use o mesmo fluxo de gerenciamento do escritorio sem sair da tela de nova empresa.
+              </p>
+            </div>
+            <AccountantsManagerPanel
+              onAccountantCreated={(cpf) => {
+                setContadorCpf(cpf)
+                toast.success("Contador adicionado e selecionado na empresa.")
+              }}
+            />
+          </div>
+        </GlassCard>
+      </div>
     </div>
   )
 }

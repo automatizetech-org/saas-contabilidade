@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient"
 import type { Company } from "./profilesService"
 import type { Tables } from "@/types/database"
+import { isValidCnpj, isValidCpf, onlyDigits } from "@/lib/brazilDocuments"
 
 export const ROBOT_NFS_TECHNICAL_ID = "nfs_padrao"
 
@@ -15,6 +16,102 @@ export type RobotCompanyConfigInput = {
   auth_mode: "password" | "certificate"
   nfs_password?: string | null
   selected_login_cpf?: string | null
+}
+
+function sanitizeCompanyLogins(logins: CompanySefazLogin[] | null | undefined): CompanySefazLogin[] {
+  if (!Array.isArray(logins)) return []
+
+  const seen = new Set<string>()
+  const cleaned = logins
+    .map((login) => ({
+      cpf: onlyDigits(login.cpf),
+      password: String(login.password ?? "").trim(),
+      is_default: Boolean(login.is_default),
+    }))
+    .filter((login) => login.cpf || login.password)
+
+  for (const login of cleaned) {
+    if (!isValidCpf(login.cpf)) {
+      throw new Error("Um ou mais logins SEFAZ possuem CPF inválido.")
+    }
+    if (!login.password) {
+      throw new Error("Todo login SEFAZ precisa ter senha preenchida.")
+    }
+  }
+
+  const deduped = cleaned.filter((login) => {
+    if (seen.has(login.cpf)) return false
+    seen.add(login.cpf)
+    return true
+  })
+
+  if (deduped.length === 0) return []
+
+  const defaultIndex = deduped.findIndex((login) => login.is_default)
+  return deduped.map((login, index) => ({
+    ...login,
+    is_default: defaultIndex === -1 ? index === 0 : index === defaultIndex,
+  }))
+}
+
+async function ensureCompanyDocumentAvailable(document: string, companyId?: string) {
+  if (!document) return
+
+  let query = supabase.from("companies").select("id").eq("document", document).limit(1)
+  if (companyId) query = query.neq("id", companyId)
+
+  const { data, error } = await query
+  if (error) throw error
+  if ((data ?? []).length > 0) {
+    throw new Error("Já existe uma empresa cadastrada com este CNPJ neste escritório.")
+  }
+}
+
+function sanitizeCompanyPayload(params: {
+  name: string
+  document?: string | null
+  state_registration?: string | null
+  state_code?: string | null
+  city_name?: string | null
+  cae?: string | null
+  active?: boolean
+  sefaz_go_logins?: CompanySefazLogin[]
+  auth_mode?: "password" | "certificate" | null
+  cert_blob_b64?: string | null
+  cert_password?: string | null
+  cert_valid_until?: string | null
+  contador_nome?: string | null
+  contador_cpf?: string | null
+}) {
+  const name = params.name.trim()
+  if (!name) throw new Error("Informe o nome da empresa.")
+
+  const document = onlyDigits(params.document)
+  if (document && !isValidCnpj(document)) {
+    throw new Error("Informe um CNPJ válido para a empresa.")
+  }
+
+  const contadorCpf = onlyDigits(params.contador_cpf)
+  if (contadorCpf && !isValidCpf(contadorCpf)) {
+    throw new Error("Informe um CPF válido para o contador responsável.")
+  }
+
+  return {
+    name,
+    document: document || null,
+    state_registration: params.state_registration?.trim() || null,
+    state_code: params.state_code?.trim() || null,
+    city_name: params.city_name?.trim() || null,
+    cae: params.cae?.trim() || null,
+    active: params.active ?? true,
+    sefaz_go_logins: sanitizeCompanyLogins(params.sefaz_go_logins),
+    auth_mode: params.auth_mode ?? null,
+    cert_blob_b64: params.cert_blob_b64 ?? null,
+    cert_password: params.cert_password ?? null,
+    cert_valid_until: params.cert_valid_until ?? null,
+    contador_nome: params.contador_nome?.trim() || null,
+    contador_cpf: contadorCpf || null,
+  }
 }
 
 export async function getCompanyRobotConfig(
@@ -45,6 +142,11 @@ export async function upsertCompanyRobotConfig(
   robotTechnicalId: string,
   config: RobotCompanyConfigInput
 ) {
+  const selectedLoginCpf = onlyDigits(config.selected_login_cpf)
+  if (selectedLoginCpf && !isValidCpf(selectedLoginCpf)) {
+    throw new Error("Informe um CPF válido para o login vinculado do robô.")
+  }
+
   const { data, error } = await supabase
     .from("company_robot_config")
     .upsert(
@@ -54,7 +156,7 @@ export async function upsertCompanyRobotConfig(
         enabled: config.enabled,
         auth_mode: config.auth_mode,
         nfs_password: config.auth_mode === "password" ? (config.nfs_password ?? null) : null,
-        selected_login_cpf: config.selected_login_cpf ?? null,
+        selected_login_cpf: selectedLoginCpf || null,
       },
       { onConflict: "company_id,robot_technical_id" }
     )
@@ -89,25 +191,20 @@ export async function createCompany(params: {
   contador_nome?: string | null
   contador_cpf?: string | null
 }) {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error("Não autenticado")
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) throw new Error("NÃ£o autenticado")
+
+  const payload = sanitizeCompanyPayload(params)
+  if (payload.document) {
+    await ensureCompanyDocumentAvailable(payload.document)
+  }
+
   const { data, error } = await supabase
     .from("companies")
     .insert({
-        name: params.name,
-        document: params.document ?? null,
-        state_registration: params.state_registration ?? null,
-        state_code: params.state_code ?? null,
-        city_name: params.city_name ?? null,
-        cae: params.cae ?? null,
-        active: params.active ?? true,
-        sefaz_go_logins: params.sefaz_go_logins ?? [],
-        auth_mode: params.auth_mode ?? null,
-        cert_blob_b64: params.cert_blob_b64 ?? null,
-      cert_password: params.cert_password ?? null,
-      cert_valid_until: params.cert_valid_until ?? null,
-      contador_nome: params.contador_nome ?? null,
-      contador_cpf: params.contador_cpf ?? null,
+      ...payload,
       created_by: user.id,
     })
     .select()
@@ -135,12 +232,55 @@ export async function updateCompany(
     contador_cpf?: string | null
   }
 ) {
+  const payload: Record<string, unknown> = {}
+
+  if (updates.name !== undefined) {
+    const name = updates.name.trim()
+    if (!name) throw new Error("Informe o nome da empresa.")
+    payload.name = name
+  }
+
+  if (updates.document !== undefined) {
+    const document = onlyDigits(updates.document)
+    if (document && !isValidCnpj(document)) {
+      throw new Error("Informe um CNPJ válido para a empresa.")
+    }
+    if (document) {
+      await ensureCompanyDocumentAvailable(document, id)
+    }
+    payload.document = document || null
+  }
+
+  if (updates.state_registration !== undefined) payload.state_registration = updates.state_registration?.trim() || null
+  if (updates.state_code !== undefined) payload.state_code = updates.state_code?.trim() || null
+  if (updates.city_name !== undefined) payload.city_name = updates.city_name?.trim() || null
+  if (updates.cae !== undefined) payload.cae = updates.cae?.trim() || null
+  if (updates.sefaz_go_logins !== undefined) payload.sefaz_go_logins = sanitizeCompanyLogins(updates.sefaz_go_logins)
+  if (updates.active !== undefined) payload.active = updates.active
+  if (updates.auth_mode !== undefined) payload.auth_mode = updates.auth_mode ?? null
+  if (updates.cert_blob_b64 !== undefined) payload.cert_blob_b64 = updates.cert_blob_b64 ?? null
+  if (updates.cert_password !== undefined) payload.cert_password = updates.cert_password ?? null
+  if (updates.cert_valid_until !== undefined) payload.cert_valid_until = updates.cert_valid_until ?? null
+  if (updates.contador_nome !== undefined) payload.contador_nome = updates.contador_nome?.trim() || null
+  if (updates.contador_cpf !== undefined) {
+    const contadorCpf = onlyDigits(updates.contador_cpf)
+    if (contadorCpf && !isValidCpf(contadorCpf)) {
+      throw new Error("Informe um CPF válido para o contador responsável.")
+    }
+    payload.contador_cpf = contadorCpf || null
+  }
+
   const { data, error } = await supabase
     .from("companies")
-    .update(updates)
+    .update(payload)
     .eq("id", id)
     .select()
     .single()
   if (error) throw error
   return data as Company
+}
+
+export async function deleteCompany(id: string): Promise<void> {
+  const { error } = await supabase.from("companies").delete().eq("id", id)
+  if (error) throw error
 }

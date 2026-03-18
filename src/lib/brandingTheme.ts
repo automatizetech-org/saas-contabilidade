@@ -149,6 +149,7 @@ export function deriveBrandTokens(primary: string, secondary: string | null, ter
   const primaryIsLight = luminance(primaryNorm) > 0.6;
   const textOnPrimary = primaryIsLight ? FOREGROUND_ON_LIGHT : FOREGROUND_ON_DARK;
   const textOnAccent = s && secondary ? contrastOnColor(normalizeHex(secondary.trim())) : textOnPrimary;
+  const textOnTertiary = t && tertiary ? contrastOnColor(normalizeHex(tertiary.trim())) : textOnAccent;
   const primaryIcon = primaryIsLight ? FOREGROUND_ON_LIGHT : primaryHsl;
   const ringHsl = primaryIcon;
 
@@ -158,6 +159,8 @@ export function deriveBrandTokens(primary: string, secondary: string | null, ter
     "--primary-icon": primaryIcon,
     "--accent": accentHsl,
     "--accent-foreground": textOnAccent,
+    "--tertiary": tertiaryHsl,
+    "--tertiary-foreground": textOnTertiary,
     "--ring": ringHsl,
     "--sidebar-primary": primaryHsl,
     "--sidebar-primary-foreground": textOnPrimary,

@@ -12,19 +12,16 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Palette } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeHex, isValidHex } from "@/lib/brandingTheme";
+import { uploadLogoAndFaviconAsset } from "@/services/brandingService";
 
 export function AdminBrandingBlock() {
   const {
     branding,
     isLoading: brandingLoading,
-    logoUrl,
     primaryColor,
     secondaryColor,
     tertiaryColor,
-    useCustomPalette,
     saveBranding,
-    uploadLogo,
-    removeLogo,
     refetch,
   } = useBranding();
 
@@ -34,6 +31,17 @@ export function AdminBrandingBlock() {
   const [tertiary, setTertiary] = useState(tertiaryColor ?? DEFAULT_TERTIARY);
   const [clientName, setClientName] = useState(branding?.client_name ?? "");
   const [saving, setSaving] = useState(false);
+  const [pendingLogoFile, setPendingLogoFile] = useState<File | null>(null);
+  const [pendingLogoPreviewUrl, setPendingLogoPreviewUrl] = useState<string | null>(null);
+  const [removeLogoOnSave, setRemoveLogoOnSave] = useState(false);
+
+  const clearPendingLogo = useCallback(() => {
+    setPendingLogoFile(null);
+    setPendingLogoPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+  }, []);
 
   useEffect(() => {
     setPaletteOn(!!branding?.use_custom_palette);
@@ -41,9 +49,18 @@ export function AdminBrandingBlock() {
     setSecondary(secondaryColor ?? DEFAULT_SECONDARY);
     setTertiary(tertiaryColor ?? DEFAULT_TERTIARY);
     setClientName(branding?.client_name ?? "");
-  }, [branding?.use_custom_palette, branding?.client_name, primaryColor, secondaryColor, tertiaryColor]);
+    setRemoveLogoOnSave(false);
+    clearPendingLogo();
+  }, [branding?.updated_at, branding?.use_custom_palette, branding?.client_name, primaryColor, secondaryColor, tertiaryColor, clearPendingLogo]);
 
-  const hasLogo = !!branding?.use_custom_logo && !!branding?.logo_url;
+  useEffect(() => {
+    return () => {
+      if (pendingLogoPreviewUrl) URL.revokeObjectURL(pendingLogoPreviewUrl);
+    };
+  }, [pendingLogoPreviewUrl]);
+
+  const hasPersistedLogo = !!branding?.use_custom_logo && !!branding?.logo_url;
+  const displayedLogoUrl = removeLogoOnSave ? pendingLogoPreviewUrl : pendingLogoPreviewUrl ?? (hasPersistedLogo ? branding?.logo_url ?? null : null);
 
   const handlePaletteChange = useCallback((p: string, s: string, t: string) => {
     setPrimary(p);
@@ -51,84 +68,114 @@ export function AdminBrandingBlock() {
     setTertiary(t);
   }, []);
 
-  const handleSaveAll = useCallback(async () => {
-    if (paletteOn && !isValidHex(primary)) {
-      toast.error("Cor primária inválida.");
-      return;
+  const handlePaletteToggle = useCallback((checked: boolean) => {
+    setPaletteOn(checked);
+    if (!checked) {
+      setPrimary(DEFAULT_PRIMARY);
+      setSecondary(DEFAULT_SECONDARY);
+      setTertiary(DEFAULT_TERTIARY);
     }
-    setSaving(true);
-    try {
-      await saveBranding({
-        client_name: clientName.trim() || null,
-        use_custom_palette: paletteOn,
-        primary_color: paletteOn ? normalizeHex(primary) : null,
-        secondary_color: paletteOn ? normalizeHex(secondary) : null,
-        tertiary_color: paletteOn ? normalizeHex(tertiary) : null,
-      });
-      toast.success("Customização salva.");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }, [clientName, paletteOn, primary, secondary, tertiary, saveBranding]);
-
-  const handlePaletteToggle = useCallback(
-    async (checked: boolean) => {
-      setPaletteOn(checked);
-      if (!checked) {
-        setPrimary(DEFAULT_PRIMARY);
-        setSecondary(DEFAULT_SECONDARY);
-        setTertiary(DEFAULT_TERTIARY);
-        setSaving(true);
-        try {
-          await saveBranding({
-            use_custom_palette: false,
-            primary_color: null,
-            secondary_color: null,
-            tertiary_color: null,
-          });
-          toast.success("Paleta desligada. Tema padrão restaurado.");
-          refetch();
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Erro ao restaurar padrão.");
-          setPaletteOn(true);
-        } finally {
-          setSaving(false);
-        }
-      }
-    },
-    [saveBranding, refetch]
-  );
+  }, []);
 
   const handleRestorePalette = useCallback(() => {
     setPaletteOn(false);
     setPrimary(DEFAULT_PRIMARY);
     setSecondary(DEFAULT_SECONDARY);
     setTertiary(DEFAULT_TERTIARY);
-    saveBranding({
-      use_custom_palette: false,
-      primary_color: null,
-      secondary_color: null,
-      tertiary_color: null,
-    }).then(() => {
-      toast.success("Paleta padrão restaurada.");
-      refetch();
-    });
-  }, [saveBranding, refetch]);
+  }, []);
 
-  const handleLogoUpload = useCallback(
-    async (file: File) => {
-      await uploadLogo(file);
-      toast.success("Logo e ícone salvos.");
-    },
-    [uploadLogo]
-  );
+  const handleLogoUpload = useCallback(async (file: File) => {
+    clearPendingLogo();
+    const previewUrl = URL.createObjectURL(file);
+    setPendingLogoFile(file);
+    setPendingLogoPreviewUrl(previewUrl);
+    setRemoveLogoOnSave(false);
+    toast.info("Imagem selecionada. Clique em Salvar para aplicar.");
+  }, [clearPendingLogo]);
 
   const handleLogoRemove = useCallback(async () => {
-    await removeLogo();
-    toast.success("Logo e ícone removidos.");
-  }, [removeLogo]);
+    if (pendingLogoFile || pendingLogoPreviewUrl) {
+      clearPendingLogo();
+      if (hasPersistedLogo) {
+        setRemoveLogoOnSave(true);
+      } else {
+        setRemoveLogoOnSave(false);
+      }
+      toast.info("Alteração da imagem atualizada. Clique em Salvar para aplicar.");
+      return;
+    }
+
+    if (hasPersistedLogo) {
+      setRemoveLogoOnSave(true);
+      toast.info("Remoção da imagem marcada. Clique em Salvar para aplicar.");
+    }
+  }, [clearPendingLogo, hasPersistedLogo, pendingLogoFile, pendingLogoPreviewUrl]);
+
+  const handleSaveAll = useCallback(async () => {
+    if (paletteOn && !isValidHex(primary)) {
+      toast.error("Cor primária inválida.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let logoPayload = {
+        logo_path: branding?.logo_path ?? null,
+        favicon_path: branding?.favicon_path ?? null,
+        use_custom_logo: branding?.use_custom_logo ?? false,
+        use_custom_favicon: branding?.use_custom_favicon ?? false,
+      };
+
+      if (pendingLogoFile) {
+        const uploaded = await uploadLogoAndFaviconAsset(pendingLogoFile);
+        logoPayload = {
+          ...uploaded,
+          use_custom_logo: true,
+          use_custom_favicon: true,
+        };
+      } else if (removeLogoOnSave) {
+        logoPayload = {
+          logo_path: null,
+          favicon_path: null,
+          use_custom_logo: false,
+          use_custom_favicon: false,
+        };
+      }
+
+      await saveBranding({
+        client_name: clientName.trim() || null,
+        use_custom_palette: paletteOn,
+        primary_color: paletteOn ? normalizeHex(primary) : null,
+        secondary_color: paletteOn ? normalizeHex(secondary) : null,
+        tertiary_color: paletteOn ? normalizeHex(tertiary) : null,
+        ...logoPayload,
+      });
+
+      await refetch();
+      setRemoveLogoOnSave(false);
+      clearPendingLogo();
+      toast.success("Customização salva.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    branding?.favicon_path,
+    branding?.logo_path,
+    branding?.use_custom_favicon,
+    branding?.use_custom_logo,
+    clientName,
+    clearPendingLogo,
+    paletteOn,
+    pendingLogoFile,
+    primary,
+    refetch,
+    removeLogoOnSave,
+    saveBranding,
+    secondary,
+    tertiary,
+  ]);
 
   if (brandingLoading && !branding) {
     return (
@@ -143,10 +190,12 @@ export function AdminBrandingBlock() {
       title="Customização da Interface"
       description="Nome da marca, paleta de cores e logo (sidebar, login e aba do navegador)."
     >
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-3">
           <div>
-            <Label htmlFor="branding-client-name" className="text-xs font-medium">Nome da marca</Label>
+            <Label htmlFor="branding-client-name" className="text-xs font-medium">
+              Nome da marca
+            </Label>
             <Input
               id="branding-client-name"
               value={clientName}
@@ -171,13 +220,15 @@ export function AdminBrandingBlock() {
               disabled={saving}
             />
           </div>
+
           <ColorPaletteEditor
             primary={primary}
             secondary={secondary}
             tertiary={tertiary}
             onChange={handlePaletteChange}
-            disabled={!paletteOn}
+            disabled={!paletteOn || saving}
           />
+
           {branding?.use_custom_palette && (
             <RestoreDefaultButton onRestore={handleRestorePalette} disabled={saving} />
           )}
@@ -185,12 +236,13 @@ export function AdminBrandingBlock() {
 
         <div className="space-y-3">
           <LogoUploadField
-            currentUrl={hasLogo ? branding!.logo_url! : null}
+            currentUrl={displayedLogoUrl}
             onUpload={handleLogoUpload}
             onRemove={handleLogoRemove}
             disabled={saving}
             unified
           />
+
           <ThemePreviewPanel
             primaryHex={paletteOn ? primary : null}
             secondaryHex={paletteOn ? secondary : null}
@@ -198,9 +250,10 @@ export function AdminBrandingBlock() {
           />
         </div>
       </div>
-      <div className="mt-4 pt-4 border-t border-border flex justify-end">
+
+      <div className="mt-4 flex justify-end border-t border-border pt-4">
         <Button onClick={handleSaveAll} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           Salvar
         </Button>
       </div>

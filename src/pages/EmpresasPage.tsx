@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useSearchParams } from "react-router-dom"
-import { getCompaniesForUser, updateCompany, getCompanyRobotConfigs, upsertCompanyRobotConfig, type RobotCompanyConfigInput } from "@/services/companiesService"
+import { getCompaniesForUser, updateCompany, deleteCompany, getCompanyRobotConfigs, upsertCompanyRobotConfig, type RobotCompanyConfigInput } from "@/services/companiesService"
 import { supabase } from "@/services/supabaseClient"
 import { findAccountantByCpf, formatCpf, getAccountants, createAccountant, updateAccountant, deleteAccountant } from "@/services/accountantsService"
 import type { Company } from "@/services/profilesService"
@@ -41,6 +41,7 @@ import { toast } from "sonner"
 import { getRobots } from "@/services/robotsService"
 import { CompanyRobotsEditor } from "@/components/companies/CompanyRobotsEditor"
 import { sanitizeRobotConfigForCompany } from "@/lib/companyRobotRequirements"
+import { formatCnpjInput, formatCpfInput, isValidCnpj, isValidCpf } from "@/lib/brazilDocuments"
 import { getBrazilStates, getCitiesByState } from "@/services/ibgeLocationsService"
 import type { IbgeCity } from "@/services/ibgeLocationsService"
 import { DataPagination } from "@/components/common/DataPagination"
@@ -233,6 +234,8 @@ export default function EmpresasPage() {
   const [editCityName, setEditCityName] = useState("")
   const [editCae, setEditCae] = useState("")
   const [editActive, setEditActive] = useState(true)
+  const [companyExcludeId, setCompanyExcludeId] = useState<string | null>(null)
+  const [companyDeleting, setCompanyDeleting] = useState(false)
   const [editUseCertificate, setEditUseCertificate] = useState(false)
   const [editCertReplacing, setEditCertReplacing] = useState(false)
   const [editCertFile, setEditCertFile] = useState<File | null>(null)
@@ -272,6 +275,7 @@ export default function EmpresasPage() {
   const [contadorError, setContadorError] = useState("")
   const [contadorEditingId, setContadorEditingId] = useState<string | null>(null)
   const [contadorEditName, setContadorEditName] = useState("")
+  const [contadorEditCpf, setContadorEditCpf] = useState("")
   const [contadorEditActive, setContadorEditActive] = useState(true)
   const [contadorExcludeId, setContadorExcludeId] = useState<string | null>(null)
   const [moveStep, setMoveStep] = useState<null | "source" | "companies" | "dest">(null)
@@ -322,6 +326,23 @@ export default function EmpresasPage() {
   useEffect(() => {
     if (searchParams.get("editCompany") && filter !== "all") setFilter("all")
   }, [searchParams, filter])
+
+  const syncAccountantCompanies = async (currentCpf: string, nextCpf: string, nextName: string) => {
+    const previousCpfDigits = onlyDigits(currentCpf)
+    if (!previousCpfDigits) return
+
+    const companies = await getCompaniesForUser("all")
+    const linkedCompanies = companies.filter(
+      (company) => onlyDigits((company as CompanyWithCert).contador_cpf ?? "") === previousCpfDigits
+    )
+
+    for (const company of linkedCompanies) {
+      await updateCompany(company.id, {
+        contador_cpf: nextCpf,
+        contador_nome: nextName,
+      })
+    }
+  }
 
   useEffect(() => {
     if (!selectedRobotTechnicalId && robots.length > 0) {
@@ -381,7 +402,7 @@ export default function EmpresasPage() {
 
     setEditingCompany(row as unknown as Company)
     setEditName(row.name)
-    setEditDocument(row.document ?? "")
+    setEditDocument(formatCnpjInput(row.document ?? ""))
     setEditStateRegistration(row.state_registration ?? "")
     setEditStateCode(row.state_code ?? "")
     setEditCityName(row.city_name ?? "")
@@ -438,6 +459,11 @@ export default function EmpresasPage() {
     e.preventDefault()
     if (!editingCompany) return
     setEditError("")
+    const documentDigits = onlyDigits(editDocument)
+    if (documentDigits && !isValidCnpj(documentDigits)) {
+      setEditError("Informe um CNPJ válido para salvar a empresa.")
+      return
+    }
     if (editUseCertificate && (editCertFile || editCertPassword) && (!editCertFile || !editCertPassword.trim())) {
       setEditError("Selecione o arquivo .pfx e informe a senha do certificado.")
       return
@@ -468,8 +494,8 @@ export default function EmpresasPage() {
           toast.error("Senha do certificado incorreta.")
           return
         }
-        const docDigits = onlyDigits(editDocument)
-        if (docDigits.length !== 14) {
+        const docDigits = documentDigits
+        if (!isValidCnpj(docDigits)) {
           setEditError("Para vincular o certificado corretamente, informe um CNPJ válido (14 dígitos) antes de enviar o .pfx.")
           toast.error("Informe um CNPJ válido antes de enviar o certificado.")
           return
@@ -633,6 +659,17 @@ export default function EmpresasPage() {
                     type="button"
                     variant="outline"
                     size="sm"
+                    className="gap-1.5 text-destructive hover:text-destructive"
+                    onClick={() => setCompanyExcludeId(emp.id)}
+                    disabled={companyDeleting}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Excluir
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
                     className="gap-1.5"
                     onClick={() => openEdit(emp)}
                   >
@@ -692,7 +729,7 @@ export default function EmpresasPage() {
               <Label>Documento (CNPJ)</Label>
               <Input
                 value={editDocument}
-                onChange={(e) => setEditDocument(e.target.value)}
+                onChange={(e) => setEditDocument(formatCnpjInput(e.target.value))}
                 disabled={editSaving}
                 placeholder="00.000.000/0001-00"
               />
@@ -1116,6 +1153,15 @@ export default function EmpresasPage() {
                       const p = payloads[i]
                       const docDigits = p.document ? onlyDigits(p.document) : ""
 
+                      if (docDigits && !isValidCnpj(docDigits)) {
+                        const msg = `${p.name?.trim() || p.document || `Linha ${i + 1}`}: CNPJ inválido.`
+                        messages.push(msg)
+                        setBulkProgress((prev) =>
+                          prev ? { ...prev, current: i + 1, phase: "inserting", log: [...prev.log, { type: "error" as const, msg }] } : prev
+                        )
+                        continue
+                      }
+
                       if (docDigits && existingCnpjSet.has(docDigits)) {
                         duplicates.push({ cnpj: p.document!, name: p.name || undefined })
                         setBulkProgress((prev) =>
@@ -1174,6 +1220,15 @@ export default function EmpresasPage() {
                         }
                         const ibgeName = matchCityIbge(p.city_name, cities)
                         if (ibgeName) p.city_name = ibgeName
+                      }
+
+                      if (p.contador_cpf && !isValidCpf(p.contador_cpf)) {
+                        const msg = `${p.name?.trim() || p.document || `Linha ${i + 1}`}: CPF do contador inválido.`
+                        messages.push(msg)
+                        setBulkProgress((prev) =>
+                          prev ? { ...prev, current: i + 1, phase: "inserting", log: [...prev.log, { type: "error" as const, msg }] } : prev
+                        )
+                        continue
                       }
 
                       if (p.contador_cpf && !accountantCpfs.has(onlyDigits(p.contador_cpf))) {
@@ -1236,6 +1291,42 @@ export default function EmpresasPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!companyExcludeId} onOpenChange={(open) => !open && !companyDeleting && setCompanyExcludeId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir empresa?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {companyExcludeId && companies.find((company) => company.id === companyExcludeId)
+                ? `A empresa "${companies.find((company) => company.id === companyExcludeId)!.name}" sera excluida deste escritorio. Esta acao nao pode ser desfeita.`
+                : "Esta empresa sera excluida deste escritorio. Esta acao nao pode ser desfeita."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={companyDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={companyDeleting}
+              onClick={async () => {
+                if (!companyExcludeId) return
+                setCompanyDeleting(true)
+                try {
+                  await deleteCompany(companyExcludeId)
+                  queryClient.invalidateQueries({ queryKey: ["companies-list"] })
+                  setCompanyExcludeId(null)
+                  toast.success("Empresa excluida.")
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Erro ao excluir empresa")
+                } finally {
+                  setCompanyDeleting(false)
+                }
+              }}
+            >
+              {companyDeleting ? "Excluindo..." : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={contadoresOpen} onOpenChange={(open) => {
         if (!contadorSaving && !moveSaving) {
@@ -1456,6 +1547,13 @@ export default function EmpresasPage() {
                             className="h-8 text-sm"
                             disabled={contadorSaving}
                           />
+                          <Input
+                            value={contadorEditCpf}
+                            onChange={(e) => setContadorEditCpf(formatCpfInput(e.target.value))}
+                            placeholder="000.000.000-00"
+                            className="h-8 text-sm"
+                            disabled={contadorSaving}
+                          />
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                               <input
@@ -1475,9 +1573,15 @@ export default function EmpresasPage() {
                                 setContadorError("")
                                 setContadorSaving(true)
                                 try {
-                                  await updateAccountant(acc.id, { name: contadorEditName, active: contadorEditActive })
+                                  await updateAccountant(acc.id, {
+                                    name: contadorEditName,
+                                    cpf: contadorEditCpf,
+                                    active: contadorEditActive,
+                                  })
+                                  await syncAccountantCompanies(acc.cpf, contadorEditCpf, contadorEditName.trim())
                                   queryClient.invalidateQueries({ queryKey: ["accountants"] })
                                   queryClient.invalidateQueries({ queryKey: ["accountants", "all"] })
+                                  queryClient.invalidateQueries({ queryKey: ["companies-list"] })
                                   setContadorEditingId(null)
                                   toast.success("Contador atualizado.")
                                 } catch (e) {
@@ -1504,7 +1608,7 @@ export default function EmpresasPage() {
                             <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full", acc.active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground")}>
                               {acc.active ? "Ativo" : "Inativo"}
                             </span>
-                            <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => { setContadorEditingId(acc.id); setContadorEditName(acc.name); setContadorEditActive(acc.active); setContadorError(""); }}>
+                            <Button size="sm" variant="outline" className="h-7 gap-1" onClick={() => { setContadorEditingId(acc.id); setContadorEditName(acc.name); setContadorEditCpf(formatCpfInput(acc.cpf)); setContadorEditActive(acc.active); setContadorError(""); }}>
                               <Pencil className="h-3 w-3" />
                               Editar
                             </Button>
@@ -1573,7 +1677,7 @@ export default function EmpresasPage() {
                     <Label className="text-xs">CPF</Label>
                     <Input
                       value={contadorNewCpf}
-                      onChange={(e) => setContadorNewCpf(e.target.value)}
+                      onChange={(e) => setContadorNewCpf(formatCpfInput(e.target.value))}
                       placeholder="000.000.000-00"
                       className="h-8 w-32"
                       disabled={contadorSaving}
@@ -1581,7 +1685,7 @@ export default function EmpresasPage() {
                   </div>
                   <Button
                     size="sm"
-                    disabled={contadorSaving || !contadorNewName.trim() || onlyDigits(contadorNewCpf).length !== 11}
+                    disabled={contadorSaving || !contadorNewName.trim() || !isValidCpf(contadorNewCpf)}
                     onClick={async () => {
                       setContadorError("")
                       setContadorSaving(true)

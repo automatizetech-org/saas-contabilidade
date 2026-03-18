@@ -4,6 +4,7 @@
  */
 
 import { supabase } from "./supabaseClient"
+import { getCurrentOfficeContext } from "./officeContextService"
 
 const KEY_FILE_RETENTION_DAYS = "file_retention_days"
 const KEY_BASE_PATH = "base_path"
@@ -25,11 +26,13 @@ export async function getBasePath(): Promise<string> {
 }
 
 export async function setBasePath(value: string): Promise<void> {
+  const context = await getCurrentOfficeContext()
+  if (!context?.officeId) throw new Error("Nenhum escritório ativo encontrado.")
   const { error } = await supabase
     .from("admin_settings")
     .upsert(
-      { key: KEY_BASE_PATH, value: (value || "").trim(), updated_at: new Date().toISOString() },
-      { onConflict: "key" }
+      { office_id: context.officeId, key: KEY_BASE_PATH, value: (value || "").trim(), updated_at: new Date().toISOString() },
+      { onConflict: "office_id,key" }
     )
   if (error) throw error
 }
@@ -47,11 +50,13 @@ export async function getFileRetentionDays(): Promise<FileRetentionDays> {
 }
 
 export async function setFileRetentionDays(days: FileRetentionDays): Promise<void> {
+  const context = await getCurrentOfficeContext()
+  if (!context?.officeId) throw new Error("Nenhum escritório ativo encontrado.")
   const { error } = await supabase
     .from("admin_settings")
     .upsert(
-      { key: KEY_FILE_RETENTION_DAYS, value: String(days), updated_at: new Date().toISOString() },
-      { onConflict: "key" }
+      { office_id: context.officeId, key: KEY_FILE_RETENTION_DAYS, value: String(days), updated_at: new Date().toISOString() },
+      { onConflict: "office_id,key" }
     )
   if (error) throw error
 }
@@ -68,11 +73,13 @@ export async function getRobotGoianiaSkipIss(): Promise<boolean> {
 }
 
 export async function setRobotGoianiaSkipIss(skip: boolean): Promise<void> {
+  const context = await getCurrentOfficeContext()
+  if (!context?.officeId) throw new Error("Nenhum escritório ativo encontrado.")
   const { error } = await supabase
     .from("admin_settings")
     .upsert(
-      { key: KEY_ROBOT_GOIANIA_SKIP_ISS, value: skip ? "true" : "false", updated_at: new Date().toISOString() },
-      { onConflict: "key" }
+      { office_id: context.officeId, key: KEY_ROBOT_GOIANIA_SKIP_ISS, value: skip ? "true" : "false", updated_at: new Date().toISOString() },
+      { onConflict: "office_id,key" }
     )
   if (error) throw error
 }

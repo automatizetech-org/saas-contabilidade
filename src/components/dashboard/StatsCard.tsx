@@ -40,8 +40,19 @@ export function StatsCard({ title, value, change, changeType = "neutral", icon: 
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{description}</p>
           )}
         </div>
-        <div className="rounded-lg bg-primary/10 p-2.5 sm:p-3 group-hover:bg-accent/20 transition-colors duration-300 shrink-0">
-          <Icon className="h-4 w-4 sm:h-5 sm:w-5 text-primary-icon group-hover:text-accent transition-colors duration-300" />
+        <div
+          className="rounded-lg border p-2.5 sm:p-3 transition-all duration-300 shrink-0 group-hover:shadow-lg"
+          style={{
+            borderColor: "hsl(var(--tertiary) / 0.24)",
+            background:
+              "linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--accent) / 0.12) 58%, hsl(var(--tertiary) / 0.16))",
+            boxShadow: "0 10px 24px hsl(var(--tertiary) / 0.1)",
+          }}
+        >
+          <Icon
+            className="h-4 w-4 sm:h-5 sm:w-5 transition-colors duration-300"
+            style={{ color: "hsl(var(--tertiary))" }}
+          />
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 /**
  * Chave de painel para cada rota. Usado no sidebar (panel_access) e no guard de rota.
- * /admin nao tem panelKey, controle so por role super_admin.
+ * /admin nao tem panelKey, controle por super_admin ou owner do escritorio.
  */
 export const PATH_TO_PANEL: Record<string, string> = {
   "/dashboard": "dashboard",

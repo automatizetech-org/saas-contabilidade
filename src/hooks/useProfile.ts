@@ -10,12 +10,24 @@ export function useProfile() {
       return data.session
     },
   })
+
   const userId = session?.user?.id
   const { data: profile, isLoading } = useQuery({
     queryKey: ["profile", userId],
     queryFn: () => getProfile(userId!),
     enabled: !!userId,
   })
+
   const isSuperAdmin = profile?.role === "super_admin"
-  return { profile, isLoading, isSuperAdmin, userId }
+  const canAccessAdmin = isSuperAdmin || profile?.office_role === "owner"
+
+  return {
+    profile,
+    isLoading,
+    isSuperAdmin,
+    canAccessAdmin,
+    userId,
+    officeId: profile?.office_id ?? null,
+    officeRole: profile?.office_role ?? null,
+  }
 }

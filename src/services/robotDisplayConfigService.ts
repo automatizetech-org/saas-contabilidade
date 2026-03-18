@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient"
 import type { RobotNotesMode, Tables } from "@/types/database"
+import { getCurrentOfficeContext } from "./officeContextService"
 
 export type RobotDisplayConfig = Tables<"robot_display_config">
 
@@ -24,7 +25,10 @@ export async function upsertRobotDisplayConfig(params: {
   periodEnd?: string | null
   notesMode?: RobotNotesMode | null
 }): Promise<RobotDisplayConfig> {
+  const context = await getCurrentOfficeContext()
+  if (!context?.officeId) throw new Error("Nenhum escritório ativo encontrado.")
   const payload = {
+    office_id: context.officeId,
     robot_technical_id: params.robotTechnicalId,
     company_ids: params.companyIds,
     period_start: params.periodStart ?? null,
@@ -53,6 +57,7 @@ export async function upsertRobotDisplayConfig(params: {
           notes_mode: payload.notes_mode,
           updated_at: payload.updated_at,
         })
+        .eq("office_id", context.officeId)
         .eq("robot_technical_id", params.robotTechnicalId)
         .select()
         .single()
@@ -62,6 +67,7 @@ export async function upsertRobotDisplayConfig(params: {
       const { data, error: fallbackError } = await supabase
         .from("robot_display_config")
         .update(payloadWithoutNotesMode)
+        .eq("office_id", context.officeId)
         .eq("robot_technical_id", params.robotTechnicalId)
         .select()
         .single()

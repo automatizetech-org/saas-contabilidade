@@ -200,8 +200,8 @@ export function AdminRobotsList({
       queryClient.invalidateQueries({ queryKey: ["admin-robots"] })
       setEditing(null)
       toast.success("Robô atualizado")
-    } catch {
-      toast.error("Falha ao salvar")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao salvar")
     } finally {
       setSaving(false)
     }

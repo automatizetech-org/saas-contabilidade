@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import {
   getBranding,
   upsertBranding,
@@ -8,13 +9,11 @@ import {
   type ClientBrandingRow,
   type ClientBrandingInput,
 } from "@/services/brandingService";
-import {
-  BRANDING_CLIENT_ID,
-  deriveBrandTokens,
-} from "@/lib/brandingTheme";
+import { deriveBrandTokens } from "@/lib/brandingTheme";
+import { supabase } from "@/services/supabaseClient";
 import defaultLogoUrl from "@/assets/images/logo.png";
 
-const BRANDING_QUERY_KEY = ["branding", BRANDING_CLIENT_ID];
+const BRANDING_QUERY_KEY = ["branding", "current-office"];
 
 /** Nome da marca (ex.: "Contabilidade"). Vazio = usa "Dashboard" / "Analytics" sem sufixo. */
 export function getBrandDisplayName(clientName: string | null | undefined): string {
@@ -130,7 +129,7 @@ function setManifestInHead(iconUrl: string | null, title: string): void {
 }
 
 const PALETTE_VARS = [
-  "--primary", "--primary-foreground", "--primary-icon", "--accent", "--accent-foreground", "--ring",
+  "--primary", "--primary-foreground", "--primary-icon", "--accent", "--accent-foreground", "--tertiary", "--tertiary-foreground", "--ring",
   "--sidebar-primary", "--sidebar-primary-foreground", "--sidebar-ring",
   "--chart-1", "--chart-2", "--chart-3",
   "--background", "--foreground", "--card", "--card-foreground",
@@ -160,14 +159,48 @@ function setDocumentTitle(clientName: string | null | undefined): void {
   if (appleTitle) appleTitle.setAttribute("content", `${title} - Web`);
 }
 
+export function resetBrandingInDocument(): void {
+  setIconsAndMetaInHead(null);
+  setManifestInHead(null, "Dashboard");
+  setDocumentTitle(null);
+  applyCustomPaletteToDocument(null);
+}
+
 export function BrandingProvider({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [logoUrl, setLogoUrl] = useState<string>(defaultLogoUrl);
   const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
+  const [hasSession, setHasSession] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setHasSession(Boolean(data.session));
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setHasSession(Boolean(session));
+      if (!session) {
+        queryClient.removeQueries({ queryKey: BRANDING_QUERY_KEY });
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [queryClient]);
+
+  const shouldUseOfficeBranding = hasSession && location.pathname !== "/login";
 
   const { data: branding = null, isLoading, error, refetch } = useQuery({
     queryKey: BRANDING_QUERY_KEY,
-    queryFn: () => getBranding(BRANDING_CLIENT_ID),
+    queryFn: () => getBranding(),
+    enabled: shouldUseOfficeBranding,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -175,10 +208,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
     if (!row) {
       setLogoUrl(defaultLogoUrl);
       setFaviconUrl(null);
-      setIconsAndMetaInHead(null);
-      setManifestInHead(null, "Dashboard");
-      setDocumentTitle(null);
-      applyCustomPaletteToDocument(null);
+      resetBrandingInDocument();
       return;
     }
     const title = getBrandDisplayName(row.client_name) ? `Dashboard ${getBrandDisplayName(row.client_name)}` : "Dashboard";
@@ -199,8 +229,8 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    applyBranding(branding ?? null);
-  }, [branding, applyBranding]);
+    applyBranding(shouldUseOfficeBranding ? branding ?? null : null);
+  }, [branding, applyBranding, shouldUseOfficeBranding]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -214,7 +244,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
   const saveBranding = useCallback(
     async (input: ClientBrandingInput): Promise<ClientBrandingRow> => {
-      const row = await upsertBranding(input, BRANDING_CLIENT_ID);
+      const row = await upsertBranding(input);
       queryClient.setQueryData(BRANDING_QUERY_KEY, row);
       applyBranding(row);
       return row;
@@ -224,28 +254,18 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
   const uploadLogo = useCallback(
     async (file: File): Promise<string> => {
-      const url = await uploadLogoAndFaviconService(file, BRANDING_CLIENT_ID);
-      const row = await upsertBranding(
-        { logo_url: url, favicon_url: url, use_custom_logo: true, use_custom_favicon: true },
-        BRANDING_CLIENT_ID
-      );
+      const row = await uploadLogoAndFaviconService(file);
       queryClient.setQueryData(BRANDING_QUERY_KEY, row);
-      setLogoUrl(url);
-      setFaviconUrl(url);
-      setIconsAndMetaInHead(url);
       applyBranding(row);
-      return url;
+      return row.logo_url ?? "";
     },
     [queryClient, applyBranding]
   );
 
   const removeLogo = useCallback(async () => {
-    await removeLogoService(BRANDING_CLIENT_ID);
-    const row = await getBranding(BRANDING_CLIENT_ID);
+    const row = await removeLogoService();
     queryClient.setQueryData(BRANDING_QUERY_KEY, row);
-    setFaviconUrl(null);
-    setIconsAndMetaInHead(null);
-    applyBranding(row ?? null);
+    applyBranding(row);
   }, [queryClient, applyBranding]);
 
   const value = useMemo<BrandingState>(

@@ -1,9 +1,46 @@
 import { supabase } from "./supabaseClient"
 import type { FiscalNotesKind, RobotNotesMode, Tables } from "@/types/database"
 import type { CompanySefazLogin } from "./companiesService"
+import { isValidCpf, onlyDigits } from "@/lib/brazilDocuments"
 
 export type Robot = Tables<"robots">
 export type RobotStatus = Robot["status"]
+
+function sanitizeGlobalLogins(logins: CompanySefazLogin[] | undefined) {
+  if (!Array.isArray(logins)) return undefined
+
+  const seen = new Set<string>()
+  const cleaned = logins
+    .map((login) => ({
+      cpf: onlyDigits(login.cpf),
+      password: String(login.password ?? "").trim(),
+      is_default: Boolean(login.is_default),
+    }))
+    .filter((login) => login.cpf || login.password)
+
+  for (const login of cleaned) {
+    if (!isValidCpf(login.cpf)) {
+      throw new Error("Informe um CPF valido para os logins globais do robo.")
+    }
+    if (!login.password) {
+      throw new Error("Todo login global do robo precisa ter senha preenchida.")
+    }
+  }
+
+  const deduped = cleaned.filter((login) => {
+    if (seen.has(login.cpf)) return false
+    seen.add(login.cpf)
+    return true
+  })
+
+  if (deduped.length === 0) return []
+
+  const defaultIndex = deduped.findIndex((login) => login.is_default)
+  return deduped.map((login, index) => ({
+    ...login,
+    is_default: defaultIndex === -1 ? index === 0 : index === defaultIndex,
+  }))
+}
 
 export async function getRobots(): Promise<Robot[]> {
   const { data, error } = await supabase
@@ -43,6 +80,13 @@ export async function updateRobot(
     global_logins?: CompanySefazLogin[]
   }
 ): Promise<Robot> {
+  const sanitizedUpdates: Record<string, unknown> = {
+    ...(updates as Record<string, unknown>),
+  }
+  if (updates.global_logins !== undefined) {
+    sanitizedUpdates.global_logins = sanitizeGlobalLogins(updates.global_logins)
+  }
+
   const getErrorText = (error: unknown) => {
     if (error instanceof Error) return error.message
     if (error && typeof error === "object") {
@@ -72,7 +116,7 @@ export async function updateRobot(
   }
 
   try {
-    return await runUpdate(updates as Record<string, unknown>)
+    return await runUpdate(sanitizedUpdates)
   } catch (error) {
     const message = getErrorText(error)
     const missingNewFields =
@@ -85,7 +129,7 @@ export async function updateRobot(
       message.includes("23514")
 
     if (notesModeConstraint) {
-      const fallbackUpdates = { ...(updates as Record<string, unknown>) }
+      const fallbackUpdates = { ...sanitizedUpdates }
       delete fallbackUpdates.notes_mode
       try {
         return await runUpdate(fallbackUpdates)
@@ -105,7 +149,7 @@ export async function updateRobot(
 
     if (!missingNewFields) throw error
 
-    const fallbackUpdates = { ...(updates as Record<string, unknown>) }
+    const fallbackUpdates = { ...sanitizedUpdates }
     delete fallbackUpdates.is_fiscal_notes_robot
     delete fallbackUpdates.fiscal_notes_kind
 

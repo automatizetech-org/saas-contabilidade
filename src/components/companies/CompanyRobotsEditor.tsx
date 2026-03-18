@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { canEnableRobotForCompany, getRobotEnableRequirementMessage } from "@/lib/companyRobotRequirements"
+import { isValidCpf } from "@/lib/brazilDocuments"
 import type { Accountant } from "@/services/accountantsService"
 import type { Robot } from "@/services/robotsService"
 import type { CompanySefazLogin, RobotCompanyConfigInput } from "@/services/companiesService"
@@ -32,7 +33,7 @@ function normalizeRobotLogins(value: unknown): CompanySefazLogin[] {
       const row = item as { cpf?: string; password?: string; senha?: string; is_default?: boolean }
       const cpf = onlyDigits(row.cpf ?? "")
       const password = String(row.password ?? row.senha ?? "").trim()
-      if (cpf.length !== 11 || !password) return null
+      if (!isValidCpf(cpf) || !password) return null
       return { cpf, password, is_default: Boolean(row.is_default) }
     })
     .filter((item): item is CompanySefazLogin => Boolean(item))

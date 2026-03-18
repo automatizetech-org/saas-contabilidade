@@ -142,14 +142,14 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
   const [mobileOpen, setMobileOpen] = useState(false);
   const { data: companies = [] } = useCompanies();
   const { selectedCompanyIds, setSelectedCompanyIds } = useSelectedCompanyIds();
-  const { isSuperAdmin, profile } = useProfile();
+  const { isSuperAdmin, canAccessAdmin, profile } = useProfile();
   const { logoUrl, branding } = useBranding();
   const sidebarTitle = getSidebarTitle(branding?.client_name);
 
   const visibleNavItems = navItems.filter((item) => {
-    if (item.path === "/admin") return isSuperAdmin;
+    if (item.path === "/admin") return canAccessAdmin;
     if (isSuperAdmin) return true;
-    const access = profile?.panel_access as Record<string, boolean> | undefined;
+    const access = profile?.panel_access;
     if (!access || access[item.panelKey!] !== false) return true;
     return false;
   });

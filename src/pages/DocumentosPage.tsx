@@ -164,7 +164,7 @@ export default function DocumentosPage() {
 
   const handleZipDownload = async () => {
     if (!canDownload) {
-      toast.error("Configure SERVER_API_URL para habilitar download em ZIP.");
+      toast.error("Nenhum servidor do escritório está disponível para gerar o ZIP.");
       return;
     }
     const listWithFiles = filtered.filter((d) => d.file_path && String(d.file_path).trim());

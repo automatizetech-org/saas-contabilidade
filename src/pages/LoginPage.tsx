@@ -1,27 +1,23 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Lock, Loader2, AlertCircle } from "lucide-react"
+import defaultLogoUrl from "@/assets/images/logo.png"
 import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
-import { useBranding, getBrandDisplayName } from "@/contexts/BrandingContext"
-
-const SUPABASE_URL = import.meta.env.SUPABASE_URL ?? ""
-const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
+import { resetBrandingInDocument } from "@/contexts/BrandingContext"
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { logoUrl, branding } = useBranding()
-  const brandName = getBrandDisplayName(branding?.client_name)
-  const loginSubtitle = brandName ? `${brandName} • Dashboard Web` : "Dashboard Web"
+  const loginSubtitle = "Dashboard Web"
   const from = (location.state as { from?: string } | null)?.from
-  const [username, setUsername] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
-  // Garantir tema escuro como padrão na tela de login (mesma lógica do AppLayout)
   useEffect(() => {
+    resetBrandingInDocument()
     const stored = localStorage.getItem("theme")
     const isDark = stored !== "light"
     document.documentElement.classList.toggle("dark", isDark)
@@ -33,35 +29,24 @@ export default function LoginPage() {
     setError("")
     setLoading(true)
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/auth`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ username: username.trim(), password }),
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        const msg = res.status === 404
-          ? "Endpoint de login não encontrado (404). No .env use a SUPABASE_URL do seu projeto no Supabase (https://seu-projeto.supabase.co), não localhost. Depois publique a Edge Function 'auth'."
-          : (data.error ?? "Falha no login")
-        throw new Error(msg)
-      }
-      const { access_token, refresh_token } = data
-      if (!access_token || !refresh_token) throw new Error("Sessão inválida")
-      const { error: sessionError } = await supabase.auth.setSession({ access_token, refresh_token })
-      if (sessionError) throw sessionError
-      const { data: { user } } = await supabase.auth.getUser()
-      const userId = user?.id
+      if (signInError) throw signInError
+
+      const userId = data.user?.id
       if (!userId) throw new Error("Usuário não retornado")
+
       const profile = await getProfile(userId)
       setLoading(false)
+
       if (!profile) {
         navigate(from && from !== "/login" ? from : "/dashboard", { replace: true })
         return
       }
-      if (profile.role === "super_admin") {
+
+      if (profile.role === "super_admin" || profile.office_role === "owner") {
         navigate("/admin", { replace: true })
       } else {
         navigate(from && from !== "/login" ? from : "/dashboard", { replace: true })
@@ -72,9 +57,9 @@ export default function LoginPage() {
       if (err && typeof err === "object" && "message" in err) {
         const msg = String((err as { message: string }).message)
         if (msg === "Failed to fetch" || msg.includes("fetch")) {
-          message = "Não foi possível contactar o servidor. Confira o .env (SUPABASE_URL) e publique a Edge Function 'auth' no Supabase."
-        } else if (msg.includes("404") || msg.includes("não encontrado")) {
-          message = msg
+          message = "Não foi possível contactar o Supabase. Confira SUPABASE_URL e SUPABASE_ANON_KEY."
+        } else if (msg.toLowerCase().includes("invalid login")) {
+          message = "E-mail ou senha inválidos."
         } else {
           message = msg
         }
@@ -95,7 +80,7 @@ export default function LoginPage() {
       <div className="relative w-full max-w-md bg-card/90 backdrop-blur-xl rounded-2xl md:rounded-3xl shadow-2xl border border-border p-6 md:p-8 animate-in slide-in-from-bottom-4">
         <div className="flex flex-col sm:flex-row items-center gap-2 md:gap-3 mb-6 md:mb-8 min-w-0">
           <div className="h-12 w-12 md:h-14 md:w-14 rounded-xl md:rounded-2xl overflow-hidden ring-2 ring-primary-icon/20 zoom-in-anim animate-in flex-shrink-0 flex items-center justify-center bg-card/80">
-            <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+            <img src={defaultLogoUrl} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="text-center sm:text-left min-w-0">
             <div className="text-xs md:text-sm text-muted-foreground font-medium">{loginSubtitle}</div>
@@ -106,13 +91,13 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-3 md:space-y-4">
           <div className="space-y-2.5 md:space-y-3">
             <input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Nome de usuário"
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="E-mail"
               autoFocus
-              autoComplete="username"
+              autoComplete="email"
               className="w-full px-4 py-3 md:py-3.5 rounded-lg md:rounded-xl border-2 border-border bg-background/50 text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary-icon transition-all text-base touch-manipulation"
               disabled={loading}
             />

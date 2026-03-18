@@ -370,6 +370,28 @@ export function AlteracaoVisaoGeralTab() {
   };
 
   const handleFinalizado = async () => {
+    const companyDocument = onlyDigits(form.cnpj);
+    if (companyDocument) {
+      if (companyDocument.length === 11 && !validateCPF(companyDocument)) {
+        toast.error("CPF da empresa invalido.");
+        return;
+      }
+      if (companyDocument.length === 14 && !validateCNPJ(companyDocument)) {
+        toast.error("CNPJ da empresa invalido.");
+        return;
+      }
+      if (companyDocument.length !== 11 && companyDocument.length !== 14) {
+        toast.error("Informe um CPF ou CNPJ valido para a empresa.");
+        return;
+      }
+    }
+
+    const accountantCpf = onlyDigits(form.contador_responsavel_cpf);
+    if (accountantCpf && !validateCPF(accountantCpf)) {
+      toast.error("CPF do contador responsavel invalido.");
+      return;
+    }
+
     for (let i = 0; i < form.socios.length; i++) {
       const s = form.socios[i];
       const d = onlyDigits(s.cpf_socio);

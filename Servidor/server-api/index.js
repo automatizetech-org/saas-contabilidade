@@ -43,6 +43,89 @@ async function loadBasePathFromSupabase() {
   } catch (_) {}
 }
 
+function getBaseResolved() {
+  return path.resolve(BASE_PATH);
+}
+
+function normalizeRelativePath(inputPath) {
+  if (typeof inputPath !== "string") {
+    const error = new Error("Path inválido");
+    error.statusCode = 400;
+    throw error;
+  }
+  const trimmed = inputPath.trim();
+  if (!trimmed) {
+    const error = new Error("Path obrigatório");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (path.isAbsolute(trimmed)) {
+    const error = new Error("Path absoluto não é permitido");
+    error.statusCode = 403;
+    throw error;
+  }
+  const normalized = trimmed.replace(/\//g, path.sep);
+  const resolved = path.resolve(path.join(BASE_PATH, normalized));
+  if (!resolved.startsWith(getBaseResolved())) {
+    const error = new Error("Path fora do diretório base");
+    error.statusCode = 403;
+    throw error;
+  }
+  return { relative: normalized, resolved };
+}
+
+function ensureSafeExistingFile(fullPath) {
+  if (!fs.existsSync(fullPath)) {
+    const error = new Error("Arquivo não encontrado");
+    error.statusCode = 404;
+    throw error;
+  }
+  const stats = fs.lstatSync(fullPath);
+  if (stats.isSymbolicLink()) {
+    const error = new Error("Symlink não é permitido");
+    error.statusCode = 403;
+    throw error;
+  }
+  if (!stats.isFile()) {
+    const error = new Error("Arquivo não encontrado");
+    error.statusCode = 404;
+    throw error;
+  }
+  const realPath = fs.realpathSync(fullPath);
+  if (!realPath.startsWith(getBaseResolved())) {
+    const error = new Error("Path fora do diretório base");
+    error.statusCode = 403;
+    throw error;
+  }
+  return { realPath };
+}
+
+function ensureSafeExistingDirectory(fullPath) {
+  if (!fs.existsSync(fullPath)) {
+    const error = new Error("Pasta não encontrada");
+    error.statusCode = 404;
+    throw error;
+  }
+  const stats = fs.lstatSync(fullPath);
+  if (stats.isSymbolicLink()) {
+    const error = new Error("Symlink não é permitido");
+    error.statusCode = 403;
+    throw error;
+  }
+  if (!stats.isDirectory()) {
+    const error = new Error("Pasta não encontrada");
+    error.statusCode = 404;
+    throw error;
+  }
+  const realPath = fs.realpathSync(fullPath);
+  if (!realPath.startsWith(getBaseResolved())) {
+    const error = new Error("Path fora do diretório base");
+    error.statusCode = 403;
+    throw error;
+  }
+  return { realPath };
+}
+
 /** Dado path lógico (ex.: FISCAL/NFS), encontra date_rule no nó folha da árvore. */
 function findDateRuleByPath(nodes, pathLogical) {
   const parts = pathLogical.split("/").map((p) => p.trim()).filter(Boolean);
@@ -164,27 +247,22 @@ app.use((req, res, next) => {
  */
 app.get("/api/files/list", requireBearer, validateSupabaseJwt, (req, res) => {
   const relPath = req.query.path;
-  if (!relPath || typeof relPath !== "string") {
-    return res.status(400).json({ error: "Query 'path' é obrigatória" });
-  }
-  const fullPath = path.join(BASE_PATH, relPath);
-  if (!path.resolve(fullPath).startsWith(path.resolve(BASE_PATH))) {
-    return res.status(403).json({ error: "Path fora do diretório base" });
-  }
   try {
-    const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+    const { resolved } = normalizeRelativePath(relPath);
+    ensureSafeExistingDirectory(resolved);
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
     const files = entries
       .filter((e) => e.isFile())
       .filter((e) => /\.(xml|pdf)$/i.test(e.name))
       .map((e) => ({
         name: e.name,
         ext: path.extname(e.name).toLowerCase(),
-        path: path.join(relPath, e.name).replace(/\\/g, "/"),
+        path: path.join(String(relPath), e.name).replace(/\\/g, "/"),
       }));
     return res.json({ files });
   } catch (err) {
-    if (err.code === "ENOENT") return res.status(404).json({ error: "Pasta não encontrada" });
-    return res.status(500).json({ error: err.message });
+    const status = err.statusCode || (err.code === "ENOENT" ? 404 : 500);
+    return res.status(status).json({ error: err.message });
   }
 });
 
@@ -194,29 +272,17 @@ app.get("/api/files/list", requireBearer, validateSupabaseJwt, (req, res) => {
  */
 app.get("/api/files/download", requireBearer, validateSupabaseJwt, (req, res) => {
   const inputPath = req.query.path;
-  if (!inputPath || typeof inputPath !== "string") {
-    return res.status(400).json({ error: "Query 'path' é obrigatória" });
-  }
-  const baseResolved = path.resolve(BASE_PATH);
-  const normalizedInput = inputPath.trim();
-  const fullPath = path.isAbsolute(normalizedInput)
-    ? path.resolve(normalizedInput)
-    : path.resolve(path.join(BASE_PATH, normalizedInput));
-  if (!fullPath.startsWith(baseResolved)) {
-    return res.status(403).json({ error: "Path fora do diretório base" });
-  }
   try {
-    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
-      return res.status(404).json({ error: "Arquivo não encontrado" });
-    }
-    const filename = path.basename(fullPath);
+    const { resolved } = normalizeRelativePath(inputPath);
+    const { realPath } = ensureSafeExistingFile(resolved);
+    const filename = path.basename(realPath);
     const ext = path.extname(filename).toLowerCase();
     const contentType = ext === ".xml" ? "application/xml" : ext === ".pdf" ? "application/pdf" : "application/octet-stream";
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Type", contentType);
-    fs.createReadStream(fullPath).pipe(res);
+    fs.createReadStream(realPath).pipe(res);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -246,22 +312,17 @@ app.get("/api/fiscal-documents/:id/download", async (req, res) => {
   if (error || !doc?.file_path) {
     return res.status(404).json({ error: "Documento não encontrado" });
   }
-  const fullPath = path.join(BASE_PATH, doc.file_path);
-  if (!path.resolve(fullPath).startsWith(path.resolve(BASE_PATH))) {
-    return res.status(403).json({ error: "Path inválido" });
-  }
   try {
-    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
-      return res.status(404).json({ error: "Arquivo não encontrado no disco" });
-    }
-    const filename = path.basename(fullPath);
+    const { resolved } = normalizeRelativePath(doc.file_path);
+    const { realPath } = ensureSafeExistingFile(resolved);
+    const filename = path.basename(realPath);
     const ext = path.extname(filename).toLowerCase();
     const contentType = ext === ".xml" ? "application/xml" : ext === ".pdf" ? "application/pdf" : "application/octet-stream";
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Type", contentType);
-    fs.createReadStream(fullPath).pipe(res);
+    fs.createReadStream(realPath).pipe(res);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 

@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { CompanySefazLogin } from "@/services/companiesService"
+import { isValidCpf } from "@/lib/brazilDocuments"
 
 function onlyDigits(value: string) {
   return value.replace(/\D/g, "")
@@ -22,7 +23,7 @@ export function sanitizeSefazLogins(logins: CompanySefazLogin[]): CompanySefazLo
       password: String(login.password ?? "").trim(),
       is_default: Boolean(login.is_default),
     }))
-    .filter((login) => login.cpf.length === 11 && login.password)
+    .filter((login) => isValidCpf(login.cpf) && login.password)
 
   const seen = new Set<string>()
   const deduped = cleaned.filter((login) => {

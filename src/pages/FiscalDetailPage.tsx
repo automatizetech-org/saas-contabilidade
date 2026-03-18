@@ -290,7 +290,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
       return;
     }
     if (!hasServerApi()) {
-      toast.error("SERVER_API_URL não configurada para baixar o PDF.");
+      toast.error("Nenhum servidor do escritório está disponível para baixar o PDF.");
       return;
     }
     try {

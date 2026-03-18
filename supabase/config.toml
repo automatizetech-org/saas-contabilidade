@@ -1,13 +1,25 @@
 project_id = "jvnywwbqsuhwmbhqjfrz"
 
-[functions.create-user]
+[functions.create-admin]
 verify_jwt = false
+
+[functions.create-user]
+verify_jwt = true
 
 [functions.update-user]
-verify_jwt = false
+verify_jwt = true
 
 [functions.get-users-admin]
-verify_jwt = false
+verify_jwt = true
+
+[functions.delete-user]
+verify_jwt = true
+
+[functions.primeiro-escritorio]
+verify_jwt = true
+
+[functions.office-server]
+verify_jwt = true
 
 [functions.btg-create-ir-charge]
 verify_jwt = true

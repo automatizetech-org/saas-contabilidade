@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCompanies } from "@/hooks/useCompanies";
 import { fetchCnpjPublica } from "@/services/cnpjPublicaService";
+import { formatCpfOrCnpjInput, isValidCpfOrCnpj } from "@/lib/brazilDocuments";
 import { cn } from "@/utils";
 import {
   createIrClient,
@@ -412,6 +413,9 @@ export default function IRPage() {
       if (!form.nome.trim() || !form.cpf_cnpj.trim() || Number.isNaN(valorServico)) {
         throw new Error("Preencha nome, CPF/CNPJ e valor do serviço.");
       }
+      if (!isValidCpfOrCnpj(normalizedCpfCnpj)) {
+        throw new Error("Informe um CPF ou CNPJ válido.");
+      }
       if (clients.some((client) => onlyDigits(client.cpf_cnpj || "") === normalizedCpfCnpj)) {
         throw new Error("Já existe um cliente de IR cadastrado com este CPF/CNPJ.");
       }
@@ -588,7 +592,7 @@ export default function IRPage() {
 
   const handleCpfCnpjAutofill = async () => {
     const digits = onlyDigits(form.cpf_cnpj);
-    if (digits.length !== 14 || autofillLoading) return;
+    if (!isValidCpfOrCnpj(digits) || digits.length !== 14 || autofillLoading) return;
     setAutofillLoading(true);
     try {
       const data = await fetchCnpjPublica(digits);
@@ -632,13 +636,13 @@ export default function IRPage() {
 
   const handleEditClient = (client: IrClient) => {
     const shouldUseNewResponsibleMode = !!client.responsavel_ir && !responsibleOptions.includes(client.responsavel_ir);
-    setEditForm({
-      id: client.id,
-      nome: client.nome || "",
-      cpf_cnpj: client.cpf_cnpj || "",
-      responsavel_ir: client.responsavel_ir || "",
-      vencimento: client.vencimento || "",
-      valor_servico: formatCurrency(Number(client.valor_servico || 0)),
+      setEditForm({
+        id: client.id,
+        nome: client.nome || "",
+        cpf_cnpj: formatCpfOrCnpjInput(client.cpf_cnpj || ""),
+        responsavel_ir: client.responsavel_ir || "",
+        vencimento: client.vencimento || "",
+        valor_servico: formatCurrency(Number(client.valor_servico || 0)),
       observacoes: client.observacoes || "",
       status_pagamento: client.status_pagamento,
     });
@@ -651,6 +655,10 @@ export default function IRPage() {
     const valorServico = Number(normalizeCurrencyInput(editForm.valor_servico));
     if (!editForm.nome.trim() || !editForm.cpf_cnpj.trim() || Number.isNaN(valorServico)) {
       toast.error("Preencha nome, CPF/CNPJ e valor do serviço.");
+      return;
+    }
+    if (!isValidCpfOrCnpj(normalizedCpfCnpj)) {
+      toast.error("Informe um CPF ou CNPJ válido.");
       return;
     }
     if (clients.some((client) => client.id !== editForm.id && onlyDigits(client.cpf_cnpj || "") === normalizedCpfCnpj)) {
@@ -778,7 +786,7 @@ export default function IRPage() {
             <div className="space-y-2"><Label htmlFor="ir-nome">Nome</Label><Input id="ir-nome" value={form.nome} onChange={(event) => setForm((current) => ({ ...current, nome: event.target.value }))} placeholder="Nome do cliente" /></div>
             <div className="space-y-2">
               <Label htmlFor="ir-cpf-cnpj">CPF ou CNPJ</Label>
-              <Input id="ir-cpf-cnpj" value={form.cpf_cnpj} onChange={(event) => setForm((current) => ({ ...current, cpf_cnpj: event.target.value }))} onKeyDown={(event) => { if (event.key === "Tab") void handleCpfCnpjAutofill(); }} onBlur={() => { if (onlyDigits(form.cpf_cnpj).length === 14) void handleCpfCnpjAutofill(); }} placeholder="000.000.000-00" />
+              <Input id="ir-cpf-cnpj" value={form.cpf_cnpj} onChange={(event) => setForm((current) => ({ ...current, cpf_cnpj: formatCpfOrCnpjInput(event.target.value) }))} onKeyDown={(event) => { if (event.key === "Tab") void handleCpfCnpjAutofill(); }} onBlur={() => { if (onlyDigits(form.cpf_cnpj).length === 14) void handleCpfCnpjAutofill(); }} placeholder="000.000.000-00" />
               <p className="text-[11px] text-muted-foreground">Autopreenchimento disponível para CNPJ. Para CPF não há integração pública confiável nesta implementação.</p>
             </div>
             <div className="space-y-2">
@@ -1114,7 +1122,7 @@ export default function IRPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="ir-edit-cpf-cnpj">CPF ou CNPJ</Label>
-              <Input id="ir-edit-cpf-cnpj" value={editForm.cpf_cnpj} onChange={(event) => setEditForm((current) => ({ ...current, cpf_cnpj: event.target.value }))} />
+              <Input id="ir-edit-cpf-cnpj" value={editForm.cpf_cnpj} onChange={(event) => setEditForm((current) => ({ ...current, cpf_cnpj: formatCpfOrCnpjInput(event.target.value) }))} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="ir-edit-responsavel">Responsável pelo IR</Label>

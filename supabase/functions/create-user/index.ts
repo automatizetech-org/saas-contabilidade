@@ -2,22 +2,62 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-user-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders })
-  }
+const defaultPanelAccess = {
+  dashboard: true,
+  fiscal: true,
+  dp: true,
+  contabil: true,
+  inteligencia_tributaria: true,
+  ir: true,
+  paralegal: false,
+  financeiro: true,
+  operacoes: true,
+  documentos: true,
+  empresas: true,
+  alteracao_empresarial: false,
+  sync: false,
+}
 
-  const authHeader = req.headers.get("Authorization")
-  const userToken = req.headers.get("X-User-Token") ?? authHeader?.replace(/^Bearer\s+/i, "")
-  if (!userToken) {
-    return new Response(
-      JSON.stringify({ error: "Missing authorization", detail: "Envie o token em Authorization ou X-User-Token." }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+const allowedPanelKeys = Object.keys(defaultPanelAccess)
+const functionVersion = "create-user-hardening-v2"
+
+type CallerContext = {
+  userId: string
+  platformRole: "super_admin" | "user"
+  officeId: string | null
+  officeRole: "owner" | "admin" | "operator" | "viewer" | null
+}
+
+function normalizeOfficeRole(role: unknown): "owner" | "viewer" {
+  return role === "owner" ? "owner" : "viewer"
+}
+
+function sanitizePanelAccess(input: unknown) {
+  const source = input && typeof input === "object" ? input as Record<string, unknown> : {}
+  return allowedPanelKeys.reduce<Record<string, boolean>>((acc, key) => {
+    acc[key] = typeof source[key] === "boolean" ? source[key] : defaultPanelAccess[key as keyof typeof defaultPanelAccess]
+    return acc
+  }, {})
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "X-Function-Version": functionVersion,
+    },
+  })
+}
+
+async function getCallerContext(req: Request) {
+  const userToken = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "")
+  if (!userToken) return { error: json({ error: "Missing authorization" }, 401) }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!
@@ -27,68 +67,161 @@ Deno.serve(async (req) => {
     global: { headers: { Authorization: `Bearer ${userToken}` } },
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
-  if (authError || !user) {
-    return new Response(
-      JSON.stringify({
-        error: "Unauthorized",
-        detail: authError?.message === "jwt expired" ? "Token expirado. Faça login novamente." : authError?.message || "Token inválido ou ausente.",
-      }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
 
-  const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } })
-  const { data: profile } = await supabaseAdmin.from("profiles").select("role").eq("id", user.id).single()
-  if (profile?.role !== "super_admin") {
-    return new Response(
-      JSON.stringify({ error: "Forbidden: super_admin only" }),
-      { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+  const {
+    data: { user },
+    error: authError,
+  } = await supabaseAuth.auth.getUser()
+  if (authError || !user) return { error: json({ error: "Unauthorized", detail: authError?.message }, 401) }
 
-  let body: { email: string; password: string; username: string; role?: string }
+  const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single()
+  if (profileError || !profile) return { error: json({ error: "Profile not found" }, 403) }
+
+  const { data: membership } = await admin
+    .from("office_memberships")
+    .select("office_id, role")
+    .eq("user_id", user.id)
+    .order("is_default", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return {
+    admin,
+    caller: {
+      userId: user.id,
+      platformRole: profile.role,
+      officeId: membership?.office_id ?? null,
+      officeRole: membership?.role ?? null,
+    } as CallerContext,
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
+
+  const context = await getCallerContext(req)
+  if ("error" in context) return context.error
+
+  const { admin, caller } = context
+  const canManageOffice =
+    caller.platformRole === "super_admin" ||
+    caller.officeRole === "owner"
+  if (!canManageOffice) return json({ error: "Forbidden" }, 403)
+
+  let body: {
+    email?: string
+    password?: string
+    username?: string
+    role?: "super_admin" | "user"
+    office_role?: "owner" | "viewer"
+    office_id?: string | null
+    panel_access?: Record<string, boolean>
+  }
   try {
     body = await req.json()
   } catch {
-    return new Response(
-      JSON.stringify({ error: "Invalid JSON body" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    return json({ error: "Invalid JSON body" }, 400)
+  }
+
+  const email = String(body.email ?? "").trim().toLowerCase()
+  const password = String(body.password ?? "")
+  const username = String(body.username ?? "").trim()
+  const requestedPlatformRole = body.role === "super_admin" ? "super_admin" : "user"
+  const targetOfficeRole = normalizeOfficeRole(body.office_role)
+  const requestedOfficeId = String(body.office_id ?? "").trim() || null
+
+  if (caller.platformRole !== "super_admin" && requestedPlatformRole === "super_admin") {
+    return json(
+      {
+        error: "Apenas super_admin pode criar usuários com papel de plataforma elevado.",
+        code: "CREATE_USER_PLATFORM_ROLE_FORBIDDEN",
+      },
+      403,
+    )
+  }
+  if (caller.platformRole !== "super_admin" && requestedOfficeId && requestedOfficeId !== caller.officeId) {
+    return json(
+      {
+        error: "Não é permitido vincular usuários a outro escritório.",
+        code: "CREATE_USER_FOREIGN_OFFICE_FORBIDDEN",
+      },
+      403,
     )
   }
 
-  const { email, password, username, role = "user" } = body
+  const targetPlatformRole =
+    requestedPlatformRole === "super_admin" && caller.platformRole === "super_admin" ? "super_admin" : "user"
+  const officeId =
+    caller.platformRole === "super_admin"
+      ? requestedOfficeId ?? caller.officeId
+      : caller.officeId
+
   if (!email || !password || !username) {
-    return new Response(
-      JSON.stringify({ error: "email, password and username required" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+    return json({ error: "email, password and username required" }, 400)
+  }
+  if (!officeId && targetPlatformRole !== "super_admin") {
+    return json({ error: "Nenhum escritório ativo encontrado para vincular o usuário." }, 400)
   }
 
-  const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+  const panelAccess = sanitizePanelAccess(body.panel_access)
+
+  const { data: createdUser, error: createError } = await admin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
-    user_metadata: { username, full_name: username, display_name: username, role },
+    user_metadata: {
+      username,
+      display_name: username,
+      full_name: username,
+    },
   })
-
-  if (createError) {
-    return new Response(
-      JSON.stringify({ error: "Create user failed", detail: createError.message }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+  if (createError || !createdUser.user?.id) {
+    return json({ error: "Create user failed", detail: createError?.message ?? "Unknown error" }, 400)
   }
 
-  const uid = newUser.user?.id
-  if (uid) {
-    await supabaseAdmin.from("profiles").upsert(
-      { id: uid, username, role: role === "super_admin" ? "super_admin" : "user" },
-      { onConflict: "id" }
-    )
-  }
+  const userId = createdUser.user.id
 
-  return new Response(
-    JSON.stringify({ message: "User created", user_id: uid }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  const { error: profileError } = await admin.from("profiles").upsert(
+    {
+      id: userId,
+      username,
+      role: targetPlatformRole,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" }
   )
+  if (profileError) return json({ error: "Profile upsert failed", detail: profileError.message }, 400)
+
+  if (officeId) {
+    const { error: membershipError } = await admin.from("office_memberships").upsert(
+      {
+        office_id: officeId,
+        user_id: userId,
+        role: targetOfficeRole,
+        panel_access: panelAccess,
+        is_default: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "office_id,user_id" }
+    )
+    if (membershipError) {
+      return json({ error: "Membership upsert failed", detail: membershipError.message }, 400)
+    }
+  }
+
+  return json({
+    message: "User created",
+    user_id: userId,
+    office_id: officeId,
+    office_role: officeId ? targetOfficeRole : null,
+  })
 })

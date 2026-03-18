@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import type { Tables } from "@/types/database";
+import { isValidCpfOrCnpj, onlyDigits } from "@/lib/brazilDocuments";
 
 export type IrChargeType = "PIX" | "BOLETO" | "BOLETO_HIBRIDO";
 export type IrChargeStatus = "none" | "pending" | "paid" | "failed" | "cancelled";
@@ -112,11 +113,15 @@ export async function getIrClients(): Promise<IrClient[]> {
 }
 
 export async function createIrClient(input: SaveIrClientInput): Promise<IrClient> {
+  const document = onlyDigits(input.cpf_cnpj);
+  if (!isValidCpfOrCnpj(document)) {
+    throw new Error("Informe um CPF ou CNPJ válido para o cliente de IR.");
+  }
   const { data, error } = await supabase
     .from("ir_clients")
     .insert({
       nome: input.nome.trim(),
-      cpf_cnpj: input.cpf_cnpj.trim(),
+      cpf_cnpj: document,
       responsavel_ir: input.responsavel_ir?.trim() || null,
       vencimento: input.vencimento || null,
       valor_servico: input.valor_servico,
@@ -134,17 +139,27 @@ export async function updateIrClient(
   id: string,
   updates: Partial<Pick<IrClient, "status_pagamento" | "status_declaracao" | "observacoes" | "valor_servico" | "nome" | "cpf_cnpj" | "responsavel_ir" | "vencimento" | "payment_charge_type" | "payment_charge_status" | "payment_charge_id" | "payment_charge_correlation_id" | "payment_provider" | "payment_link" | "payment_pix_copy_paste" | "payment_pix_qr_code" | "payment_boleto_pdf_base64" | "payment_boleto_barcode" | "payment_boleto_digitable_line" | "payment_paid_at" | "payment_payer_name" | "payment_payer_tax_id" | "payment_generated_at" | "payment_last_webhook_at" | "payment_metadata">>,
 ): Promise<IrClient> {
+  const payload = {
+    ...updates,
+    responsavel_ir:
+      updates.responsavel_ir === undefined ? undefined : updates.responsavel_ir?.trim() || null,
+    vencimento: updates.vencimento === undefined ? undefined : updates.vencimento || null,
+    observacoes:
+      updates.observacoes === undefined ? undefined : updates.observacoes?.trim() || null,
+    updated_at: new Date().toISOString(),
+  } as Record<string, unknown>;
+
+  if (updates.cpf_cnpj !== undefined) {
+    const document = onlyDigits(updates.cpf_cnpj);
+    if (!isValidCpfOrCnpj(document)) {
+      throw new Error("Informe um CPF ou CNPJ válido para o cliente de IR.");
+    }
+    payload.cpf_cnpj = document;
+  }
+
   const { data, error } = await supabase
     .from("ir_clients")
-    .update({
-      ...updates,
-      responsavel_ir:
-        updates.responsavel_ir === undefined ? undefined : updates.responsavel_ir?.trim() || null,
-      vencimento: updates.vencimento === undefined ? undefined : updates.vencimento || null,
-      observacoes:
-        updates.observacoes === undefined ? undefined : updates.observacoes?.trim() || null,
-      updated_at: new Date().toISOString(),
-    } as never)
+    .update(payload as never)
     .eq("id", id)
     .select("*")
     .single();

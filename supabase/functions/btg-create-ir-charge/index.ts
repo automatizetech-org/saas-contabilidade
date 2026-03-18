@@ -9,12 +9,19 @@ type ChargeType = "PIX" | "BOLETO" | "BOLETO_HIBRIDO";
 
 type IrClientRow = {
   id: string;
+  office_id: string;
   nome: string;
   cpf_cnpj: string;
   valor_servico: number;
   observacoes: string | null;
   status_pagamento: string;
   payment_metadata: Record<string, unknown> | null;
+};
+
+type OfficeMembershipRow = {
+  office_id: string;
+  role: string | null;
+  panel_access: Record<string, boolean> | null;
 };
 
 function jsonResponse(body: unknown, status = 200) {
@@ -141,10 +148,39 @@ Deno.serve(async (req) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  const [{ data: membership, error: membershipError }, { data: profile, error: profileError }] = await Promise.all([
+    admin
+      .from("office_memberships")
+      .select("office_id, role, panel_access")
+      .eq("user_id", authData.user.id)
+      .order("is_default", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    admin.from("profiles").select("role").eq("id", authData.user.id).maybeSingle(),
+  ]);
+
+  if (membershipError) {
+    return jsonResponse({ error: "Falha ao validar contexto do escritório.", detail: membershipError.message }, 500);
+  }
+  if (profileError) {
+    return jsonResponse({ error: "Falha ao validar papel da plataforma.", detail: profileError.message }, 500);
+  }
+  if (!membership?.office_id) {
+    return jsonResponse({ error: "Nenhum escritório ativo encontrado." }, 403);
+  }
+
+  const isSuperAdmin = profile?.role === "super_admin";
+  const isOwner = membership.role === "owner";
+  const canAccessIr = Boolean((membership as OfficeMembershipRow).panel_access?.ir);
+  if (!isSuperAdmin && !isOwner && !canAccessIr) {
+    return jsonResponse({ error: "Sem permissão para operar cobranças de IR neste escritório." }, 403);
+  }
+
   const { data: clientRow, error: clientError } = await admin
     .from("ir_clients")
-    .select("id, nome, cpf_cnpj, valor_servico, observacoes, status_pagamento, payment_metadata")
+    .select("id, office_id, nome, cpf_cnpj, valor_servico, observacoes, status_pagamento, payment_metadata")
     .eq("id", body.clientId)
+    .eq("office_id", membership.office_id)
     .single();
 
   if (clientError || !clientRow) {
@@ -208,6 +244,7 @@ Deno.serve(async (req) => {
     .from("ir_clients")
     .update(updates as never)
     .eq("id", body.clientId)
+    .eq("office_id", membership.office_id)
     .select("*")
     .single();
 

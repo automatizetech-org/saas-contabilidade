@@ -3,62 +3,47 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  })
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders })
-  }
-
-  if (req.method !== "POST") {
-    return new Response(
-      JSON.stringify({ error: "Method not allowed" }),
-      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405)
 
   const authHeader = req.headers.get("Authorization")
-  if (!authHeader) {
-    return new Response(
-      JSON.stringify({ error: "Não autenticado" }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+  if (!authHeader) return json({ error: "Não autenticado" }, 401)
 
-  let body: { bootstrap_secret?: string }
+  let body: { bootstrap_secret?: string; username?: string }
   try {
     body = await req.json()
   } catch {
-    return new Response(
-      JSON.stringify({ error: "Corpo inválido" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+    return json({ error: "Corpo inválido" }, 400)
   }
 
-  const secret = body.bootstrap_secret?.trim()
+  const secret = String(body.bootstrap_secret ?? "").trim()
   const expectedSecret = Deno.env.get("BOOTSTRAP_SECRET")
-  if (!expectedSecret || secret !== expectedSecret) {
-    return new Response(
-      JSON.stringify({ error: "Segredo inválido" }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+  if (!expectedSecret || secret !== expectedSecret) return json({ error: "Segredo inválido" }, 401)
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 
-  const supabaseAuth = createClient(supabaseUrl, anonKey, {
+  const authClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
-  if (authError || !user) {
-    return new Response(
-      JSON.stringify({ error: "Não autenticado" }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+  const {
+    data: { user },
+    error: authError,
+  } = await authClient.auth.getUser()
+  if (authError || !user) return json({ error: "Não autenticado" }, 401)
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -68,28 +53,18 @@ Deno.serve(async (req) => {
     .from("profiles")
     .select("id", { count: "exact", head: true })
     .eq("role", "super_admin")
-
-  if (countError || (count ?? 0) > 0) {
-    return new Response(
-      JSON.stringify({ error: "Já existe um administrador. Use o painel Admin para gerenciar perfis." }),
-      { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+  if (countError) return json({ error: countError.message }, 500)
+  if ((count ?? 0) > 0) {
+    return json({ error: "Já existe um administrador. Use o painel Admin para gerenciar perfis." }, 403)
   }
 
+  const username = String(body.username ?? user.user_metadata?.display_name ?? "admin").trim() || "admin"
   const { error: updateError } = await admin
     .from("profiles")
-    .update({ username: "admin", role: "super_admin" })
+    .update({ username, role: "super_admin", updated_at: new Date().toISOString() })
     .eq("id", user.id)
 
-  if (updateError) {
-    return new Response(
-      JSON.stringify({ error: "Falha ao atualizar perfil", detail: updateError.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
-  }
+  if (updateError) return json({ error: "Falha ao atualizar perfil", detail: updateError.message }, 500)
 
-  return new Response(
-    JSON.stringify({ message: "Administrador definido com sucesso. Faça login com usuário admin e sua senha." }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  )
+  return json({ message: "Administrador definido com sucesso.", user_id: user.id })
 })

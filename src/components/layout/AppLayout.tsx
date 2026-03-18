@@ -24,7 +24,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     !isSuperAdmin &&
     profile &&
     panelKey &&
-    (profile.panel_access as Record<string, boolean>)?.[panelKey] === false;
+    profile.panel_access?.[panelKey] === false;
   const [dark, setDark] = useState(() => {
     const stored = localStorage.getItem("theme");
     if (stored === "light" || stored === "dark") return stored === "dark";
