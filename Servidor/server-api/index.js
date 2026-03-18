@@ -12,6 +12,8 @@ import { createHash, timingSafeEqual } from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
+// .env da raiz por último e override: true para prevalecer sobre env do sistema/PM2 (ex.: BASE_PATH)
+dotenv.config({ path: path.join(__dirname, "../../.env"), override: true });
 
 import express from "express";
 import cors from "cors";
@@ -771,13 +773,19 @@ function walkDir(dir, baseDir) {
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase - Cliente Supabase (JWT do usuário ou service role)
  * @returns {{ inserted: number, skipped: number, deleted: number, errors: Array<{ file: string, error: string }> }}
  */
-async function runFiscalSyncAll(supabase) {
+/**
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabase
+ * @param {string | null} [officeId] - Se informado (ex.: watcher), usa nos inserts; senão usa current_office_id() do JWT.
+ */
+async function runFiscalSyncAll(supabase, officeId = null) {
   const result = { inserted: 0, skipped: 0, deleted: 0, errors: [] };
   const empresasPath = BASE_PATH;
   const empresasExists = fs.existsSync(empresasPath) && fs.statSync(empresasPath).isDirectory();
   const allPathsOnDisk = empresasExists ? new Set(walkDir("", BASE_PATH)) : new Set();
 
-  const { data: companies } = await supabase.from("companies").select("id, name");
+  let q = supabase.from("companies").select("id, name, office_id");
+  if (officeId) q = q.eq("office_id", officeId);
+  const { data: companies } = await q;
   const nameToId = new Map((companies || []).map((c) => [normalizeCompanyName(c.name), c.id]));
   /** Por company_id: Set de file_path que existem no disco. Inicializa para todas as empresas (vazio se pasta não existir). */
   const pathsOnDiskByCompany = new Map((companies || []).map((c) => [c.id, new Set()]));
@@ -825,14 +833,49 @@ async function runFiscalSyncAll(supabase) {
           result.skipped++;
           continue;
         }
-        const { error } = await supabase.from("fiscal_documents").insert({
-          company_id: companyId,
-          type: "NFS",
-          chave,
-          periodo,
-          status: "novo",
-          file_path: fileRel,
-        });
+        const row = { company_id: companyId, type: "NFS", chave, periodo, status: "novo", file_path: fileRel };
+        if (officeId) row.office_id = officeId;
+        const { error } = await supabase.from("fiscal_documents").insert(row);
+        if (error) {
+          if (error.code === "23505") {
+            result.skipped++;
+          } else {
+            result.errors.push({ file: fileRel, error: error.message });
+          }
+        } else {
+          result.inserted++;
+        }
+      }
+    }
+
+    // NFE-NFC: FISCAL/NFE-NFC/Recebidas e FISCAL/NFE-NFC/Emitidas (tipo NFE ou NFC por nome do arquivo)
+    for (const sub of ["Recebidas", "Emitidas"]) {
+      const segment = path.join(companyName, "FISCAL", "NFE-NFC", sub).replace(/\\/g, "/");
+      const files = walkDir(segment, BASE_PATH);
+      for (const fileRel of files) {
+        pathsOnDisk.add(fileRel);
+        const baseName = path.basename(fileRel, path.extname(fileRel));
+        const nameLower = baseName.toLowerCase();
+        const docType = nameLower.includes("nfc") || nameLower.includes("65") ? "NFC" : "NFE";
+        const chave = baseName;
+        const parts = fileRel.split(/[/\\]/);
+        let periodo = new Date().toISOString().slice(0, 7);
+        const y = parts.find((p) => /^\d{4}$/.test(p));
+        const m = parts.find((p) => /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12);
+        if (y && m) periodo = `${y}-${m}`;
+        const { data: existingRows } = await supabase
+          .from("fiscal_documents")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("file_path", fileRel)
+          .limit(1);
+        if (existingRows && existingRows.length > 0) {
+          result.skipped++;
+          continue;
+        }
+        const row = { company_id: companyId, type: docType, chave, periodo, status: "novo", file_path: fileRel };
+        if (officeId) row.office_id = officeId;
+        const { error } = await supabase.from("fiscal_documents").insert(row);
         if (error) {
           if (error.code === "23505") {
             result.skipped++;
@@ -875,7 +918,8 @@ app.post("/api/fiscal-sync-all", requireConnectorSecret, requireForwardedUserJwt
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
   try {
-    const { inserted, skipped, deleted, errors } = await runFiscalSyncAll(supabase);
+    const officeId = OFFICE_ID || null;
+    const { inserted, skipped, deleted, errors } = await runFiscalSyncAll(supabase, officeId);
     return res.json({ ok: true, inserted, skipped, deleted: deleted ?? 0, errors: errors.length ? errors : undefined });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -1002,10 +1046,13 @@ function startFiscalWatcher() {
   const DEBOUNCE_MS = 4000;
 
   const runSync = () => {
-    runFiscalSyncAll(supabase)
+    runFiscalSyncAll(supabase, OFFICE_ID || null)
       .then(({ inserted, skipped, deleted, errors }) => {
         if (inserted > 0 || deleted > 0 || errors.length > 0) {
           console.log(`[fiscal-watcher] Sync: ${inserted} inseridos, ${skipped} já existentes${deleted ? `, ${deleted} removidos` : ""}${errors.length ? `, ${errors.length} erros` : ""}`);
+          for (const e of errors) {
+            console.error(`[fiscal-watcher] Erro: ${e.file} → ${e.error}`);
+          }
         }
       })
       .catch((err) => console.error("[fiscal-watcher] Erro ao sincronizar:", err.message));
@@ -1021,6 +1068,8 @@ function startFiscalWatcher() {
       }, DEBOUNCE_MS);
     });
     console.log("[fiscal-watcher] Monitorando a pasta base da VM — novos XML/PDF serão sincronizados automaticamente.");
+    // Sync inicial ao subir: garante que arquivos já existentes entrem no banco
+    setTimeout(() => { runSync(); }, 2000);
   } catch (err) {
     console.error("[fiscal-watcher] Não foi possível monitorar a pasta base da VM:", err.message);
   }
