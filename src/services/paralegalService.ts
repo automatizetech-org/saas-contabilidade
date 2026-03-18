@@ -1,4 +1,5 @@
 import { getCompaniesForUser } from "./companiesService"
+import { supabase } from "./supabaseClient"
 import type { Company } from "./profilesService"
 
 export type CertificateStatus = "ativo" | "vence_em_breve" | "vencido" | "sem_certificado"
@@ -15,6 +16,11 @@ export type ParalegalCertificateSummary = {
   venceEmBreve: number
   vencidos: number
   semCertificado: number
+}
+
+export type ParalegalCertificateOverview = {
+  cards: ParalegalCertificateSummary
+  byStatus: Array<{ key: CertificateStatus; name: string; total: number }>
 }
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
@@ -106,4 +112,51 @@ export function getParalegalCertificateSummary(items: ParalegalCertificateItem[]
       semCertificado: 0,
     }
   )
+}
+
+export async function getParalegalCertificateOverview(companyIds: string[] | null = null): Promise<ParalegalCertificateOverview> {
+  try {
+    const { data, error } = await supabase.rpc("get_paralegal_certificate_overview_summary", {
+      company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
+    })
+    if (error) throw error
+
+    const payload = (data ?? {}) as {
+      cards?: {
+        total?: number
+        ativos?: number
+        venceEmBreve?: number
+        vencidos?: number
+        semCertificado?: number
+      }
+      byStatus?: Array<{ key?: CertificateStatus; name?: string; total?: number }>
+    }
+
+    return {
+      cards: {
+        total: Number(payload.cards?.total ?? 0),
+        ativos: Number(payload.cards?.ativos ?? 0),
+        venceEmBreve: Number(payload.cards?.venceEmBreve ?? 0),
+        vencidos: Number(payload.cards?.vencidos ?? 0),
+        semCertificado: Number(payload.cards?.semCertificado ?? 0),
+      },
+      byStatus: (payload.byStatus ?? []).map((item) => ({
+        key: (item.key ?? "sem_certificado") as CertificateStatus,
+        name: item.name ?? "",
+        total: Number(item.total ?? 0),
+      })),
+    }
+  } catch {
+    const items = await getParalegalCertificates(companyIds)
+    const cards = getParalegalCertificateSummary(items)
+    return {
+      cards,
+      byStatus: [
+        { key: "ativo", name: "Ativos", total: cards.ativos },
+        { key: "vence_em_breve", name: "Perto de vencer", total: cards.venceEmBreve },
+        { key: "vencido", name: "Vencidos", total: cards.vencidos },
+        { key: "sem_certificado", name: "Sem certificado", total: cards.semCertificado },
+      ],
+    }
+  }
 }

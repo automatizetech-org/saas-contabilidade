@@ -40,6 +40,7 @@ type RequestContext = {
   panelAccess: Record<string, boolean>
   platformRole: string | null
   server: OfficeServer
+  connectorSecretHash: string
 }
 
 function isOwnerOrSuperAdmin(context: Pick<RequestContext, "officeRole" | "platformRole">) {
@@ -128,6 +129,16 @@ async function getContext(req: Request) {
     return { error: json({ error: "Nenhum servidor ativo configurado para o escritório." }, 409) }
   }
 
+  const { data: credential, error: credentialError } = await admin
+    .from("office_server_credentials")
+    .select("secret_hash")
+    .eq("office_server_id", server.id)
+    .maybeSingle()
+  if (credentialError) return { error: json({ error: credentialError.message }, 500) }
+  if (!credential?.secret_hash) {
+    return { error: json({ error: "Credencial do conector não configurada para o escritório." }, 409) }
+  }
+
   return {
     admin,
     userToken,
@@ -137,6 +148,7 @@ async function getContext(req: Request) {
     panelAccess: (membership as MembershipRow).panel_access ?? {},
     platformRole: profile?.role ?? null,
     server: server as OfficeServer,
+    connectorSecretHash: credential.secret_hash,
   } satisfies RequestContext
 }
 
@@ -151,11 +163,18 @@ async function readError(response: Response) {
   }
 }
 
-async function proxyBinary(server: OfficeServer, userToken: string, endpoint: string, init?: RequestInit) {
+async function proxyBinary(
+  server: OfficeServer,
+  connectorSecretHash: string,
+  userToken: string,
+  endpoint: string,
+  init?: RequestInit,
+) {
   const response = await fetch(`${server.public_base_url}${endpoint}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${userToken}`,
+      Authorization: `Bearer ${connectorSecretHash}`,
+      "X-Office-User-JWT": userToken,
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
@@ -180,7 +199,7 @@ Deno.serve(async (req) => {
   const context = await getContext(req)
   if ("error" in context) return context.error
 
-  const { admin, userToken, officeId, server } = context
+  const { admin, userToken, officeId, server, connectorSecretHash } = context
 
   if (action === "download-file") {
     if (!hasAnyPanelAccess(context, ["documentos", "fiscal", "paralegal"])) {
@@ -190,7 +209,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}))
     try {
       const filePath = validateRelativePath(String(body.file_path ?? ""))
-      return proxyBinary(server, userToken, `/api/files/download?path=${encodeURIComponent(filePath)}`, { method: "GET" })
+      return proxyBinary(server, connectorSecretHash, userToken, `/api/files/download?path=${encodeURIComponent(filePath)}`, {
+        method: "GET",
+      })
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "Caminho inválido para download." }, 400)
     }
@@ -216,6 +237,7 @@ Deno.serve(async (req) => {
 
     const result = await proxyBinary(
       server,
+      connectorSecretHash,
       userToken,
       `/api/files/download?path=${encodeURIComponent(document.file_path)}`,
       { method: "GET" },
@@ -249,7 +271,7 @@ Deno.serve(async (req) => {
       return json({ error: "Um ou mais documentos não pertencem ao escritório atual." }, 403)
     }
 
-    const result = await proxyBinary(server, userToken, "/api/fiscal-documents/download-zip", {
+    const result = await proxyBinary(server, connectorSecretHash, userToken, "/api/fiscal-documents/download-zip", {
       method: "POST",
       body: JSON.stringify({ ids }),
     })
@@ -282,7 +304,7 @@ Deno.serve(async (req) => {
       return json({ error: "Uma ou mais empresas não pertencem ao escritório atual." }, 403)
     }
 
-    return proxyBinary(server, userToken, "/api/fiscal-documents/download-zip", {
+    return proxyBinary(server, connectorSecretHash, userToken, "/api/fiscal-documents/download-zip", {
       method: "POST",
       body: JSON.stringify({
         company_ids: companyIds,
@@ -310,7 +332,7 @@ Deno.serve(async (req) => {
       return json({ error: "Uma ou mais empresas não pertencem ao escritório atual." }, 403)
     }
 
-    return proxyBinary(server, userToken, "/api/hub-documents/download-zip", {
+    return proxyBinary(server, connectorSecretHash, userToken, "/api/hub-documents/download-zip", {
       method: "POST",
       body: JSON.stringify({
         company_ids: companyIds,
@@ -327,7 +349,8 @@ Deno.serve(async (req) => {
     const response = await fetch(`${server.public_base_url}/api/fiscal-sync-all`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${userToken}`,
+        Authorization: `Bearer ${connectorSecretHash}`,
+        "X-Office-User-JWT": userToken,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({}),

@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { fetchAllPages } from "./supabasePagination";
 import type { Tables } from "@/types/database";
 import { isValidCpfOrCnpj, onlyDigits } from "@/lib/brazilDocuments";
 
@@ -54,6 +55,21 @@ export type GenerateIrChargeResult = {
   boletoDigitableLine: string | null;
 };
 
+export type IrOverviewSummary = {
+  cards: {
+    clientesIr: number
+    recebidos: number
+    aPagar: number
+    concluidoPercent: number
+    concluidoTotal: number
+    clientesTotal: number
+    valorTotal: number
+  }
+  progressData: Array<{ name: string; value: number }>
+  paymentValueData: Array<{ name: string; value: number }>
+  paidValuePercent: number
+}
+
 function normalizeIrPaymentStatus(status: string | null | undefined): IrPaymentStatus {
   if (status === "Pendente" || status === "A Pagar") return "A PAGAR";
   if (status === "Pago") return "PIX";
@@ -104,12 +120,76 @@ function normalizeIrClient(client: Partial<IrClient>): IrClient {
 }
 
 export async function getIrClients(): Promise<IrClient[]> {
-  const { data, error } = await supabase
-    .from("ir_clients")
-    .select("*")
-    .order("nome", { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map((client) => normalizeIrClient(client as Partial<IrClient>));
+  const data = await fetchAllPages<IrClient>((from, to) =>
+    supabase
+      .from("ir_clients")
+      .select("*")
+      .order("nome", { ascending: true })
+      .range(from, to),
+  );
+  return data.map((client) => normalizeIrClient(client as Partial<IrClient>));
+}
+
+export async function getIrOverviewSummary(responsavelFilter: string | null): Promise<IrOverviewSummary> {
+  try {
+    const { data, error } = await supabase.rpc("get_ir_overview_summary", {
+      responsavel_filter: responsavelFilter,
+    })
+    if (error) throw error
+
+    const payload = (data ?? {}) as IrOverviewSummary
+    return {
+      cards: {
+        clientesIr: Number(payload.cards?.clientesIr ?? 0),
+        recebidos: Number(payload.cards?.recebidos ?? 0),
+        aPagar: Number(payload.cards?.aPagar ?? 0),
+        concluidoPercent: Number(payload.cards?.concluidoPercent ?? 0),
+        concluidoTotal: Number(payload.cards?.concluidoTotal ?? 0),
+        clientesTotal: Number(payload.cards?.clientesTotal ?? 0),
+        valorTotal: Number(payload.cards?.valorTotal ?? 0),
+      },
+      progressData: (payload.progressData ?? []).map((item) => ({ name: item.name, value: Number(item.value ?? 0) })),
+      paymentValueData: (payload.paymentValueData ?? []).map((item) => ({ name: item.name, value: Number(item.value ?? 0) })),
+      paidValuePercent: Number(payload.paidValuePercent ?? 0),
+    }
+  } catch {
+    const clients = await getIrClients()
+    const filteredClients = responsavelFilter
+      ? clients.filter((client) => (client.responsavel_ir?.trim() || "") === responsavelFilter)
+      : clients
+    const paidCount = filteredClients.filter((client) => client.status_pagamento !== "A PAGAR").length
+    const pendingCount = filteredClients.filter((client) => client.status_pagamento === "A PAGAR").length
+    const concludedCount = filteredClients.filter((client) => client.status_declaracao === "Concluido").length
+    const pendingExecutionCount = filteredClients.length - concludedCount
+    const paidValue = filteredClients
+      .filter((client) => client.status_pagamento !== "A PAGAR")
+      .reduce((sum, client) => sum + Number(client.valor_servico || 0), 0)
+    const pendingValue = filteredClients
+      .filter((client) => client.status_pagamento === "A PAGAR")
+      .reduce((sum, client) => sum + Number(client.valor_servico || 0), 0)
+    const totalValue = filteredClients.reduce((sum, client) => sum + Number(client.valor_servico || 0), 0)
+
+    return {
+      cards: {
+        clientesIr: filteredClients.length,
+        recebidos: paidCount,
+        aPagar: pendingCount,
+        concluidoPercent: filteredClients.length ? Math.round((concludedCount / filteredClients.length) * 100) : 0,
+        concluidoTotal: concludedCount,
+        clientesTotal: filteredClients.length,
+        valorTotal: totalValue,
+      },
+      progressData: [
+        { name: "Concluídos", value: concludedCount },
+        { name: "Pendentes", value: pendingExecutionCount },
+      ],
+      paymentValueData: [
+        { name: "Recebido", value: paidValue },
+        { name: "A PAGAR", value: pendingValue },
+      ],
+      paidValuePercent: totalValue ? Math.round((paidValue / totalValue) * 100) : 0,
+    }
+  }
 }
 
 export async function createIrClient(input: SaveIrClientInput): Promise<IrClient> {

@@ -70,7 +70,13 @@ export type Database = {
         last_job_at: string | null
         host_fingerprint: string | null
         base_path_fingerprint: string | null
-        server_secret_hash: string | null
+        created_at: string
+        updated_at: string
+      }>
+      office_server_credentials: TableDef<{
+        id: string
+        office_server_id: string
+        secret_hash: string
         created_at: string
         updated_at: string
       }>
@@ -279,7 +285,179 @@ export type Database = {
       robot_job_logs: TableDef<{ id: string; office_id: string; robot_job_id: string; level: string; message: string; payload: Json; created_at: string }>
     }
     Views: { [_ in never]: never }
-    Functions: { [_ in never]: never }
+    Functions: {
+      get_dashboard_overview_summary: {
+        Args: { company_ids?: string[] | null }
+        Returns: Json
+      }
+      get_fiscal_overview_analytics_summary: {
+        Args: { company_ids?: string[] | null; date_from?: string | null; date_to?: string | null }
+        Returns: Json
+      }
+      get_paralegal_certificate_overview_summary: {
+        Args: { company_ids?: string[] | null }
+        Returns: Json
+      }
+      get_municipal_tax_overview_summary: {
+        Args: {
+          company_ids?: string[] | null
+          year_filter?: string | null
+          status_filter?: string | null
+          date_from?: string | null
+          date_to?: string | null
+          search_text?: string | null
+        }
+        Returns: Json
+      }
+      get_municipal_tax_debts_page: {
+        Args: {
+          company_ids?: string[] | null
+          year_filter?: string | null
+          status_filter?: string | null
+          date_from?: string | null
+          date_to?: string | null
+          search_text?: string | null
+          sort_key?: string | null
+          sort_direction?: string | null
+          page_number?: number | null
+          page_size?: number | null
+        }
+        Returns: Array<{
+          id: string
+          company_id: string
+          company_name: string
+          company_document: string | null
+          ano: number | null
+          tributo: string
+          numero_documento: string | null
+          data_vencimento: string | null
+          valor: number
+          situacao: string | null
+          status_class: string
+          days_until_due: number | null
+          guia_pdf_path: string | null
+          total_count: number
+        }>
+      }
+      get_tax_intelligence_overview_summary: {
+        Args: { company_ids?: string[] | null }
+        Returns: Json
+      }
+      get_ir_overview_summary: {
+        Args: { responsavel_filter?: string | null }
+        Returns: Json
+      }
+      get_operations_overview_summary: {
+        Args: Record<string, never>
+        Returns: Json
+      }
+      get_nfs_stats_range_summary: {
+        Args: { company_ids?: string[] | null; date_from?: string | null; date_to?: string | null }
+        Returns: Json
+      }
+      get_certidoes_overview_summary: {
+        Args: { company_ids?: string[] | null }
+        Returns: Json
+      }
+      get_fiscal_detail_summary: {
+        Args: { detail_kind?: string | null; company_ids?: string[] | null; date_from?: string | null; date_to?: string | null }
+        Returns: Json
+      }
+      get_fiscal_detail_documents_page: {
+        Args: {
+          detail_kind?: string | null
+          company_ids?: string[] | null
+          search_text?: string | null
+          date_from?: string | null
+          date_to?: string | null
+          file_kind?: string | null
+          origem_filter?: string | null
+          modelo_filter?: string | null
+          certidao_tipo_filter?: string | null
+          page_number?: number | null
+          page_size?: number | null
+        }
+        Returns: Array<{
+          id: string
+          company_id: string
+          empresa: string
+          cnpj: string | null
+          type: string
+          chave: string | null
+          periodo: string | null
+          status: string | null
+          document_date: string | null
+          created_at: string
+          file_path: string | null
+          origem: string | null
+          modelo: string | null
+          tipo_certidao: string | null
+          total_count: number
+        }>
+      }
+      get_fiscal_detail_documents_cursor: {
+        Args: {
+          detail_kind?: string | null
+          company_ids?: string[] | null
+          search_text?: string | null
+          date_from?: string | null
+          date_to?: string | null
+          file_kind?: string | null
+          origem_filter?: string | null
+          modelo_filter?: string | null
+          certidao_tipo_filter?: string | null
+          cursor_sort_date?: string | null
+          cursor_created_at?: string | null
+          cursor_id?: string | null
+          limit_count?: number | null
+        }
+        Returns: Json
+      }
+      get_document_rows_page: {
+        Args: {
+          company_ids?: string[] | null
+          category_filter?: string | null
+          file_kind?: string | null
+          search_text?: string | null
+          date_from?: string | null
+          date_to?: string | null
+          page_number?: number | null
+          page_size?: number | null
+        }
+        Returns: Array<{
+          id: string
+          company_id: string
+          empresa: string
+          cnpj: string | null
+          source: string
+          category_key: string
+          type: string
+          origem: string | null
+          status: string | null
+          periodo: string | null
+          document_date: string | null
+          created_at: string
+          file_path: string | null
+          chave: string | null
+          total_count: number
+        }>
+      }
+      get_document_rows_cursor: {
+        Args: {
+          company_ids?: string[] | null
+          category_filter?: string | null
+          file_kind?: string | null
+          search_text?: string | null
+          date_from?: string | null
+          date_to?: string | null
+          cursor_sort_date?: string | null
+          cursor_created_at?: string | null
+          cursor_id?: string | null
+          limit_count?: number | null
+        }
+        Returns: Json
+      }
+    }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }
   }

@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient"
+import { fetchAllPages } from "./supabasePagination"
 
 function buildMonthKeys(monthsBack: number) {
   const now = new Date()
@@ -39,6 +40,23 @@ function buildMonthsBetween(dateFrom: string, dateTo: string) {
 }
 
 type ServiceCodeStat = { code: string; description: string; total_value: number }
+
+type CompanyLookup = { id: string; name: string; document?: string | null }
+
+async function fetchCompaniesByIds(companyIds: string[], withDocument = false): Promise<CompanyLookup[]> {
+  const normalizedIds = [...new Set(companyIds.map((id) => String(id || "").trim()).filter(Boolean))]
+  if (normalizedIds.length === 0) return []
+
+  const select = withDocument ? "id, name, document" : "id, name"
+  return fetchAllPages<CompanyLookup>((from, to) =>
+    supabase
+      .from("companies")
+      .select(select)
+      .in("id", normalizedIds)
+      .order("name")
+      .range(from, to)
+  )
+}
 
 function normalizeCompanyIds(companyIds: string[] | null) {
   if (!companyIds?.length) return []
@@ -176,8 +194,8 @@ export async function getRecentFiscalDocuments(companyIds: string[] | null, limi
   const list = data ?? []
   const companyIdsList = [...new Set(list.map((d) => d.company_id))]
   if (companyIdsList.length === 0) return []
-  const { data: companies } = await supabase.from("companies").select("id, name").in("id", companyIdsList)
-  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
+  const companies = await fetchCompaniesByIds(companyIdsList)
+  const names = new Map(companies.map((c) => [c.id, c.name]))
   return list.map((d) => ({
     ...d,
     companyName: names.get(d.company_id) ?? "",
@@ -200,14 +218,22 @@ export async function getFiscalDocumentsByType(
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const list = data ?? []
+  const list = await fetchAllPages<{
+    id: string
+    company_id: string
+    type: string
+    chave: string | null
+    periodo: string
+    status: string
+    document_date: string | null
+    file_path?: string | null
+    created_at: string
+  }>((from, to) => q.range(from, to))
   const companyIdsList = [...new Set(list.map((d) => d.company_id))]
   if (companyIdsList.length === 0) return []
-  const { data: companies } = await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
-  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
-  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  const companies = await fetchCompaniesByIds(companyIdsList, true)
+  const names = new Map(companies.map((c) => [c.id, c.name]))
+  const documents = new Map(companies.map((c) => [c.id, c.document ?? null]))
   return list.map((d) => ({
     ...d,
     empresa: names.get(d.company_id) ?? "",
@@ -227,14 +253,22 @@ export async function getFiscalDocumentsNfeNfc(companyIds: string[] | null) {
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const list = data ?? []
+  const list = await fetchAllPages<{
+    id: string
+    company_id: string
+    type: string
+    chave: string | null
+    periodo: string
+    status: string
+    document_date: string | null
+    file_path?: string | null
+    created_at: string
+  }>((from, to) => q.range(from, to))
   const companyIdsList = [...new Set(list.map((d) => d.company_id))]
   if (companyIdsList.length === 0) return []
-  const { data: companies } = await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
-  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
-  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  const companies = await fetchCompaniesByIds(companyIdsList, true)
+  const names = new Map(companies.map((c) => [c.id, c.name]))
+  const documents = new Map(companies.map((c) => [c.id, c.document ?? null]))
   return list.map((d) => ({
     ...d,
     empresa: names.get(d.company_id) ?? "",
@@ -252,9 +286,14 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const list = (data ?? []).map((row) => {
+  const rows = await fetchAllPages<{
+    id: string
+    company_id: string
+    tipo: string
+    payload?: string | null
+    created_at: string
+  }>((from, to) => q.range(from, to))
+  const list = rows.map((row) => {
     let payload: Record<string, unknown> = {}
     try {
       payload = JSON.parse((row as { payload?: string | null }).payload || "{}")
@@ -271,9 +310,9 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
   })
   const companyIdsList = [...new Set(list.map((d) => d.company_id).filter(Boolean))]
   if (companyIdsList.length === 0) return []
-  const { data: companies } = await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
-  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
-  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  const companies = await fetchCompaniesByIds(companyIdsList, true)
+  const names = new Map(companies.map((c) => [c.id, c.name]))
+  const documents = new Map(companies.map((c) => [c.id, c.document ?? null]))
   const tipoLabel: Record<string, string> = {
     federal: "Federal",
     estadual_go: "Estadual (GO)",
@@ -325,9 +364,12 @@ export async function getFiscalSummary(companyIds: string[] | null, period?: str
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const rows = data ?? []
+  const rows = await fetchAllPages<{
+    type: string
+    file_path: string | null
+    created_at: string
+    periodo: string
+  }>((from, to) => q.range(from, to))
   const periodFilter = period && /^\d{4}-\d{2}$/.test(period) ? period : null
   const rowsFiltered = periodFilter
     ? rows.filter((r) => (r.periodo || "").trim() === periodFilter)
@@ -378,9 +420,15 @@ export async function getNfsStats(companyIds: string[] | null, period?: string) 
   } else if (normalizedCompanyIds.length > 1) {
     q = q.in("company_id", normalizedCompanyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const rows = (data ?? []).filter((row) => {
+  const data = await fetchAllPages<{
+    company_id: string
+    qty_emitidas: number
+    qty_recebidas: number
+    valor_emitidas: number
+    valor_recebidas: number
+    service_codes: unknown
+  }>((from, to) => q.range(from, to))
+  const rows = data.filter((row) => {
     if (normalizedCompanyIds.length === 0) return true
     return normalizedCompanyIds.includes(String(row.company_id || "").trim().toLowerCase())
   })
@@ -411,6 +459,48 @@ export async function getNfsStats(companyIds: string[] | null, period?: string) 
 
 /** Agrega nfs_stats para todos os meses entre dateFrom e dateTo (YYYY-MM-DD). */
 export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFrom: string, dateTo: string) {
+  try {
+    const { data, error } = await supabase.rpc("get_nfs_stats_range_summary", {
+      company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
+      date_from: dateFrom,
+      date_to: dateTo,
+    })
+    if (error) throw error
+
+    const payload = (data ?? {}) as {
+      period?: string
+      totalQty?: number
+      valorEmitidas?: number
+      valorRecebidas?: number
+      previousValorEmitidas?: number
+      previousValorRecebidas?: number
+      serviceCodesRankingPrestadas?: ServiceCodeStat[]
+      serviceCodesRankingTomadas?: ServiceCodeStat[]
+    }
+
+    return {
+      period: payload.period ?? "",
+      totalQty: Number(payload.totalQty ?? 0),
+      valorEmitidas: Number(payload.valorEmitidas ?? 0),
+      valorRecebidas: Number(payload.valorRecebidas ?? 0),
+      previousValorEmitidas: Number(payload.previousValorEmitidas ?? 0),
+      previousValorRecebidas: Number(payload.previousValorRecebidas ?? 0),
+      serviceCodesRankingPrestadas: (payload.serviceCodesRankingPrestadas ?? []).map((item) => ({
+        code: item.code ?? "",
+        description: item.description ?? "",
+        total_value: Number(item.total_value ?? 0),
+      })),
+      serviceCodesRankingTomadas: (payload.serviceCodesRankingTomadas ?? []).map((item) => ({
+        code: item.code ?? "",
+        description: item.description ?? "",
+        total_value: Number(item.total_value ?? 0),
+      })),
+      serviceCodesRanking: [],
+    }
+  } catch {
+    // Fallback local enquanto a migration ainda não foi aplicada.
+  }
+
   const normalizedCompanyIds = normalizeCompanyIds(companyIds)
   const from = dateFrom.slice(0, 7)
   const to = dateTo.slice(0, 7)
@@ -440,9 +530,17 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
   } else if (normalizedCompanyIds.length > 1) {
     q = q.in("company_id", normalizedCompanyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const rows = (data ?? []).filter((row) => {
+  const data = await fetchAllPages<{
+    company_id: string
+    qty_emitidas: number
+    qty_recebidas: number
+    valor_emitidas: number
+    valor_recebidas: number
+    service_codes: unknown
+    service_codes_emitidas: unknown
+    service_codes_recebidas: unknown
+  }>((from, to) => q.range(from, to))
+  const rows = data.filter((row) => {
     if (normalizedCompanyIds.length === 0) return true
     return normalizedCompanyIds.includes(String(row.company_id || "").trim().toLowerCase())
   })
@@ -488,14 +586,22 @@ export async function getAllFiscalDocuments(companyIds: string[] | null) {
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
-  const { data, error } = await q
-  if (error) throw error
-  const list = data ?? []
+  const list = await fetchAllPages<{
+    id: string
+    company_id: string
+    type: string
+    chave: string | null
+    periodo: string
+    status: string
+    document_date: string | null
+    file_path?: string | null
+    created_at: string
+  }>((from, to) => q.range(from, to))
   const companyIdsList = [...new Set(list.map((d) => d.company_id))]
   if (companyIdsList.length === 0) return []
-  const { data: companies } = await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
-  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
-  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  const companies = await fetchCompaniesByIds(companyIdsList, true)
+  const names = new Map(companies.map((c) => [c.id, c.name]))
+  const documents = new Map(companies.map((c) => [c.id, c.document ?? null]))
   return list.map((d) => ({
     ...d,
     empresa: names.get(d.company_id) ?? "",
@@ -533,9 +639,14 @@ export async function getAllHubDocuments(companyIds: string[] | null): Promise<U
         .select("id, company_id, tipo, data, created_at, file_path")
         .order("created_at", { ascending: false })
       if (companyFilter) q = q.in("company_id", companyFilter)
-      const { data, error } = await q
-      if (error) throw error
-      return data ?? []
+      return fetchAllPages<{
+        id: string
+        company_id: string
+        tipo: string
+        data: string
+        created_at: string
+        file_path?: string | null
+      }>((from, to) => q.range(from, to))
     })(),
     (async () => {
       let q = supabase
@@ -543,9 +654,17 @@ export async function getAllHubDocuments(companyIds: string[] | null): Promise<U
         .select("id, company_id, tributo, numero_documento, data_vencimento, valor, guia_pdf_path, fetched_at, created_at")
         .order("created_at", { ascending: false })
       if (companyFilter) q = q.in("company_id", companyFilter)
-      const { data, error } = await q
-      if (error) throw error
-      return data ?? []
+      return fetchAllPages<{
+        id: string
+        company_id: string
+        tributo: string
+        numero_documento?: string | null
+        data_vencimento?: string | null
+        valor?: number | null
+        guia_pdf_path?: string | null
+        fetched_at?: string | null
+        created_at?: string | null
+      }>((from, to) => q.range(from, to))
     })(),
   ])
 
@@ -559,11 +678,9 @@ export async function getAllHubDocuments(companyIds: string[] | null): Promise<U
       ].filter(Boolean)
     ),
   ]
-  const { data: companies } = companyIdsList.length
-    ? await supabase.from("companies").select("id, name, document").in("id", companyIdsList)
-    : { data: [] as Array<{ id: string; name: string; document: string | null }> }
-  const names = new Map((companies ?? []).map((c) => [c.id, c.name]))
-  const documents = new Map((companies ?? []).map((c) => [c.id, c.document]))
+  const companies = companyIdsList.length ? await fetchCompaniesByIds(companyIdsList, true) : []
+  const names = new Map(companies.map((c) => [c.id, c.name]))
+  const documents = new Map(companies.map((c) => [c.id, c.document ?? null]))
 
   const unified: UnifiedDocumentRow[] = []
 
@@ -660,21 +777,27 @@ export async function getAllHubDocuments(companyIds: string[] | null): Promise<U
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
 }
 
-export async function getFiscalOverviewAnalytics(companyIds: string[] | null, dateFrom: string, dateTo: string) {
+async function getFiscalOverviewAnalyticsLegacy(companyIds: string[] | null, dateFrom: string, dateTo: string) {
   let docsQuery = supabase
     .from("fiscal_documents")
     .select("id, company_id, type, status, periodo, document_date, created_at, file_path")
     .order("created_at", { ascending: false })
   if (companyIds && companyIds.length > 0) docsQuery = docsQuery.in("company_id", companyIds)
 
-  const { data: docs, error } = await docsQuery
-  if (error) throw error
-  const companyIdsList = [...new Set((docs ?? []).map((doc) => doc.company_id))]
-  const { data: companies } = companyIdsList.length
-    ? await supabase.from("companies").select("id, name").in("id", companyIdsList)
-    : { data: [] as Array<{ id: string; name: string }> }
-  const companyMap = new Map((companies ?? []).map((company) => [company.id, company.name]))
-  const filteredDocs = (docs ?? []).filter((doc) => isWithinDateRange(resolveDocumentReferenceDate(doc), dateFrom, dateTo))
+  const docs = await fetchAllPages<{
+    id: string
+    company_id: string
+    type: string
+    status: string
+    periodo?: string | null
+    document_date?: string | null
+    created_at?: string | null
+    file_path?: string | null
+  }>((from, to) => docsQuery.range(from, to))
+  const companyIdsList = [...new Set(docs.map((doc) => doc.company_id))]
+  const companies = companyIdsList.length ? await fetchCompaniesByIds(companyIdsList) : []
+  const companyMap = new Map(companies.map((company) => [company.id, company.name]))
+  const filteredDocs = docs.filter((doc) => isWithinDateRange(resolveDocumentReferenceDate(doc), dateFrom, dateTo))
   const today = new Date().toISOString().slice(0, 10)
   const typeMap = new Map<string, number>()
   const statusMap = new Map<string, number>()
@@ -716,7 +839,7 @@ export async function getFiscalOverviewAnalytics(companyIds: string[] | null, da
   }
 }
 
-export async function getDashboardOverview(companyIds: string[] | null) {
+async function getDashboardOverviewLegacy(companyIds: string[] | null) {
   const filterByCompany = companyIds && companyIds.length > 0
   const companyFilter = filterByCompany ? companyIds : undefined
 
@@ -753,28 +876,58 @@ export async function getDashboardOverview(companyIds: string[] | null) {
     .select("id, company_id, periodo, status, pendencias_count, created_at")
   if (companyFilter) financialRecordsQuery = financialRecordsQuery.in("company_id", companyFilter)
 
-  const [companiesRes, docsRes, syncRes, fiscalPendenciasRes, dpChecklistRes, dpGuiasRes, financialRecordsRes] = await Promise.all([
-    supabase.from("companies").select("id, name", { count: "exact" }),
-    docsQuery,
+  const [companiesCountRes, docs, syncRes, fiscalPendencias, dpChecklist, dpGuias, financialRecords] = await Promise.all([
+    supabase.from("companies").select("id", { count: "exact", head: true }),
+    fetchAllPages<{
+      id: string
+      company_id: string
+      type: string
+      status: string
+      periodo?: string | null
+      document_date?: string | null
+      created_at?: string | null
+      file_path?: string | null
+    }>((from, to) => docsQuery.range(from, to)),
     syncQuery,
-    fiscalPendenciasQuery,
-    dpChecklistQuery,
-    dpGuiasQuery,
-    financialRecordsQuery,
+    fetchAllPages<{
+      id: string
+      company_id: string
+      status: string
+    }>((from, to) => fiscalPendenciasQuery.range(from, to)),
+    fetchAllPages<{
+      id: string
+      company_id: string
+      tarefa: string
+      competencia: string
+      status: string
+    }>((from, to) => dpChecklistQuery.range(from, to)),
+    fetchAllPages<{
+      id: string
+      company_id: string
+      tipo: string
+      data: string
+      created_at: string
+    }>((from, to) => dpGuiasQuery.range(from, to)),
+    fetchAllPages<{
+      id: string
+      company_id: string
+      periodo: string
+      status: string
+      pendencias_count: number
+      created_at: string
+    }>((from, to) => financialRecordsQuery.range(from, to)),
   ])
 
-  if (companiesRes.error) throw companiesRes.error
-  if (docsRes.error) throw docsRes.error
+  if (companiesCountRes.error) throw companiesCountRes.error
   if (syncRes.error) throw syncRes.error
-  if (fiscalPendenciasRes.error) throw fiscalPendenciasRes.error
-  if (dpChecklistRes.error) throw dpChecklistRes.error
-  if (dpGuiasRes.error) throw dpGuiasRes.error
-  if (financialRecordsRes.error) throw financialRecordsRes.error
-
-  const docs = docsRes.data ?? []
-  const companies = companiesRes.data ?? []
-  const dpGuias = dpGuiasRes.data ?? []
-  const financialRecords = financialRecordsRes.data ?? []
+  const companyIdsUsed = [...new Set([
+    ...docs.map((doc) => doc.company_id),
+    ...dpGuias.map((item) => item.company_id),
+    ...dpChecklist.map((item) => item.company_id),
+    ...syncRes.data?.map((item) => item.company_id).filter(Boolean) ?? [],
+    ...financialRecords.map((item) => item.company_id),
+  ])]
+  const companies = companyIdsUsed.length ? await fetchCompaniesByIds(companyIdsUsed) : []
   const companyNameById = new Map(companies.map((company) => [company.id, company.name]))
   const docsByTypeMap = { NFS: 0, NFE: 0, NFC: 0 }
   const statusMap = new Map<string, number>()
@@ -798,8 +951,8 @@ export async function getDashboardOverview(companyIds: string[] | null) {
   const today = new Date().toISOString().slice(0, 10)
   const currentMonth = today.slice(0, 7)
   const syncEvents = syncRes.data ?? []
-  const fiscalPendencias = (fiscalPendenciasRes.data ?? []).filter((item) => String(item.status || "").toLowerCase() !== "concluido")
-  const dpPendencias = (dpChecklistRes.data ?? []).filter((item) => String(item.status || "").toLowerCase() !== "concluido")
+  const fiscalPendenciasAbertas = fiscalPendencias.filter((item) => String(item.status || "").toLowerCase() !== "concluido")
+  const dpPendencias = dpChecklist.filter((item) => String(item.status || "").toLowerCase() !== "concluido")
   const dpGuideTypeMap = new Map<string, number>()
   for (const guia of dpGuias) {
     const tipo = String(guia.tipo || "Outros")
@@ -813,7 +966,7 @@ export async function getDashboardOverview(companyIds: string[] | null) {
     if (contabilMonthMap.has(periodo)) contabilMonthMap.set(periodo, (contabilMonthMap.get(periodo) ?? 0) + 1)
   }
   const fiscalCompanyCount = new Set(docs.map((doc) => doc.company_id)).size
-  const dpCompanyCount = new Set([...dpGuias.map((item) => item.company_id), ...dpChecklistRes.data?.map((item) => item.company_id) ?? []]).size
+  const dpCompanyCount = new Set([...dpGuias.map((item) => item.company_id), ...dpChecklist.map((item) => item.company_id)]).size
 
   const topCompanies = [...perCompanyMap.entries()]
     .map(([companyId, total]) => ({
@@ -825,7 +978,7 @@ export async function getDashboardOverview(companyIds: string[] | null) {
     .slice(0, 6)
 
   return {
-    companiesCount: companiesRes.count ?? companies.length,
+    companiesCount: companiesCountRes.count ?? 0,
     documentsCount: processedDocuments,
     importedDocuments,
     totalDocuments,
@@ -841,14 +994,14 @@ export async function getDashboardOverview(companyIds: string[] | null) {
     processingStatus: [...statusMap.entries()].map(([name, value]) => ({ name, value })),
     topCompanies,
     fiscalSummary: {
-      totalPendencias: fiscalPendencias.length,
+      totalPendencias: fiscalPendenciasAbertas.length,
       totalDocumentos: docs.length,
     },
     dpSummary: {
       totalPendencias: dpPendencias.length,
-      totalChecklist: dpChecklistRes.count ?? dpChecklistRes.data?.length ?? 0,
+      totalChecklist: dpChecklist.length,
       totalGuias: dpGuias.length,
-      folhaProcessadaMes: (dpChecklistRes.data ?? []).filter((item) => String(item.tarefa || "").toLowerCase().includes("folha") && String(item.status || "").toLowerCase() === "concluido" && String(item.competencia || "").slice(0, 7) === currentMonth).length,
+      folhaProcessadaMes: dpChecklist.filter((item) => String(item.tarefa || "").toLowerCase().includes("folha") && String(item.status || "").toLowerCase() === "concluido" && String(item.competencia || "").slice(0, 7) === currentMonth).length,
       empresasAtivas: dpCompanyCount,
       guiasPorTipo: [...dpGuideTypeMap.entries()].map(([name, value]) => ({ name, value })),
     },
@@ -860,9 +1013,9 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       lancamentosPorMes: contabilMonthKeys.map((month) => ({ name: month.label, value: contabilMonthMap.get(month.key) ?? 0 })),
     },
     pendingTabs: {
-      fiscal: fiscalPendencias.length,
+      fiscal: fiscalPendenciasAbertas.length,
       dp: dpPendencias.length,
-      total: fiscalPendencias.length + dpPendencias.length,
+      total: fiscalPendenciasAbertas.length + dpPendencias.length,
     },
     executiveSummary: {
       fiscal: {
@@ -873,7 +1026,7 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       dp: {
         guiasGeradas: dpGuias.length,
         guiasPendentes: dpPendencias.length,
-        folhaProcessadaMes: (dpChecklistRes.data ?? []).filter((item) => String(item.tarefa || "").toLowerCase().includes("folha") && String(item.status || "").toLowerCase() === "concluido" && String(item.competencia || "").slice(0, 7) === currentMonth).length,
+        folhaProcessadaMes: dpChecklist.filter((item) => String(item.tarefa || "").toLowerCase().includes("folha") && String(item.status || "").toLowerCase() === "concluido" && String(item.competencia || "").slice(0, 7) === currentMonth).length,
       },
       contabil: {
         balancosGerados: financialRecords.length,
@@ -890,5 +1043,198 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       ...event,
       companyName: event.company_id ? companyNameById.get(event.company_id) ?? "Empresa sem nome" : "Sistema",
     })),
+  }
+}
+
+function normalizeRpcMonthSeries(
+  rows: Array<{ key?: string; value?: number }> | undefined,
+  labelByKey: Map<string, string>,
+) {
+  return (rows ?? []).map((row) => ({
+    name: labelByKey.get(String(row.key || "")) ?? String(row.key || ""),
+    value: Number(row.value ?? 0),
+  }))
+}
+
+export async function getFiscalOverviewAnalytics(companyIds: string[] | null, dateFrom: string, dateTo: string) {
+  try {
+    const { data, error } = await supabase.rpc("get_fiscal_overview_analytics_summary", {
+      company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
+      date_from: dateFrom,
+      date_to: dateTo,
+    })
+    if (error) throw error
+
+    const payload = (data ?? {}) as {
+      cards?: {
+        totalDocumentos?: number
+        documentosHoje?: number
+        documentosPendentes?: number
+        documentosRejeitados?: number
+        empresasComEmissao?: number
+      }
+      byType?: Array<{ name?: string; value?: number }>
+      byMonth?: Array<{ key?: string; value?: number }>
+      byCompany?: Array<{ name?: string; value?: number }>
+      byStatus?: Array<{ name?: string; value?: number }>
+      byTypeSummary?: { NFS?: number; NFE?: number; NFC?: number; outros?: number }
+    }
+
+    const monthLabels = new Map(buildMonthsBetween(dateFrom, dateTo).map((item) => [item.key, item.label]))
+    return {
+      cards: {
+        totalDocumentos: Number(payload.cards?.totalDocumentos ?? 0),
+        documentosHoje: Number(payload.cards?.documentosHoje ?? 0),
+        documentosPendentes: Number(payload.cards?.documentosPendentes ?? 0),
+        documentosRejeitados: Number(payload.cards?.documentosRejeitados ?? 0),
+        empresasComEmissao: Number(payload.cards?.empresasComEmissao ?? 0),
+      },
+      byType: (payload.byType ?? []).map((item) => ({
+        name: String(item.name ?? "OUTROS"),
+        value: Number(item.value ?? 0),
+      })),
+      byMonth: normalizeRpcMonthSeries(payload.byMonth, monthLabels),
+      byCompany: (payload.byCompany ?? []).map((item) => ({
+        name: String(item.name ?? "Empresa sem nome"),
+        value: Number(item.value ?? 0),
+      })),
+      byStatus: (payload.byStatus ?? []).map((item) => ({
+        name: String(item.name ?? "pendente"),
+        value: Number(item.value ?? 0),
+      })),
+      byTypeSummary: {
+        NFS: Number(payload.byTypeSummary?.NFS ?? 0),
+        NFE: Number(payload.byTypeSummary?.NFE ?? 0),
+        NFC: Number(payload.byTypeSummary?.NFC ?? 0),
+        outros: Number(payload.byTypeSummary?.outros ?? 0),
+      },
+    }
+  } catch {
+    return getFiscalOverviewAnalyticsLegacy(companyIds, dateFrom, dateTo)
+  }
+}
+
+export async function getDashboardOverview(companyIds: string[] | null) {
+  try {
+    const { data, error } = await supabase.rpc("get_dashboard_overview_summary", {
+      company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
+    })
+    if (error) throw error
+
+    const payload = (data ?? {}) as {
+      companiesCount?: number
+      documentsCount?: number
+      importedDocuments?: number
+      totalDocuments?: number
+      docsByType?: Array<{ name?: string; value?: number }>
+      documentsPerMonth?: Array<{ key?: string; value?: number }>
+      processingStatus?: Array<{ name?: string; value?: number }>
+      topCompanies?: Array<{ companyId?: string; companyName?: string; total?: number }>
+      fiscalSummary?: { totalPendencias?: number; totalDocumentos?: number }
+      dpSummary?: {
+        totalPendencias?: number
+        totalChecklist?: number
+        totalGuias?: number
+        folhaProcessadaMes?: number
+        empresasAtivas?: number
+        guiasPorTipo?: Array<{ name?: string; value?: number }>
+      }
+      contabilSummary?: {
+        balancosGerados?: number
+        empresasAtualizadas?: number
+        empresasPendentes?: number
+        lancamentosNoPeriodo?: number
+        lancamentosPorMes?: Array<{ key?: string; value?: number }>
+      }
+      pendingTabs?: { fiscal?: number; dp?: number; total?: number }
+      executiveSummary?: {
+        fiscal?: { totalDocumentos?: number; processadosHoje?: number; empresasAtivas?: number }
+        dp?: { guiasGeradas?: number; guiasPendentes?: number; folhaProcessadaMes?: number }
+        contabil?: { balancosGerados?: number; empresasAtualizadas?: number; pendentes?: number }
+      }
+      syncSummary?: { totalEventos?: number; falhas?: number; sucessos?: number }
+      syncEvents?: Array<{ id?: string; company_id?: string | null; tipo?: string; status?: string; created_at?: string; companyName?: string }>
+    }
+
+    const monthLabels = new Map(buildMonthKeys(6).map((item) => [item.key, item.label]))
+    return {
+      companiesCount: Number(payload.companiesCount ?? 0),
+      documentsCount: Number(payload.documentsCount ?? 0),
+      importedDocuments: Number(payload.importedDocuments ?? 0),
+      totalDocuments: Number(payload.totalDocuments ?? 0),
+      docsByType: (payload.docsByType ?? []).map((item) => ({
+        name: String(item.name ?? "Outros"),
+        value: Number(item.value ?? 0),
+      })),
+      documentsPerMonth: normalizeRpcMonthSeries(payload.documentsPerMonth, monthLabels),
+      processingStatus: (payload.processingStatus ?? []).map((item) => ({
+        name: String(item.name ?? "pendente"),
+        value: Number(item.value ?? 0),
+      })),
+      topCompanies: (payload.topCompanies ?? []).map((item) => ({
+        companyId: String(item.companyId ?? ""),
+        companyName: String(item.companyName ?? "Empresa sem nome"),
+        total: Number(item.total ?? 0),
+      })),
+      fiscalSummary: {
+        totalPendencias: Number(payload.fiscalSummary?.totalPendencias ?? 0),
+        totalDocumentos: Number(payload.fiscalSummary?.totalDocumentos ?? 0),
+      },
+      dpSummary: {
+        totalPendencias: Number(payload.dpSummary?.totalPendencias ?? 0),
+        totalChecklist: Number(payload.dpSummary?.totalChecklist ?? 0),
+        totalGuias: Number(payload.dpSummary?.totalGuias ?? 0),
+        folhaProcessadaMes: Number(payload.dpSummary?.folhaProcessadaMes ?? 0),
+        empresasAtivas: Number(payload.dpSummary?.empresasAtivas ?? 0),
+        guiasPorTipo: (payload.dpSummary?.guiasPorTipo ?? []).map((item) => ({
+          name: String(item.name ?? "Outros"),
+          value: Number(item.value ?? 0),
+        })),
+      },
+      contabilSummary: {
+        balancosGerados: Number(payload.contabilSummary?.balancosGerados ?? 0),
+        empresasAtualizadas: Number(payload.contabilSummary?.empresasAtualizadas ?? 0),
+        empresasPendentes: Number(payload.contabilSummary?.empresasPendentes ?? 0),
+        lancamentosNoPeriodo: Number(payload.contabilSummary?.lancamentosNoPeriodo ?? 0),
+        lancamentosPorMes: normalizeRpcMonthSeries(payload.contabilSummary?.lancamentosPorMes, monthLabels),
+      },
+      pendingTabs: {
+        fiscal: Number(payload.pendingTabs?.fiscal ?? 0),
+        dp: Number(payload.pendingTabs?.dp ?? 0),
+        total: Number(payload.pendingTabs?.total ?? 0),
+      },
+      executiveSummary: {
+        fiscal: {
+          totalDocumentos: Number(payload.executiveSummary?.fiscal?.totalDocumentos ?? 0),
+          processadosHoje: Number(payload.executiveSummary?.fiscal?.processadosHoje ?? 0),
+          empresasAtivas: Number(payload.executiveSummary?.fiscal?.empresasAtivas ?? 0),
+        },
+        dp: {
+          guiasGeradas: Number(payload.executiveSummary?.dp?.guiasGeradas ?? 0),
+          guiasPendentes: Number(payload.executiveSummary?.dp?.guiasPendentes ?? 0),
+          folhaProcessadaMes: Number(payload.executiveSummary?.dp?.folhaProcessadaMes ?? 0),
+        },
+        contabil: {
+          balancosGerados: Number(payload.executiveSummary?.contabil?.balancosGerados ?? 0),
+          empresasAtualizadas: Number(payload.executiveSummary?.contabil?.empresasAtualizadas ?? 0),
+          pendentes: Number(payload.executiveSummary?.contabil?.pendentes ?? 0),
+        },
+      },
+      syncSummary: {
+        totalEventos: Number(payload.syncSummary?.totalEventos ?? 0),
+        falhas: Number(payload.syncSummary?.falhas ?? 0),
+        sucessos: Number(payload.syncSummary?.sucessos ?? 0),
+      },
+      syncEvents: (payload.syncEvents ?? []).map((event) => ({
+        id: String(event.id ?? ""),
+        company_id: event.company_id ?? null,
+        tipo: String(event.tipo ?? ""),
+        status: String(event.status ?? ""),
+        created_at: String(event.created_at ?? ""),
+        companyName: String(event.companyName ?? "Sistema"),
+      })),
+    }
+  } catch {
+    return getDashboardOverviewLegacy(companyIds)
   }
 }

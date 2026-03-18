@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
   const connectorSecret = generateSecret()
   const serverSecretHash = await sha256(connectorSecret)
 
-  const [profileResult, membershipResult, brandingResult, serverResult] = await Promise.all([
+  const [profileResult, membershipResult, brandingResult] = await Promise.all([
     admin.from("profiles").upsert(
       {
         id: adminUserId,
@@ -167,19 +167,9 @@ Deno.serve(async (req) => {
       is_default: true,
     }),
     admin.from("office_branding").insert({ office_id: office.id }),
-    admin.from("office_servers").insert({
-      office_id: office.id,
-      public_base_url: publicBaseUrl,
-      base_path: basePath,
-      connector_version: connectorVersion,
-      min_supported_connector_version: minSupportedConnectorVersion,
-      status: "pending",
-      is_active: true,
-      server_secret_hash: serverSecretHash,
-    }),
   ])
 
-  if (profileResult.error || membershipResult.error || brandingResult.error || serverResult.error) {
+  if (profileResult.error || membershipResult.error || brandingResult.error) {
     await admin.from("office_memberships").delete().eq("office_id", office.id)
     await admin.from("office_branding").delete().eq("office_id", office.id)
     await admin.from("office_servers").delete().eq("office_id", office.id)
@@ -192,8 +182,57 @@ Deno.serve(async (req) => {
           profileResult.error?.message ||
           membershipResult.error?.message ||
           brandingResult.error?.message ||
-          serverResult.error?.message ||
           "Unknown error",
+      },
+      400
+    )
+  }
+
+  const { data: server, error: serverError } = await admin
+    .from("office_servers")
+    .insert({
+      office_id: office.id,
+      public_base_url: publicBaseUrl,
+      base_path: basePath,
+      connector_version: connectorVersion,
+      min_supported_connector_version: minSupportedConnectorVersion,
+      status: "pending",
+      is_active: true,
+    })
+    .select("id")
+    .single()
+
+  if (serverError || !server?.id) {
+    await admin.from("office_memberships").delete().eq("office_id", office.id)
+    await admin.from("office_branding").delete().eq("office_id", office.id)
+    await admin.from("office_servers").delete().eq("office_id", office.id)
+    await admin.from("offices").delete().eq("id", office.id)
+    await admin.auth.admin.deleteUser(adminUserId)
+    return json(
+      {
+        error: "Falha ao registrar o servidor do escritÃ³rio.",
+        detail: serverError?.message || "Unknown error",
+      },
+      400
+    )
+  }
+
+  const { error: credentialError } = await admin.from("office_server_credentials").insert({
+    office_server_id: server.id,
+    secret_hash: serverSecretHash,
+  })
+
+  if (credentialError) {
+    await admin.from("office_memberships").delete().eq("office_id", office.id)
+    await admin.from("office_branding").delete().eq("office_id", office.id)
+    await admin.from("office_server_credentials").delete().eq("office_server_id", server.id)
+    await admin.from("office_servers").delete().eq("office_id", office.id)
+    await admin.from("offices").delete().eq("id", office.id)
+    await admin.auth.admin.deleteUser(adminUserId)
+    return json(
+      {
+        error: "Falha ao registrar as credenciais do conector do escritÃ³rio.",
+        detail: credentialError.message,
       },
       400
     )

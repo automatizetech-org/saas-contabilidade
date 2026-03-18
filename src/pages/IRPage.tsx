@@ -23,6 +23,7 @@ import {
   downloadBoletoPdf,
   generateIrCharge,
   getIrClients,
+  getIrOverviewSummary,
   type IrClient,
   type IrChargeType,
   type IrDeclarationStatus,
@@ -377,6 +378,10 @@ export default function IRPage() {
   const [chargeType, setChargeType] = useState<IrChargeType>("PIX");
 
   const { data: clients = [], isLoading } = useQuery({ queryKey: ["ir-clients"], queryFn: getIrClients });
+  const { data: overviewSummary } = useQuery({
+    queryKey: ["ir-overview-summary", globalResponsible],
+    queryFn: () => getIrOverviewSummary(globalResponsible === "Todos" ? null : globalResponsible),
+  });
   const { data: companies = [] } = useCompanies();
 
   const companyNames = useMemo<string[]>(
@@ -403,6 +408,7 @@ export default function IRPage() {
   const refreshIrData = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["ir-clients"] }),
+      queryClient.invalidateQueries({ queryKey: ["ir-overview-summary"] }),
     ]);
   };
 
@@ -589,6 +595,24 @@ export default function IRPage() {
   const completionPercent = executionSummary.total ? Math.round((executionSummary.concluido / executionSummary.total) * 100) : 0;
   const totalPaymentValue = paymentValueSummary.paid + paymentValueSummary.pending;
   const paidValuePercent = totalPaymentValue ? Math.round((paymentValueSummary.paid / totalPaymentValue) * 100) : 0;
+  const progressChartData = (overviewSummary?.progressData ?? progressData).map((item, index) => ({
+    ...item,
+    color: index === 0 ? "hsl(214, 84%, 56%)" : "hsl(38, 92%, 50%)",
+  }));
+  const paymentChartData = (overviewSummary?.paymentValueData ?? paymentValueData).map((item, index) => ({
+    ...item,
+    color: index === 0 ? "hsl(160, 84%, 39%)" : "hsl(38, 92%, 50%)",
+  }));
+  const overviewCards = overviewSummary?.cards ?? {
+    clientesIr: clientsByResponsible.length,
+    recebidos: paymentSummary.paid,
+    aPagar: paymentSummary.pending,
+    concluidoPercent: completionPercent,
+    concluidoTotal: executionSummary.concluido,
+    clientesTotal: executionSummary.total,
+    valorTotal: paymentSummary.totalValue,
+  };
+  const paidPercentDisplay = overviewSummary?.paidValuePercent ?? paidValuePercent;
 
   const handleCpfCnpjAutofill = async () => {
     const digits = onlyDigits(form.cpf_cnpj);
@@ -770,10 +794,10 @@ export default function IRPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatsCard title="Clientes IR" value={clientsByResponsible.length.toString()} icon={Landmark} className="ir-stat-card ir-stat-card--neutral" description="Base ativa para acompanhamento do módulo." />
-        <StatsCard title="Recebidos" value={paymentSummary.paid.toString()} icon={Wallet} changeType="positive" className="ir-stat-card ir-stat-card--success" description="Clientes com recebimento marcado em um tipo de pagamento." />
-        <StatsCard title="A PAGAR" value={paymentSummary.pending.toString()} icon={FileClock} changeType="negative" className="ir-stat-card ir-stat-card--warning" description="Clientes sem data de recebimento ou ainda pendentes." />
-        <StatsCard title="Concluídos" value={`${completionPercent}%`} icon={FileCheck} change={`${executionSummary.concluido}/${executionSummary.total}`} changeType="positive" className="ir-stat-card ir-stat-card--info" description="Percentual total de declarações concluídas." />
+        <StatsCard title="Clientes IR" value={overviewCards.clientesIr.toString()} icon={Landmark} className="ir-stat-card ir-stat-card--neutral" description="Base ativa para acompanhamento do módulo." />
+        <StatsCard title="Recebidos" value={overviewCards.recebidos.toString()} icon={Wallet} changeType="positive" className="ir-stat-card ir-stat-card--success" description="Clientes com recebimento marcado em um tipo de pagamento." />
+        <StatsCard title="A PAGAR" value={overviewCards.aPagar.toString()} icon={FileClock} changeType="negative" className="ir-stat-card ir-stat-card--warning" description="Clientes sem data de recebimento ou ainda pendentes." />
+        <StatsCard title="Concluídos" value={`${overviewCards.concluidoPercent}%`} icon={FileCheck} change={`${overviewCards.concluidoTotal}/${overviewCards.clientesTotal}`} changeType="positive" className="ir-stat-card ir-stat-card--info" description="Percentual total de declarações concluídas." />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -864,16 +888,16 @@ export default function IRPage() {
           <div className="h-[220px] mt-4">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={progressData} cx="50%" cy="50%" innerRadius={54} outerRadius={82} paddingAngle={3} dataKey="value" label={({ value }) => value} labelLine={false}>
-                  {progressData.map((item) => <Cell key={item.name} fill={item.color} />)}
+                <Pie data={progressChartData} cx="50%" cy="50%" innerRadius={54} outerRadius={82} paddingAngle={3} dataKey="value" label={({ value }) => value} labelLine={false}>
+                  {progressChartData.map((item) => <Cell key={item.name} fill={item.color} />)}
                 </Pie>
                 <Tooltip formatter={(value: number) => [value, "clientes"]} contentStyle={{ background: "#ffffff", color: "#111827", border: "1px solid rgba(15, 23, 42, 0.12)", borderRadius: "10px", fontSize: "12px" }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
           <div className="space-y-2 text-xs">
-            {progressData.map((item) => <div key={item.name} className="flex items-center justify-between"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}</span><span className="font-medium">{item.value}</span></div>)}
-            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 mt-4"><p className="text-[11px] text-muted-foreground">Valor total de serviços</p><p className="text-sm font-semibold mt-1">{formatCurrency(paymentSummary.totalValue)}</p></div>
+            {progressChartData.map((item) => <div key={item.name} className="flex items-center justify-between"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}</span><span className="font-medium">{item.value}</span></div>)}
+            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 mt-4"><p className="text-[11px] text-muted-foreground">Valor total de serviços</p><p className="text-sm font-semibold mt-1">{formatCurrency(overviewCards.valorTotal)}</p></div>
             <div className="mt-5 border-t border-border pt-5">
               <div>
                 <h4 className="text-sm font-semibold font-display">Fluxo Financeiro</h4>
@@ -882,18 +906,18 @@ export default function IRPage() {
               <div className="h-[220px] mt-4">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={paymentValueData} cx="50%" cy="50%" innerRadius={54} outerRadius={82} paddingAngle={3} dataKey="value" labelLine={false}>
-                      {paymentValueData.map((item) => <Cell key={item.name} fill={item.color} />)}
+                    <Pie data={paymentChartData} cx="50%" cy="50%" innerRadius={54} outerRadius={82} paddingAngle={3} dataKey="value" labelLine={false}>
+                      {paymentChartData.map((item) => <Cell key={item.name} fill={item.color} />)}
                     </Pie>
                     <Tooltip formatter={(value: number) => [formatCurrency(Number(value)), "valor"]} contentStyle={{ background: "#ffffff", color: "#111827", border: "1px solid rgba(15, 23, 42, 0.12)", borderRadius: "10px", fontSize: "12px" }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
               <div className="space-y-2 mt-3">
-                {paymentValueData.map((item) => <div key={item.name} className="flex items-center justify-between"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}</span><span className="font-medium">{formatCurrency(item.value)}</span></div>)}
+                {paymentChartData.map((item) => <div key={item.name} className="flex items-center justify-between"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}</span><span className="font-medium">{formatCurrency(item.value)}</span></div>)}
                 <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 mt-4">
                   <p className="text-[11px] text-muted-foreground">Percentual recebido</p>
-                  <p className="text-sm font-semibold mt-1">{paidValuePercent}%</p>
+                  <p className="text-sm font-semibold mt-1">{paidPercentDisplay}%</p>
                 </div>
               </div>
             </div>

@@ -3,6 +3,8 @@ import { getCurrentOfficeContext } from "./officeContextService"
 
 const SUPABASE_URL = import.meta.env.SUPABASE_URL ?? ""
 const ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
+const OFFICE_SERVER_SELECT =
+  "id, office_id, public_base_url, base_path, status, is_active, connector_version, min_supported_connector_version, last_seen_at, last_job_at, created_at, updated_at"
 
 export type OfficeServerRecord = {
   id: string
@@ -73,7 +75,7 @@ export async function getCurrentOfficeServer(): Promise<OfficeServerRecord | nul
 
   const { data, error } = await supabase
     .from("office_servers")
-    .select("*")
+    .select(OFFICE_SERVER_SELECT)
     .eq("office_id", context.officeId)
     .eq("is_active", true)
     .maybeSingle()
@@ -100,7 +102,7 @@ export async function updateCurrentOfficeServer(
     .update(payload)
     .eq("id", current.id)
     .eq("office_id", context.officeId)
-    .select("*")
+    .select(OFFICE_SERVER_SELECT)
     .single()
   if (error) throw error
   return data as OfficeServerRecord

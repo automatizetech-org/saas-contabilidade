@@ -1,18 +1,24 @@
 /**
- * PM2: sobe os três serviços (WhatsApp, server-api, ngrok) com um único comando.
+ * PM2: sobe os tres servicos (WhatsApp, server-api, ngrok) com um unico comando.
  * Uso (na pasta Servidor): pm2 start ecosystem.config.cjs
  *
  * - whatsapp-emissor: porta 3010
  * - server-api: porta 3001
- * - ngrok: túnel para 3001 (interface em http://127.0.0.1:4040)
+ * - ngrok: tunel para 3001 (interface em http://127.0.0.1:4040)
  *
- * Ngrok fica em Servidor/Ngrok (ex.: C:\Users\ROBO\Documents\Servidor\Ngrok\ngrok.exe).
- * Tarefa do Agendador: executar Servidor\start.bat (ou cmd com start.bat).
+ * Se existir Servidor/Ngrok/ngrok.exe, usa esse binario.
+ * Caso contrario, usa o comando global "ngrok" instalado na maquina.
+ * Tarefa do Agendador: executar Servidor\start.bat.
  */
+const fs = require("fs");
 const path = require("path");
+
 const servidorDir = __dirname;
 const ngrokDir = path.join(servidorDir, "Ngrok");
 const ngrokPath = path.join(ngrokDir, "ngrok.exe");
+const hasLocalNgrok = fs.existsSync(ngrokPath);
+const ngrokScript = hasLocalNgrok ? ngrokPath : "ngrok";
+const ngrokCwd = hasLocalNgrok ? ngrokDir : servidorDir;
 
 module.exports = {
   apps: [
@@ -40,10 +46,10 @@ module.exports = {
     },
     {
       name: "ngrok",
-      script: ngrokPath,
+      script: ngrokScript,
       args: "http 3001",
-      cwd: ngrokDir,
-      interpreter: "none",
+      cwd: ngrokCwd,
+      interpreter: hasLocalNgrok ? "none" : undefined,
       restart_delay: 2000,
       max_restarts: 10,
     },

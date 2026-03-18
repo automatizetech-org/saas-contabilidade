@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient"
+import { fetchAllPages } from "./supabasePagination"
 import type { Company } from "./profilesService"
 import type { Tables } from "@/types/database"
 import { isValidCnpj, isValidCpf, onlyDigits } from "@/lib/brazilDocuments"
@@ -167,12 +168,13 @@ export async function upsertCompanyRobotConfig(
 }
 
 export async function getCompaniesForUser(activeFilter?: "active" | "inactive" | "all") {
-  let q = supabase.from("companies").select("*").order("name")
-  if (activeFilter === "active") q = q.eq("active", true)
-  else if (activeFilter === "inactive") q = q.eq("active", false)
-  const { data, error } = await q
-  if (error) throw error
-  return (data ?? []) as Company[]
+  const data = await fetchAllPages<Company>((from, to) => {
+    let q = supabase.from("companies").select("*").order("name").range(from, to)
+    if (activeFilter === "active") q = q.eq("active", true)
+    else if (activeFilter === "inactive") q = q.eq("active", false)
+    return q
+  })
+  return data
 }
 
 export async function createCompany(params: {

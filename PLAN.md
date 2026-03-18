@@ -1,418 +1,122 @@
-# Plano Final Fechado para SaaS Vendável com 1 VM por Escritório, `ngrok` Fixo, Conector Robusto de Arquivos, Branding por Escritório e Segurança de Produção
+# Plano de Escala e Hardening para 100 Escritórios + Picos
 
 ## Resumo
-Objetivo: deixar o produto pronto para venda imediata, com arquitetura multi-tenant real por `escritório`, uma VM por escritório, execução local dos robôs, SaaS centralizado em Vercel/Supabase, URL pública fixa por escritório, conector robusto para navegar qualquer estrutura de pastas abaixo de uma `base_path` escolhida no admin, branding isolado por escritório e baseline de segurança de produção pensado com visão de hacker.
+Levar o sistema do estado atual para um alvo operacional de **100 escritórios**, cada um com **até 1.000 empresas** e **100 mil+ documentos por escritório**, com:
+- isolamento multi-tenant preservado por `office_id`
+- cards e gráficos servidos por RPC segura com leitura barata
+- listas de documentos em **cursor pagination** real, sem page-number custoso
+- atualização visual em **5-15s**
+- validação por teste de carga antes de qualquer promessa comercial de “rodar liso”
 
-Decisões travadas:
-- O tenant principal é `escritório`.
-- Cada escritório terá `1 VM ativa` e `1 conector ativo` em produção.
-- Cada escritório terá `1 URL pública fixa` própria, armazenada em banco.
-- O frontend em produção nunca resolve endpoint de VM por `.env`.
-- O backend/control-plane resolve a VM correta por `office_id`.
-- Toda operação sensível contra a VM passa pelo backend do SaaS.
-- O conector da VM usa `Bearer token` exclusivo por escritório na v1.
-- A `base_path` do escritório é configurada no admin e armazenada em `office_servers.base_path`.
-- O conector deve operar qualquer estrutura de pastas abaixo da `base_path`, sem depender de layout rígido.
-- O vínculo de negócio do arquivo com a empresa vem do processo de ingestão/robô/metadado persistido, nunca apenas do nome da pasta.
-- O branding é por `office_id`, nunca por empresa.
-- Se o escritório não tiver branding customizado, usa branding padrão da plataforma.
-- Segurança forte, auditoria, limites operacionais e isolamento cross-tenant são requisito de go-live.
+A implementação será em 4 frentes: **segurança de execução**, **modelo de leitura escalável**, **atualização quase em tempo real**, **teste/observabilidade**.
 
-## Arquitetura e Fluxos Principais
-### Tenancy, identidade e autorização
-- Formalizar `offices`, `office_memberships`, `office_servers`, `office_branding`, `robot_schedules`, `robot_jobs`, `robot_job_logs` e adicionar `office_id` em `companies`.
-- Manter a cadeia obrigatória:
-  - `user -> office_memberships -> offices`
-  - `company -> office_id`
-  - `branding -> office_id`
-  - `documents/jobs/logs/stats -> company_id` e `office_id`
-- Separar papéis:
-  - `super_admin` para plataforma
-  - `owner/admin/operator/viewer` para escritório
-- Toda leitura ou mutação deve validar a relação real entre `user`, `office`, `company`, `document`, `job`, `office_server` e `office_branding`.
-- `selectedCompanyIds` é apenas filtro visual; nunca fonte de autorização.
+## Mudanças de Implementação
+### 1. Fechar a superfície de segurança antes de escalar
+- Restringir `EXECUTE` das RPCs novas para `authenticated` e revogar de `anon` onde couber.
+- Padronizar `security definer` + `set search_path = public` + escopo por `public.current_office_id()` em todas as RPCs analíticas e de paginação.
+- Adicionar testes de abuso para RPCs com `company_ids` de outro escritório, `detail_kind` inválido, filtros arbitrários e chamadas sem sessão.
+- Substituir `ngrok` como caminho de produção por endpoint estável do conector/VM com domínio fixo, TLS estável e segredo do conector obrigatório em todas as rotas expostas.
+- Aplicar rate limit e timeout explícitos nas edge functions e no `server-api`, com foco em `office-server`, downloads, ZIPs e paginações pesadas.
 
-### URL pública da VM por escritório
-- A URL pública de cada VM fica em `office_servers.public_base_url`.
-- A URL é fixa por escritório no setup atual.
-- Não haverá `SERVER_API_URL` ou `WHATSAPP_API` globais de produção no Vercel.
-- Estrutura mínima de `office_servers`:
-  - `id`
-  - `office_id`
-  - `public_base_url`
-  - `status`
-  - `is_active`
-  - `last_seen_at`
-  - `connector_version`
-  - `base_path`
-  - `server_secret_hash`
-  - `created_at`
-  - `updated_at`
-- Permitir histórico de servidores por escritório, mas apenas `1 is_active = true` por vez.
+### 2. Trocar leitura pesada por projeções escaláveis
+- Manter as RPCs como interface pública, mas mudar a implementação delas para ler de **tabelas de projeção** e não de `UNION ALL`/scan direto sobre tabelas operacionais em runtime.
+- Criar um catálogo unificado de documentos, por exemplo `office_document_index`, contendo apenas o necessário para listagem:
+  - `office_id`, `source`, `category_key`, `company_id`, `document_date`, `created_at`, `status`, `type`, `origem`, `modelo`, `tipo_certidao`, `file_path`, `chave`, `search_text_normalized`
+- Alimentar esse catálogo para:
+  - `fiscal_documents`
+  - `dp_guias`
+  - `municipal_tax_debts`
+  - último estado válido de certidões derivado de `sync_events`
+- Reescrever `get_document_rows_page` e `get_fiscal_detail_documents_page` para **cursor pagination**:
+  - entrada: filtros + `cursor_sort_date` + `cursor_id` + `limit`
+  - saída: `rows[]`, `next_cursor`, `has_more`
+  - remover dependência de `row_number()` e `count(*) over()` nessas listas grandes
+- Reescrever `get_municipal_tax_debts_page` no mesmo modelo quando a tabela for tratada como lista operacional grande; se permanecer lista secundária, manter page-size pequeno e contagem separada.
+- Adicionar índices no catálogo:
+  - `(office_id, document_date desc, id desc)`
+  - `(office_id, category_key, document_date desc, id desc)`
+  - `(office_id, company_id, document_date desc, id desc)`
+  - trigram/GIN para `search_text_normalized`
+  - parciais por `source` e por `file extension` se necessário
 
-### Branding por escritório
-- O branding será armazenado em tabela própria `office_branding`.
-- Estrutura mínima de `office_branding`:
-  - `id`
-  - `office_id`
-  - `display_name`
-  - `logo_file_path`
-  - `favicon_file_path`
-  - `primary_color`
-  - `secondary_color`
-  - `accent_color`
-  - `created_at`
-  - `updated_at`
-- O branding pertence ao escritório inteiro, não a empresas individuais.
-- Apenas `owner`, `admin` do escritório e `super_admin` podem editar branding.
-- `operator` e `viewer` apenas visualizam.
-- Se não existir branding customizado para o escritório, o frontend usa o branding padrão da plataforma.
-- Assets de branding devem ficar em storage com caminho escopado por `office_id`.
-- Uploads de branding devem validar:
-  - tipo de arquivo permitido
-  - tamanho máximo
-  - dimensões máximas/mínimas quando aplicável
-- RLS e regras de storage devem impedir leitura ou alteração de branding de outro escritório.
-- Branding futuro de domínio/subdomínio customizado pode ser evolução posterior, mas não é requisito da v1 vendável.
+### 3. Fazer cards e gráficos lerem de resumo barato
+- Manter o contrato “cards/gráficos por RPC”, mas trocar a origem para **tabelas resumo por módulo**:
+  - `office_dashboard_daily`
+  - `office_fiscal_daily`
+  - `office_ir_summary`
+  - `office_municipal_tax_summary`
+  - `office_certificate_summary`
+  - `office_tax_intelligence_summary`
+  - `office_operations_summary`
+- Atualizar esses resumos por **fila de refresh** em lote, não por full scan:
+  - triggers leves nas tabelas-fonte só enfileiram `office_id`/`company_id`/`module`
+  - um worker/cron processa a fila a cada 5-10s e recompõe os agregados daquele escopo
+- As RPCs atuais passam a:
+  - ler dos resumos quando disponíveis
+  - cair para recomputação controlada apenas em bootstrap/recovery
+- Padronizar os dashboards do frontend para polling inteligente:
+  - `refetchInterval` de 10s com aba visível
+  - 30-60s com aba oculta
+  - invalidação imediata após ações locais relevantes
+- Não expandir realtime websocket global agora; o alvo escolhido é **quase tempo real em 5-15s** com polling barato e previsível.
 
-### Resolução de requisições para a VM correta
-- Fluxo padrão:
-  1. usuário autenticado chama o SaaS
-  2. backend resolve `office_id`
-  3. backend valida a relação com `company_id`/`document_id`/`job_id`
-  4. backend busca `office_servers.public_base_url`
-  5. backend chama a VM correta com credencial do escritório
-  6. backend devolve a resposta ao frontend
-- Regra absoluta: frontend nunca chama `ngrok` direto em produção.
-- Downloads, sync, execução de job, ações administrativas e leitura sensível passam sempre pelo backend do SaaS.
-
-### Agendamento, fila e execução
-- O SaaS persiste agendas em `robot_schedules`.
-- O cron do Supabase cria/disponibiliza `robot_jobs`.
-- Cada job contém:
-  - `office_id`
-  - `company_ids`
-  - `status`
-  - `attempt_count`
-  - `claimed_at`
-  - `claimed_by_server_id`
-  - `timeout_at`
-  - `last_error`
-  - `created_at`
-- Claim de job deve ser atômico.
-- O conector da VM busca apenas jobs do próprio `office_id`, faz claim, executa localmente e devolve:
-  - status
-  - logs
-  - caminhos dos arquivos
-  - resultados por empresa
-  - totais e estatísticas
-- O backend valida que qualquer `company_id` enviado pelo conector pertence ao `office_id` autenticado.
-
-### Downloads e arquivos
-- O arquivo físico fica somente na VM do escritório.
-- O banco guarda:
-  - `office_id`
-  - `company_id`
-  - `file_path`
-  - `filename`
-  - `extension`
-  - `size`
-  - `hash`
-  - `detected_at`
-  - metadados e status
-- Todo download valida:
-  - `user -> office -> company -> document -> office_server`
-- A VM nunca expõe diretório bruto.
-- O backend do SaaS faz `streaming proxy`; não persiste arquivo no control-plane.
-- ZIPs e downloads unitários são montados apenas com arquivos autorizados daquele escritório.
-
-## Contratos Fechados de API
-### Endpoints internos do SaaS
-- `GET /api/office-server/status`
-  - retorna status, versão, heartbeat e capacidade do conector do escritório ativo
-- `POST /api/office-server/test-connection`
-  - testa conectividade com a VM do escritório ativo
-- `POST /api/jobs/:jobId/reprocess`
-  - reprocessa job autorizado do escritório ativo
-- `POST /api/files/download`
-  - body: `document_id`
-  - faz proxy autenticado para a VM e stream do arquivo
-- `POST /api/files/download-zip`
-  - body: `document_ids[]`
-  - valida autorização e faz proxy/stream do ZIP
-- `POST /api/files/sync`
-  - body: parâmetros da operação manual permitida
-  - dispara sync autorizado do escritório ativo
-- `GET /api/branding`
-  - retorna branding do escritório ativo com fallback para branding padrão
-- `POST /api/branding`
-  - cria ou atualiza branding do escritório ativo quando autorizado
-
-### Endpoints do conector da VM
-- `POST /connector/heartbeat`
-  - recebe autenticação do escritório
-  - atualiza status do conector
-- `POST /connector/jobs/pull`
-  - consulta jobs pendentes do próprio escritório
-- `POST /connector/jobs/:jobId/claim`
-  - claim controlado e idempotente
-- `POST /connector/jobs/:jobId/complete`
-  - envia resultado, logs e arquivos gerados
-- `POST /connector/files/download`
-  - body: `relative_path` autorizado
-  - retorna stream do arquivo
-- `POST /connector/files/download-zip`
-  - body: `relative_paths[]`
-  - retorna stream do ZIP
-- `POST /connector/files/tree`
-  - lista árvore ou subset abaixo da `base_path`
-- `POST /connector/files/resolve`
-  - valida e resolve caminho relativo com segurança
-- Todos os endpoints do conector exigem `Authorization: Bearer <secret>`.
-
-## Conector da VM e Server de Arquivos Robusto
-### Requisito de robustez para `base_path`
-- O conector da VM será baseado no server existente da pasta `Servidor`, endurecido para produção.
-- A `base_path` operacional será configurada na tela admin e persistida em `office_servers.base_path`.
-- Fonte de verdade da `base_path`: o SaaS.
-- A VM sincroniza essa configuração a partir do SaaS e só opera com a `base_path` validada.
-- Ao atualizar `base_path`, o SaaS deve testar acesso antes de salvar como ativa e disparar reindexação controlada.
-
-### Modelo operacional do conector
-- O server da VM trata `base_path` como raiz autorizada única.
-- Toda operação recebe apenas caminhos relativos a essa raiz.
-- O server deve conseguir:
-  - listar árvore
-  - resolver caminho relativo seguro
-  - identificar tipo de item
-  - baixar arquivo
-  - montar ZIP
-  - escanear/indexar estrutura
-- O sistema não presume taxonomia fixa de pastas.
-- O vínculo do arquivo com a empresa vem do robô/processo de ingestão/metadado persistido, nunca só da pasta.
-- O conector deve tolerar:
-  - nomes de pasta diferentes
-  - profundidades diferentes
-  - categorias diferentes
-  - reorganização manual da árvore local
-
-### Segurança do filesystem
-- Toda resolução de caminho deve:
-  - normalizar separadores
-  - resolver `.` e `..`
-  - rejeitar caminho absoluto do cliente
-  - garantir permanência dentro da `base_path`
-- Bloquear:
-  - path traversal
-  - qualquer symlink na v1
-  - caminhos UNC inseguros
-  - caminhos com encoding malicioso
-- O server nunca retorna estrutura acima da `base_path`.
-- Logs não devem expor caminhos absolutos sem necessidade.
-
-### Limites operacionais obrigatórios
-- Definir paginação para listagem de árvore.
-- Definir profundidade máxima de exploração por request.
-- Definir timeout de operações de leitura/ZIP.
-- Definir tamanho máximo de ZIP por request.
-- Definir quantidade máxima de arquivos por request.
-- Definir limite de concorrência por escritório para operações de filesystem.
-- Esses limites devem valer desde a v1 para reduzir abuso e DoS.
-
-## Segurança de Produção com Visão de Hacker
-### Regras gerais
-- Nenhuma confiança em IDs, paths ou hints do cliente.
-- Nenhuma autorização baseada em frontend.
-- Nenhum endpoint aceita `company_id`, `office_id`, `file_path`, `document_id` ou `office_server_id` sem validação relacional forte.
-- Não pode existir acesso cross-tenant por manipulação de request, troca de ID, reuso de token ou endpoint esquecido.
-
-### Supabase e banco
-- Reescrever RLS para remover qualquer policy aberta demais.
-- Nenhuma tabela de negócio pode ter `USING (true)` ou `WITH CHECK (true)` para `authenticated` ou `anon`.
-- Separar acesso de:
-  - usuário final
-  - admin da plataforma
-  - conector da VM
-- `service_role` só em backend/edge functions/control-plane.
-- Adicionar constraints e índices para impedir:
-  - vínculos duplicados
-  - empresas fora do escritório
-  - jobs duplicados
-  - múltiplos servidores ativos indevidos
-  - claims inconsistentes
-  - múltiplos registros de branding ativo para o mesmo escritório, se houver necessidade de unicidade lógica
-
-### Autenticação e sessão
-- Login por e-mail com mensagens neutras.
-- Rate limit por IP e por identidade.
-- Cooldown progressivo ou lockout.
-- Reset de senha seguro.
-- Sessão com expiração e refresh controlado.
-- MFA obrigatório ou fortemente recomendado para `super_admin`.
-- Nenhuma alteração de perfil pode elevar privilégio.
-
-### Autenticação do SaaS para o conector da VM
-- A autenticação v1 será por `Bearer token` exclusivo por escritório.
-- O segredo nasce no SaaS/control-plane.
-- O segredo é exibido uma única vez no provisionamento.
-- No banco, armazenar apenas `server_secret_hash`.
-- Toda chamada do SaaS para a VM exige `Authorization: Bearer <secret>`.
-- Rotação de segredo invalida imediatamente o anterior.
-- `HMAC` fica como evolução futura.
-
-### Registro da VM no sistema
-- O registro inicial de `office_server` será manual pela plataforma.
-- Recomendação adotada:
-  - criação inicial por `super_admin` ou painel da plataforma
-  - preenchimento de `public_base_url`
-  - preenchimento de `base_path`
-  - geração do segredo do conector
-- O escritório não cria seu próprio `office_server` sem fluxo controlado.
-- Heartbeat só atualiza status; não cria vínculo novo automaticamente.
-
-### Heartbeat
-- Heartbeat a cada `1 minuto`.
-- Payload mínimo:
-  - `office_server_id`
-  - `connector_version`
-  - `status`
-  - `last_job_at`
-  - `host_fingerprint`
-  - `base_path_fingerprint` não sensível
-- Sem heartbeat dentro da janela definida: marcar `status = offline`.
-- O heartbeat também valida versão mínima permitida.
-
-### Logs e retenção
-- Separar:
-  - log operacional do escritório
-  - log de segurança global da plataforma
-- Admin local vê apenas logs do próprio escritório.
-- Plataforma vê logs globais e incidentes.
-- Definir retenção operacional mínima desde a v1.
-- Não logar segredos, tokens, senhas, certificados, caminhos absolutos desnecessários ou payloads sensíveis completos.
-
-### Failover e indisponibilidade
-- Se a VM estiver offline:
-  - jobs ficam pendentes ou reprogramáveis
-  - downloads dependentes da VM falham com mensagem operacional clara
-  - status do escritório marca `server_offline`
-  - alerta operacional dispara para a plataforma
-- Não haverá failover cross-tenant.
-- Isolamento vence disponibilidade improvisada.
-
-### Versionamento do conector
-- O conector deve usar versionamento semântico explícito.
-- O SaaS mantém versão mínima suportada.
-- Heartbeat compara versão do conector com versão mínima permitida.
-- Versão insegura ou incompatível pode ser bloqueada para operações críticas.
-
-## Operação e Painéis
-### Painel do escritório
-- Deve incluir:
+### 4. Corrigir os pontos do frontend que ainda não escalam
+- Remover das páginas grandes qualquer dependência de “página exata” com total em tempo real; listas grandes passam a usar cursor.
+- Adaptar `DocumentosPage` e `FiscalDetailPage` para:
+  - próxima/anterior por cursor
+  - filtros persistidos
+  - export atual baseada em seleção ou filtro, não em “todos carregados no client”
+- Revisar `ParalegalPage`, `IRPage`, `OperacoesPage` e telas equivalentes para garantir que:
+  - cards/gráficos não recaiam em `.select()` pesado quando a RPC falhar
+  - listas detalhadas não materializem datasets grandes no browser
+- Manter CRUD simples em client + RLS onde o volume não justificar backend especial:
   - empresas
-  - usuários
-  - branding
-  - servidor ativo
-  - `public_base_url`
-  - `base_path`
-  - status do conector
-  - último heartbeat
-  - versão do conector
-  - rotação de segredo
-  - teste de conexão
-  - agendamentos
-  - fila e histórico de jobs
-- Tela de branding deve permitir:
-  - editar nome exibido
-  - enviar/trocar logo
-  - enviar/trocar favicon
-  - ajustar cores
-  - restaurar branding padrão
-- O admin local só vê recursos do próprio escritório.
+  - contadores
+  - configurações
+  - perfis
 
-### Painel da plataforma
-- Deve incluir:
-  - escritórios
-  - plano/status
-  - status do servidor
-  - cadastro/edição de `public_base_url`
-  - cadastro/edição de `base_path`
-  - reset/rotação de segredo
-  - visão consolidada de jobs e falhas
-  - bloqueio de conector inseguro ou offline
-  - visão e suporte sobre branding por escritório
-- Apenas `super_admin` opera recursos globais.
+## APIs, Interfaces e Tipos
+- RPCs de lista grande passam a usar cursor em vez de page-number:
+  - substituir `page_number`/`page_size` por `limit`, `cursor_sort_date`, `cursor_id`
+  - retorno inclui `next_cursor`, `has_more`
+- RPCs de overview continuam retornando JSON agregado, mas sua implementação passa a ler de resumo persistido.
+- Tipos em `src/types/database.ts` precisam refletir os novos contratos de cursor.
+- Services do frontend precisam padronizar:
+  - `items`
+  - `nextCursor`
+  - `hasMore`
+  - `refreshAt`
+- O `server-api` e `office-server` devem tratar limites explícitos de lote, timeout e rate limit como parte da interface operacional.
 
-### Provisionamento para vender amanhã
-- Checklist operacional:
-  1. criar `office`
-  2. criar usuário admin inicial
-  3. vincular admin em `office_memberships`
-  4. criar registro em `office_servers`
-  5. preencher `public_base_url`
-  6. preencher `base_path`
-  7. gerar segredo do conector
-  8. configurar branding inicial ou deixar padrão da plataforma
-  9. instalar/configurar VM
-  10. subir conector
-  11. validar heartbeat
-  12. testar conexão e download
-  13. ativar escritório
-- Artefato de onboarding técnico da VM:
-  - script instalador
-  - configuração local da VM
-  - serviço Windows/PM2
-  - healthcheck local
-  - persistência segura de credenciais e `base_path`
+## Testes e Critérios de Aceitação
+- Carga sintética base:
+  - 100 escritórios
+  - 1.000 empresas por escritório
+  - 100.000 documentos fiscais por escritório
+  - débitos municipais, guias DP, certidões e IR em volume proporcional
+  - pico com 300 sessões autenticadas concorrentes + 20 sincronizações simultâneas
+- Testes obrigatórios:
+  - abuso multi-tenant em todas as RPCs novas
+  - navegação profunda por cursor nas listas de documentos
+  - busca textual com filtros combinados
+  - polling simultâneo de dashboards em múltiplos escritórios
+  - sync concorrente atualizando catálogo e resumos sem vazar entre escritórios
+- Metas mínimas de aceite:
+  - dashboard/card RPC p95 < 500 ms
+  - gráfico agregado p95 < 700 ms
+  - primeira página de documentos p95 < 700 ms
+  - próxima página por cursor p95 < 400 ms
+  - erro < 1% sob carga-alvo
+  - zero vazamento entre escritórios nos testes de abuso
+- Observabilidade mínima:
+  - logs estruturados por `office_id`, rota RPC, duração e erro
+  - monitor de timeout/erro para edge functions e `server-api`
+  - captura de plano de execução (`EXPLAIN ANALYZE`) para RPCs críticas
+  - script de carga versionado no repo
 
-## Testes e Validação de Go-Live
-- Testar isolamento entre dois escritórios com dados misturados no mesmo banco.
-- Testar que usuário do escritório A não acessa recursos do B alterando body, query, path ou IDs.
-- Testar IDOR em documentos, empresas, jobs, branding, office servers e usuários.
-- Testar claim concorrente do mesmo job.
-- Testar expiração, retry e idempotência de job.
-- Testar dois escritórios agendando no mesmo minuto.
-- Testar download e ZIP sempre via VM correta.
-- Testar `streaming proxy` sem persistência indevida no SaaS.
-- Testar brute force, enumeração e mensagens neutras no login.
-- Testar rotação de segredo com invalidação imediata.
-- Testar heartbeat, servidor offline e bloqueio de versão insegura.
-- Testar alteração de `public_base_url` sem impactar outros escritórios.
-- Testar alteração de `base_path`, validação pré-save e reindexação controlada.
-- Testar branding com:
-  - fallback para padrão da plataforma
-  - isolamento por `office_id`
-  - upload válido e inválido
-  - bloqueio de acesso cross-tenant
-  - leitura correta dos assets por escritório
-- Testar server da VM contra:
-  - árvores rasas e profundas
-  - nomes de pasta arbitrários
-  - múltiplos tipos de arquivo
-  - reorganização manual de pastas
-  - path traversal
-  - symlink
-  - caminhos absolutos
-  - encoded traversal
-- Checklist final:
-  - sem policies abertas
-  - sem `service_role` no frontend
-  - sem segredo em logs
-  - sem acesso cross-tenant
-  - sem endpoint público desnecessário
-  - sem chamada direta do browser ao `ngrok`
-  - sem leitura fora da `base_path`
-  - sem dependência de layout rígido de pastas
-  - sem dependência de env global do Vercel para escolher VM
-  - sem branding exposto ou editável fora do escritório correto
-
-## Assumptions
-- O SaaS continuará centralizado em Vercel + Supabase.
-- Cada escritório terá sua própria VM e seu próprio endpoint público fixo.
-- A URL pública por escritório será armazenada em `office_servers.public_base_url`.
-- A raiz de arquivos operacional da VM será armazenada em `office_servers.base_path`.
-- O branding por escritório será armazenado em `office_branding`, com fallback para branding padrão da plataforma.
-- O server da pasta `Servidor` será a base do conector de produção, endurecido para multi-tenant, autenticação forte e navegação robusta de filesystem.
-- A URL do `ngrok` é fixa no setup atual.
-- Em produção, o frontend não resolve endpoint de VM via `.env`; isso será sempre resolvido pelo backend/control-plane com base no `office_id`.
-- Onde houver conflito entre conveniência e isolamento, vence o isolamento.
+## Assumptions e Defaults
+- Meta oficial adotada: **100 escritórios + picos**.
+- Frescor escolhido: **5-15s**, não sub-segundo.
+- Paginação escolhida: **cursor rápida**, não página exata.
+- “Segurança total” não será tratada como promessa absoluta; o aceite será por hardening + testes de abuso + observabilidade.
+- `ngrok` não entra como solução final para essa meta de produção; ele fica apenas como transição/homologação.

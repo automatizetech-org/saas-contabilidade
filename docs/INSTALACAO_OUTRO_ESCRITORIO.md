@@ -306,6 +306,7 @@ WHATSAPP_BACKEND_URL=http://localhost:3010
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
+CONNECTOR_SECRET=...
 BASE_PATH=C:\Users\ROBO\Documents\EMPRESAS
 ```
 
@@ -313,6 +314,8 @@ Observação:
 
 - Mesmo usando o caminho vindo do dashboard, deixe `BASE_PATH` preenchido no `.env` como segurança.
 - Assim, se a API do dashboard falhar por algum motivo, ainda existe fallback.
+
+- `CONNECTOR_SECRET` Ã© o segredo exibido uma Ãºnica vez no wizard do primeiro escritÃ³rio. Guarde e coloque no `.env` da VM.
 
 ### 6. Criar a pasta base da VM
 

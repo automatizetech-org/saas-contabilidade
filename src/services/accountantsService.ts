@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient"
+import { fetchAllPages } from "./supabasePagination"
 import type { Tables } from "@/types/database"
 import { formatCpf as formatCpfValue, isValidCpf, onlyDigits as digitsOnly } from "@/lib/brazilDocuments"
 
@@ -13,11 +14,11 @@ export function formatCpf(value: string) {
 }
 
 export async function getAccountants(activeOnly = true): Promise<Accountant[]> {
-  let query = supabase.from("accountants").select("*").order("name")
-  if (activeOnly) query = query.eq("active", true)
-  const { data, error } = await query
-  if (error) throw error
-  const list = (data ?? []) as Accountant[]
+  const list = await fetchAllPages<Accountant>((from, to) => {
+    let query = supabase.from("accountants").select("*").order("name").range(from, to)
+    if (activeOnly) query = query.eq("active", true)
+    return query
+  })
   return list.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
 }
 

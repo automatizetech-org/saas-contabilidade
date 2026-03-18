@@ -8,6 +8,7 @@
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { createHash, timingSafeEqual } from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
@@ -31,6 +32,8 @@ app.set("trust proxy", 1);
 
 // Base path: Supabase (admin) na inicialização; fallback para .env
 let BASE_PATH = (process.env.BASE_PATH || "C:\\Users\\ROBO\\Documents").trim();
+let OFFICE_SERVER_ID = null;
+let OFFICE_ID = null;
 
 async function loadBasePathFromSupabase() {
   const url = process.env.SUPABASE_URL;
@@ -38,6 +41,29 @@ async function loadBasePathFromSupabase() {
   if (!url || !serviceKey) return;
   try {
     const supabase = createClient(url, serviceKey);
+    if (CONNECTOR_SECRET_HASH) {
+      const { data: credential } = await supabase
+        .from("office_server_credentials")
+        .select("office_server_id")
+        .eq("secret_hash", CONNECTOR_SECRET_HASH)
+        .maybeSingle();
+      if (credential?.office_server_id) {
+        const { data: officeServer } = await supabase
+          .from("office_servers")
+          .select("id, office_id, base_path")
+          .eq("id", credential.office_server_id)
+          .maybeSingle();
+        if (officeServer?.id) {
+          OFFICE_SERVER_ID = officeServer.id;
+          OFFICE_ID = officeServer.office_id ?? null;
+        }
+        if (officeServer?.base_path && String(officeServer.base_path).trim()) {
+          BASE_PATH = String(officeServer.base_path).trim();
+          return;
+        }
+      }
+      return;
+    }
     const { data } = await supabase.from("admin_settings").select("value").eq("key", "base_path").maybeSingle();
     if (data?.value && String(data.value).trim()) BASE_PATH = String(data.value).trim();
   } catch (_) {}
@@ -45,6 +71,32 @@ async function loadBasePathFromSupabase() {
 
 function getBaseResolved() {
   return path.resolve(BASE_PATH);
+}
+
+function sha256Hex(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+const CONNECTOR_SECRET = String(process.env.CONNECTOR_SECRET || "").trim();
+const CONNECTOR_SECRET_HASH = CONNECTOR_SECRET ? sha256Hex(CONNECTOR_SECRET) : "";
+
+function safeTokenEqual(expected, received) {
+  const expectedBuffer = Buffer.from(String(expected || ""), "utf8");
+  const receivedBuffer = Buffer.from(String(received || ""), "utf8");
+  if (expectedBuffer.length === 0 || expectedBuffer.length !== receivedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function getForwardedUserJwt(req) {
+  const forwardedToken = String(req.headers["x-office-user-jwt"] || "").trim();
+  if (forwardedToken) return forwardedToken;
+  if (!CONNECTOR_SECRET_HASH) {
+    const authHeader = String(req.headers.authorization || "");
+    if (authHeader.startsWith("Bearer ")) return authHeader.slice(7).trim();
+  }
+  return "";
 }
 
 function normalizeRelativePath(inputPath) {
@@ -162,7 +214,7 @@ const corsOptions = {
     return callback(null, false);
   },
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Office-User-JWT", "ngrok-skip-browser-warning"],
 };
 app.use(cors(corsOptions));
 
@@ -190,10 +242,21 @@ const heavyLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-function requireBearer(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token ausente" });
+function requireConnectorSecret(req, res, next) {
+  if (!CONNECTOR_SECRET_HASH) {
+    return res.status(500).json({ error: "Conector da VM não configurado com CONNECTOR_SECRET." });
+  }
+  const providedHash = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!providedHash || !safeTokenEqual(CONNECTOR_SECRET_HASH, providedHash)) {
+    return res.status(401).json({ error: "Conector não autorizado" });
+  }
+  return next();
+}
+
+function requireForwardedUserJwt(req, res, next) {
+  const token = getForwardedUserJwt(req);
+  if (!token) {
+    return res.status(401).json({ error: "JWT do usuário ausente." });
   }
   return next();
 }
@@ -204,7 +267,7 @@ async function validateSupabaseJwt(req, res, next) {
   if (!supabaseUrl || !supabaseKey) {
     return res.status(500).json({ error: "Supabase não configurado" });
   }
-  const token = (req.headers.authorization || "").slice(7);
+  const token = getForwardedUserJwt(req);
   try {
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
@@ -245,7 +308,7 @@ app.use((req, res, next) => {
  * GET /api/files/list?path=EMPRESAS/Grupo Fleury/NFS
  * Lista arquivos (XML, PDF) de uma pasta. Path é relativo a BASE_PATH.
  */
-app.get("/api/files/list", requireBearer, validateSupabaseJwt, (req, res) => {
+app.get("/api/files/list", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, (req, res) => {
   const relPath = req.query.path;
   try {
     const { resolved } = normalizeRelativePath(relPath);
@@ -270,7 +333,7 @@ app.get("/api/files/list", requireBearer, validateSupabaseJwt, (req, res) => {
  * GET /api/files/download?path=EMPRESAS/Grupo Fleury/NFS/arquivo.xml
  * Baixa um arquivo por path direto (para testes, sem JWT).
  */
-app.get("/api/files/download", requireBearer, validateSupabaseJwt, (req, res) => {
+app.get("/api/files/download", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, (req, res) => {
   const inputPath = req.query.path;
   try {
     const { resolved } = normalizeRelativePath(inputPath);
@@ -290,12 +353,8 @@ app.get("/api/files/download", requireBearer, validateSupabaseJwt, (req, res) =>
  * GET /api/fiscal-documents/:id/download
  * Baixa arquivo fiscal por ID (busca file_path no Supabase). Requer JWT.
  */
-app.get("/api/fiscal-documents/:id/download", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token ausente" });
-  }
-  const token = authHeader.slice(7);
+app.get("/api/fiscal-documents/:id/download", requireConnectorSecret, requireForwardedUserJwt, async (req, res) => {
+  const token = getForwardedUserJwt(req);
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseKey) {
@@ -332,12 +391,8 @@ app.get("/api/fiscal-documents/:id/download", async (req, res) => {
  * envia o ZIP na resposta e apaga o arquivo temporário em seguida.
  * Body: { ids: string[] }. Requer JWT.
  */
-app.post("/api/fiscal-documents/download-zip", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token ausente" });
-  }
-  const token = authHeader.slice(7);
+app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
+  const token = getForwardedUserJwt(req);
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id) => id && String(id).trim()) : [];
   const companyIds = Array.isArray(req.body?.company_ids)
     ? req.body.company_ids.filter((id) => id && String(id).trim())
@@ -453,12 +508,8 @@ app.post("/api/fiscal-documents/download-zip", requireBearer, validateSupabaseJw
  * organizando por Empresa/<categoria>/<arquivo>.
  * Body: { company_ids: string[], categories?: string[], filename_suffix?: string }
  */
-app.post("/api/hub-documents/download-zip", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token ausente" });
-  }
-  const token = authHeader.slice(7);
+app.post("/api/hub-documents/download-zip", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
+  const token = getForwardedUserJwt(req);
   const companyIds = Array.isArray(req.body?.company_ids)
     ? req.body.company_ids.filter((id) => id && String(id).trim())
     : [];
@@ -619,16 +670,12 @@ app.post("/api/hub-documents/download-zip", requireBearer, validateSupabaseJwt, 
  * Body: { path, company_id, type }
  * Requer Authorization: Bearer <jwt_do_usuario> — usa só anon key; RLS valida permissão.
  */
-app.post("/api/fiscal-sync", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
+app.post("/api/fiscal-sync", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
   const { path: relPath, company_id, type = "NFS" } = req.body || {};
   if (!relPath || !company_id) {
     return res.status(400).json({ error: "path e company_id são obrigatórios" });
   }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token ausente. Envie Authorization: Bearer <jwt>." });
-  }
-  const token = authHeader.slice(7);
+  const token = getForwardedUserJwt(req);
   const fullPath = path.join(BASE_PATH, relPath);
   if (!path.resolve(fullPath).startsWith(path.resolve(BASE_PATH))) {
     return res.status(403).json({ error: "Path fora do diretório base" });
@@ -815,12 +862,8 @@ async function runFiscalSyncAll(supabase) {
   return result;
 }
 
-app.post("/api/fiscal-sync-all", requireBearer, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token ausente. Envie Authorization: Bearer <jwt>." });
-  }
-  const token = authHeader.slice(7);
+app.post("/api/fiscal-sync-all", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
+  const token = getForwardedUserJwt(req);
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseKey) {
@@ -983,11 +1026,63 @@ function startFiscalWatcher() {
   }
 }
 
+/**
+ * Worker de refresh dos resumos/projeções (office_*).
+ * Procura jobs em `public.office_analytics_refresh_queue` e processa com `process_office_refresh_queue`.
+ * Rodar aqui evita depender de pg_cron/Supabase schedules no estágio atual do projeto.
+ */
+function startOfficeRefreshWorker() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    console.log("[office-refresh-worker] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; worker desligado.");
+    return;
+  }
+
+  const p_limit = Number(process.env.OFFICE_REFRESH_WORKER_LIMIT || 25);
+  const intervalMs = Number(process.env.OFFICE_REFRESH_WORKER_INTERVAL_MS || 10_000);
+  const supabase = createClient(supabaseUrl, serviceKey);
+
+  let running = false;
+  let rpcMissingLogged = false;
+  const runOnce = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const { data, error } = await supabase.rpc("process_office_refresh_queue", { p_limit });
+      if (error) throw error;
+      rpcMissingLogged = false;
+      const processed = Number(data ?? 0);
+      console.log(`[office-refresh-worker] processed_count=${processed}`);
+    } catch (err) {
+      const msg = err?.message ?? String(err);
+      const isMissingRpc = /function.*process_office_refresh_queue.*schema cache/i.test(msg);
+      if (isMissingRpc && !rpcMissingLogged) {
+        rpcMissingLogged = true;
+        console.warn("[office-refresh-worker] RPC process_office_refresh_queue nao encontrada. Rode as migrations no projeto Supabase (SUPABASE_URL do .env). Worker nao sera chamado ate a funcao existir.");
+      } else if (!isMissingRpc) {
+        console.error("[office-refresh-worker] Erro ao processar fila:", msg);
+      }
+    } finally {
+      running = false;
+    }
+  };
+
+  void runOnce();
+  setInterval(() => {
+    void runOnce();
+  }, intervalMs);
+}
+
 loadBasePathFromSupabase().then(() => {
   app.listen(PORT, () => {
     console.log(`API unificada em http://localhost:${PORT}`);
     console.log(`BASE_PATH: ${BASE_PATH}`);
     console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
+    console.log(`CONNECTOR_SECRET: ${CONNECTOR_SECRET_HASH ? "configurado" : "ausente"}`);
+    if (OFFICE_SERVER_ID) console.log(`OFFICE_SERVER_ID: ${OFFICE_SERVER_ID}`);
+    if (OFFICE_ID) console.log(`OFFICE_ID: ${OFFICE_ID}`);
+    startOfficeRefreshWorker();
     startFiscalWatcher();
   });
 });

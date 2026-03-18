@@ -38,18 +38,20 @@ import {
 import {
   CERTIFICATE_EXPIRY_WARNING_DAYS,
   getParalegalCertificates,
-  getParalegalCertificateSummary,
+  getParalegalCertificateOverview,
   type CertificateStatus,
 } from "@/services/paralegalService"
 import {
-  getMunicipalTaxDebts,
-  getMunicipalTaxSummary,
+  getMunicipalTaxOverview,
+  getMunicipalTaxDebtsPage,
   type MunicipalTaxDebtView,
+  type MunicipalTaxOverview,
   type MunicipalTaxStatusClass,
 } from "@/services/municipalTaxesService"
 import { downloadServerFileByPath, downloadServerFilesZip, hasServerApi } from "@/services/serverFileService"
 import { cn } from "@/utils"
 import { toast } from "sonner"
+import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling"
 
 type Topic = "overview" | "certificados" | "tarefas" | "clientes" | "taxas-impostos"
 type CertificateFilter = "todos" | CertificateStatus
@@ -183,30 +185,6 @@ function cycleMunicipalTaxSort(current: MunicipalTaxSortState, key: Exclude<Muni
   return { key: null, direction: null }
 }
 
-function compareMunicipalDebts(a: MunicipalTaxDebtView, b: MunicipalTaxDebtView, sort: MunicipalTaxSortState): number {
-  if (!sort.key || !sort.direction) return 0
-  const getVal = (item: MunicipalTaxDebtView) => {
-    switch (sort.key) {
-      case "company_name": return String(item.company_name ?? "").toLowerCase()
-      case "tributo": return String(item.tributo ?? "").toLowerCase()
-      case "ano": return String(item.ano ?? "")
-      case "numero_documento": return String(item.numero_documento ?? "")
-      case "data_vencimento": return String(item.data_vencimento ?? "")
-      case "valor": return Number(item.valor ?? 0)
-      case "situacao": return String(item.situacao ?? "").toLowerCase()
-      case "status_class": return String(item.status_class ?? "")
-      default: return ""
-    }
-  }
-  const aVal = getVal(a)
-  const bVal = getVal(b)
-  const result =
-    typeof aVal === "number" && typeof bVal === "number"
-      ? aVal - bVal
-      : String(aVal).localeCompare(String(bVal), "pt-BR", { numeric: true })
-  return sort.direction === "desc" ? -result : result
-}
-
 function MunicipalTaxSortHeader({
   label,
   column,
@@ -296,89 +274,98 @@ function ClientsPanel({ salarioMinimo, salarioMinimoLoading }: { salarioMinimo: 
 function MunicipalTaxesPanel({
   filters,
   setFilters,
-  items,
-  isLoading,
+  companyIdsFilter,
+  municipalOverview,
+  municipalOverviewLoading,
   chartPrimaryColor = "#2563EB",
 }: {
   filters: MunicipalTaxTableFiltersState
   setFilters: Dispatch<SetStateAction<MunicipalTaxTableFiltersState>>
-  items: MunicipalTaxDebtView[]
-  isLoading: boolean
+  companyIdsFilter: string[] | null
+  municipalOverview: MunicipalTaxOverview | undefined
+  municipalOverviewLoading: boolean
   chartPrimaryColor?: string
 }) {
-  const summary = useMemo(() => getMunicipalTaxSummary(items), [items])
+  const summary = municipalOverview?.cards ?? {
+    totalDebitos: 0,
+    totalVencido: 0,
+    totalAVencer: 0,
+    quantidadeDebitos: 0,
+    empresasComVencidos: 0,
+    empresasProximasVencimento: 0,
+    totalValor: 0,
+  }
   const [downloadingZip, setDownloadingZip] = useState(false)
   const [tablePage, setTablePage] = useState(1)
   const [tablePageSize, setTablePageSize] = useState(10)
 
-  const yearOptions = useMemo(() => {
-    const values = [...new Set(items.map((item) => item.ano).filter((value): value is number => typeof value === "number"))]
-    return values.sort((a, b) => b - a)
-  }, [items])
-
-  const tableFiltered = useMemo(() => {
-    return items.filter((item) => {
-      if (filters.search.trim()) {
-        const q = filters.search.trim().toLowerCase()
-        const haystack = [item.company_name, item.company_document, item.tributo, item.numero_documento].map((x) => String(x ?? "").toLowerCase()).join(" ")
-        if (!haystack.includes(q) && !String(item.company_document ?? "").replace(/\D/g, "").includes(q.replace(/\D/g, ""))) return false
-      }
-      if (filters.year !== "todos" && String(item.ano ?? "") !== filters.year) return false
-      if (filters.status !== "todos" && item.status_class !== filters.status) return false
-      if (filters.periodFrom && (item.data_vencimento ?? "") < filters.periodFrom) return false
-      if (filters.periodTo && (item.data_vencimento ?? "") > filters.periodTo) return false
-      return true
-    })
-  }, [items, filters])
-
   const [tableSort, setTableSort] = useState<MunicipalTaxSortState>({ key: null, direction: null })
-  const sortedItems = useMemo(
-    () => [...tableFiltered].sort((a, b) => compareMunicipalDebts(a, b, tableSort)),
-    [tableFiltered, tableSort]
-  )
-  const totalFiltered = sortedItems.length
+  const companyIdsKey = companyIdsFilter?.length ? companyIdsFilter.join(",") : "all"
+
+  const yearOptions = useMemo(() => (municipalOverview?.years ?? []).slice().sort((a, b) => b - a), [municipalOverview])
+
+  const {
+    data: debtsPage,
+    isLoading: debtsPageLoading,
+  } = useQuery({
+    queryKey: [
+      "paralegal-municipal-debts-page",
+      companyIdsKey,
+      filters.search,
+      filters.year,
+      filters.status,
+      filters.periodFrom,
+      filters.periodTo,
+      tablePage,
+      tablePageSize,
+      tableSort.key,
+      tableSort.direction,
+    ],
+    queryFn: () =>
+      getMunicipalTaxDebtsPage({
+        companyIds: companyIdsFilter,
+        year: filters.year,
+        status: filters.status,
+        dateFrom: filters.periodFrom || undefined,
+        dateTo: filters.periodTo || undefined,
+        search: filters.search,
+        sortKey: tableSort.key,
+        sortDirection: tableSort.direction,
+        page: tablePage,
+        pageSize: tablePageSize,
+      }),
+  })
+
+  const pageItems = debtsPage?.items ?? []
+  const totalFiltered = debtsPage?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalFiltered / tablePageSize))
   const from = (tablePage - 1) * tablePageSize
   const to = Math.min(from + tablePageSize, totalFiltered)
-  const pageItems = sortedItems.slice(from, to)
-  const listedGuidePaths = sortedItems.map((item) => String(item.guia_pdf_path || "").trim()).filter(Boolean)
+  const listedGuidePaths = pageItems.map((item) => String(item.guia_pdf_path || "").trim()).filter(Boolean)
 
-  const statusChartData = useMemo(
-    () =>
-      (["vencido", "a_vencer", "regular"] as MunicipalTaxStatusClass[]).map((status) => ({
-        key: status,
-        name: MUNICIPAL_TAX_META[status].label,
-        total: items.filter((item) => item.status_class === status).length,
-        fill: MUNICIPAL_TAX_META[status].color,
-      })),
-    [items]
-  )
+  const statusChartData = useMemo(() => {
+    if (municipalOverview?.byStatus?.length) {
+      return municipalOverview.byStatus.map((entry) => ({
+        key: entry.key,
+        name: entry.name,
+        total: entry.total,
+        fill: MUNICIPAL_TAX_META[entry.key].color,
+      }))
+    }
 
-  /** Os 30 primeiros documentos com data de vencimento de hoje para frente (hoje ou futuro), ordenados do mais próximo. */
-  const documentsByDueDate = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    return [...items]
-      .filter((item) => item.data_vencimento && item.data_vencimento >= today)
-      .sort((a, b) => String(a.data_vencimento ?? "").localeCompare(String(b.data_vencimento ?? "")))
-      .slice(0, 30)
-  }, [items])
+    return (["vencido", "a_vencer", "regular"] as MunicipalTaxStatusClass[]).map((status) => ({
+      key: status,
+      name: MUNICIPAL_TAX_META[status].label,
+      total: 0,
+      fill: MUNICIPAL_TAX_META[status].color,
+    }))
+  }, [municipalOverview])
 
-  const companyChartData = useMemo(() => {
-    const totals = new Map<string, number>()
-    items.forEach((item) => {
-      totals.set(item.company_name, (totals.get(item.company_name) ?? 0) + Number(item.valor || 0))
-    })
-    return [...totals.entries()].map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total).slice(0, 8)
-  }, [items])
+  /** Os 30 primeiros documentos com data de vencimento de hoje para frente (hoje ou futuro). */
+  const documentsByDueDate = municipalOverview?.dueSoon ?? []
 
-  const yearChartData = useMemo(() => {
-    const totals = new Map<number, number>()
-    items.forEach((item) => {
-      const year = item.ano ?? 0
-      totals.set(year, (totals.get(year) ?? 0) + Number(item.valor || 0))
-    })
-    return [...totals.entries()].map(([year, total]) => ({ name: String(year), total })).sort((a, b) => Number(a.name) - Number(b.name))
-  }, [items])
+  const companyChartData = municipalOverview?.byCompany ?? []
+  const yearChartData = municipalOverview?.byYear ?? []
 
   return (
     <div className="space-y-4">
@@ -456,7 +443,7 @@ function MunicipalTaxesPanel({
             <p className="mt-1 text-xs text-muted-foreground">Os 30 primeiros com vencimento de hoje para frente (do mais próximo).</p>
           </div>
           <div className="space-y-2 max-h-[320px] overflow-y-auto -webkit-overflow-scrolling-touch">
-            {isLoading ? (
+            {municipalOverviewLoading ? (
               <p className="text-xs text-muted-foreground">Carregando...</p>
             ) : documentsByDueDate.length === 0 ? (
               <p className="text-xs text-muted-foreground">Nenhum débito com vencimento de hoje em diante nos filtros atuais.</p>
@@ -575,7 +562,7 @@ function MunicipalTaxesPanel({
                   setDownloadingZip(true)
                   try {
                     await downloadServerFilesZip(listedGuidePaths, "guias-taxas-impostos")
-                    toast.success(`Download iniciado: ${listedGuidePaths.length} guia(s) (todos os listados).`)
+                    toast.success(`Download iniciado: ${listedGuidePaths.length} guia(s) (página atual).`)
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.")
                   } finally {
@@ -590,7 +577,7 @@ function MunicipalTaxesPanel({
           </div>
         </div>
         <div className="overflow-x-auto -webkit-overflow-scrolling-touch rounded-b-lg border-x border-b border-border">
-          {isLoading ? (
+          {debtsPageLoading ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">Carregando debitos municipais...</div>
           ) : pageItems.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">Nenhum debito encontrado para os filtros informados.</div>
@@ -598,14 +585,14 @@ function MunicipalTaxesPanel({
             <table className="min-w-[1200px] w-full table-fixed text-[11px]">
               <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                 <tr className="border-b border-border">
-                  <th className="w-[160px] min-w-[160px] px-3 py-3 pr-6"><MunicipalTaxSortHeader label="Empresa" column="company_name" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[300px] min-w-[300px] px-3 py-3 pr-6"><MunicipalTaxSortHeader label="Tributo" column="tributo" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[52px] px-3 py-3"><MunicipalTaxSortHeader label="Ano" column="ano" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Documento" column="numero_documento" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Vencimento" column="data_vencimento" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Valor" column="valor" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Situacao" column="situacao" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
-                  <th className="w-[120px] px-3 py-3 whitespace-nowrap"><MunicipalTaxSortHeader label="Classificacao" column="status_class" sort={tableSort} onToggle={(k) => setTableSort((s) => cycleMunicipalTaxSort(s, k))} /></th>
+                  <th className="w-[160px] min-w-[160px] px-3 py-3 pr-6"><MunicipalTaxSortHeader label="Empresa" column="company_name" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[300px] min-w-[300px] px-3 py-3 pr-6"><MunicipalTaxSortHeader label="Tributo" column="tributo" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[52px] px-3 py-3"><MunicipalTaxSortHeader label="Ano" column="ano" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Documento" column="numero_documento" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Vencimento" column="data_vencimento" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[92px] px-3 py-3"><MunicipalTaxSortHeader label="Valor" column="valor" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[90px] px-3 py-3"><MunicipalTaxSortHeader label="Situacao" column="situacao" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
+                  <th className="w-[120px] px-3 py-3 whitespace-nowrap"><MunicipalTaxSortHeader label="Classificacao" column="status_class" sort={tableSort} onToggle={(k) => { setTableSort((s) => cycleMunicipalTaxSort(s, k)); setTablePage(1); }} /></th>
                   {hasServerApi() && <th className="w-[80px] px-3 py-3 text-left">Guia PDF</th>}
                 </tr>
               </thead>
@@ -689,9 +676,14 @@ export default function ParalegalPage() {
   const chartPrimaryColor = (branding?.use_custom_palette && branding?.primary_color) ? branding.primary_color : "#2563EB"
   const { selectedCompanyIds } = useSelectedCompanyIds()
   const { data: companies = [] } = useCompanies()
+  const companyIdsFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null
   const { data: certificateItems = [], isLoading } = useQuery({
-    queryKey: ["paralegal-certificates"],
-    queryFn: () => getParalegalCertificates(null),
+    queryKey: ["paralegal-certificates", companyIdsFilter],
+    queryFn: () => getParalegalCertificates(companyIdsFilter),
+  })
+  const { data: certificateOverview } = useQuery({
+    queryKey: ["paralegal-certificate-overview", companyIdsFilter],
+    queryFn: () => getParalegalCertificateOverview(companyIdsFilter),
   })
   const { data: salarioMinimoData, isLoading: salarioMinimoLoading } = useQuery({
     queryKey: ["paralegal-salario-minimo"],
@@ -700,11 +692,24 @@ export default function ParalegalPage() {
     gcTime: 5 * 60 * 1000,
     refetchOnMount: "always",
   })
-  const { data: municipalDebts = [], isLoading: municipalDebtsLoading } = useQuery({
+  const { data: municipalDebts = [] } = useQuery({
     queryKey: ["paralegal-municipal-taxes", selectedCompanyIds, municipalFilters],
     queryFn: () =>
       getMunicipalTaxDebts({
-        companyIds: selectedCompanyIds.length > 0 ? selectedCompanyIds : null,
+        companyIds: companyIdsFilter,
+        year: municipalFilters.year,
+        status: municipalFilters.status,
+        dateFrom: municipalFilters.periodFrom || undefined,
+        dateTo: municipalFilters.periodTo || undefined,
+        search: municipalFilters.search,
+      }),
+    enabled: topic !== "taxas-impostos",
+  })
+  const { data: municipalOverview, isLoading: municipalOverviewLoading } = useQuery({
+    queryKey: ["paralegal-municipal-overview", companyIdsFilter, municipalFilters],
+    queryFn: () =>
+      getMunicipalTaxOverview({
+        companyIds: companyIdsFilter,
         year: municipalFilters.year,
         status: municipalFilters.status,
         dateFrom: municipalFilters.periodFrom || undefined,
@@ -713,8 +718,22 @@ export default function ParalegalPage() {
       }),
   })
   const salarioMinimo = salarioMinimoData ?? MOCK_SALARIO_MINIMO
-  const certificateSummary = useMemo(() => getParalegalCertificateSummary(certificateItems), [certificateItems])
-  const municipalSummary = useMemo(() => getMunicipalTaxSummary(municipalDebts), [municipalDebts])
+  const certificateSummary = certificateOverview?.cards ?? {
+    total: certificateItems.length,
+    ativos: certificateItems.filter((item) => item.certificate_status === "ativo").length,
+    venceEmBreve: certificateItems.filter((item) => item.certificate_status === "vence_em_breve").length,
+    vencidos: certificateItems.filter((item) => item.certificate_status === "vencido").length,
+    semCertificado: certificateItems.filter((item) => item.certificate_status === "sem_certificado").length,
+  }
+  const municipalSummary = municipalOverview?.cards ?? {
+    totalDebitos: 0,
+    totalVencido: 0,
+    totalAVencer: 0,
+    quantidadeDebitos: 0,
+    empresasComVencidos: 0,
+    empresasProximasVencimento: 0,
+    totalValor: 0,
+  }
 
   const filteredCertificates = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -728,26 +747,38 @@ export default function ParalegalPage() {
   }, [certificateItems, filter, search])
 
   const certificateBarData = useMemo(
-    () => [
+    () => (certificateOverview?.byStatus?.length ? certificateOverview.byStatus.map((item) => ({
+      name: item.name,
+      key: item.key,
+      total: item.total,
+      fill: CERTIFICATE_STATUS_META[item.key].chartColor,
+    })) : [
       { name: "Ativos", key: "ativo", total: certificateSummary.ativos, fill: CERTIFICATE_STATUS_META.ativo.chartColor },
       { name: "Perto de vencer", key: "vence_em_breve", total: certificateSummary.venceEmBreve, fill: CERTIFICATE_STATUS_META.vence_em_breve.chartColor },
       { name: "Vencidos", key: "vencido", total: certificateSummary.vencidos, fill: CERTIFICATE_STATUS_META.vencido.chartColor },
       { name: "Sem certificado", key: "sem_certificado", total: certificateSummary.semCertificado, fill: CERTIFICATE_STATUS_META.sem_certificado.chartColor },
-    ],
-    [certificateSummary]
+    ]),
+    [certificateOverview, certificateSummary]
   )
 
   const certificatePieData = useMemo(() => certificateBarData.filter((item) => item.total > 0), [certificateBarData])
 
   const overviewTaxChartData = useMemo(
     () =>
-      (["vencido", "a_vencer", "regular"] as MunicipalTaxStatusClass[]).map((status) => ({
+      (municipalOverview?.byStatus?.length
+        ? municipalOverview.byStatus.map((item) => ({
+            key: item.key,
+            name: item.name,
+            total: item.total,
+            fill: MUNICIPAL_TAX_META[item.key].color,
+          }))
+        : (["vencido", "a_vencer", "regular"] as MunicipalTaxStatusClass[]).map((status) => ({
         key: status,
         name: MUNICIPAL_TAX_META[status].label,
         total: municipalDebts.filter((item) => item.status_class === status).length,
         fill: MUNICIPAL_TAX_META[status].color,
-      })),
-    [municipalDebts]
+      }))),
+    [municipalDebts, municipalOverview]
   )
   const overviewTaxPieData = useMemo(() => overviewTaxChartData.filter((entry) => entry.total > 0), [overviewTaxChartData])
 
@@ -895,7 +926,7 @@ export default function ParalegalPage() {
             <h2 className="mb-3 text-sm font-semibold font-display text-muted-foreground">Taxas e impostos (Goiania)</h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <StatsCard title="Empresas com debitos vencidos" value={municipalSummary.empresasComVencidos.toString()} icon={Building2} />
-              <StatsCard title="Debitos a vencer (30 dias)" value={municipalDebts.filter((item) => item.status_class === "a_vencer").length.toString()} icon={Clock3} />
+              <StatsCard title="Debitos a vencer (30 dias)" value={String(municipalOverview?.byStatus.find((item) => item.key === "a_vencer")?.total ?? municipalDebts.filter((item) => item.status_class === "a_vencer").length)} icon={Clock3} />
               <StatsCard title="Total de debitos" value={municipalSummary.quantidadeDebitos.toString()} icon={Landmark} />
               <StatsCard title="Valor total em aberto" value={formatCurrencyBRL(municipalSummary.totalValor)} icon={AlertTriangle} />
             </div>
@@ -927,7 +958,16 @@ export default function ParalegalPage() {
       )}
       {topic === "certificados" && certificatesPanel}
       {topic === "tarefas" && <TasksPanel />}
-      {topic === "taxas-impostos" && <MunicipalTaxesPanel filters={municipalFilters} setFilters={setMunicipalFilters} items={municipalDebts} isLoading={municipalDebtsLoading} chartPrimaryColor={chartPrimaryColor} />}
+      {topic === "taxas-impostos" && (
+        <MunicipalTaxesPanel
+          filters={municipalFilters}
+          setFilters={setMunicipalFilters}
+          companyIdsFilter={companyIdsFilter}
+          municipalOverview={municipalOverview}
+          municipalOverviewLoading={municipalOverviewLoading}
+          chartPrimaryColor={chartPrimaryColor}
+        />
+      )}
     </div>
   )
 }

@@ -11,6 +11,7 @@ const qrImage = require('qr-image');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { spawnSync } = require('child_process');
 
 let client;

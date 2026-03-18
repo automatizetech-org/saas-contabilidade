@@ -400,6 +400,39 @@ export async function calculateAndPersistSimpleNational(input: SimpleNationalDra
 
 export async function getTaxIntelligenceOverview(companyIds: string[] | null): Promise<TaxIntelligenceOverview> {
   await syncDefaultRuleVersions()
+
+  try {
+    const { data, error } = await supabase.rpc("get_tax_intelligence_overview_summary", {
+      company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
+    })
+    if (error) throw error
+
+    const payload = (data ?? {}) as TaxIntelligenceOverview
+    return {
+      cards: {
+        calculosSalvos: Number(payload.cards?.calculosSalvos ?? 0),
+        mediaDas: Number(payload.cards?.mediaDas ?? 0),
+        mediaAliquotaEfetiva: Number(payload.cards?.mediaAliquotaEfetiva ?? 0),
+        empresasAtivas: Number(payload.cards?.empresasAtivas ?? 0),
+      },
+      byTopic: payload.byTopic ?? [],
+      byMonth: (payload.byMonth ?? []).map((item) => ({
+        name: /^\d{4}-\d{2}$/.test(item.name) ? formatMonthLabel(item.name) : item.name,
+        value: Number(item.value ?? 0),
+      })),
+      annexDistribution: (payload.annexDistribution ?? []).map((item) => ({
+        name: item.name,
+        value: Number(item.value ?? 0),
+      })),
+      recentCalculations: (payload.recentCalculations ?? []).map((item) => ({
+        ...item,
+        estimatedDas: Number(item.estimatedDas ?? 0),
+      })),
+    }
+  } catch {
+    // Fallback local enquanto a migration ainda não foi aplicada.
+  }
+
   const companyFilter = companyIds && companyIds.length > 0 ? companyIds : null
 
   let calculationsQuery = supabase
