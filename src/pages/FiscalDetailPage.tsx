@@ -260,8 +260,17 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                   setDownloadingZip(true);
                   setDownloadProgress(0);
                   try {
+                    // Evita o ZIP ficar com múltiplas cópias do mesmo arquivo físico.
+                    const uniqueByFilePath = new Map<string, typeof listWithFiles[number]>()
+                    for (const r of listWithFiles) {
+                      const fp = String(r.file_path ?? "").trim()
+                      if (!fp) continue
+                      if (!uniqueByFilePath.has(fp)) uniqueByFilePath.set(fp, r)
+                    }
+                    const uniqueList = Array.from(uniqueByFilePath.values())
+
                     await downloadListedFilesZipWithCategory(
-                      listWithFiles.map((r) => ({
+                      uniqueList.map((r) => ({
                         companyName: r.empresa || "EMPRESA",
                         category: "certidoes",
                         filePath: String(r.file_path!),
@@ -269,7 +278,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                       "certidoes",
                       (p) => setDownloadProgress(p)
                     );
-                    toast.success(`Download iniciado: ${listWithFiles.length} certidao(oes) da pagina.`);
+                    toast.success(`Download iniciado: ${uniqueList.length} certidao(oes) da pagina.`);
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Erro ao baixar ZIP.");
                   } finally {
@@ -614,18 +623,25 @@ export default function FiscalDetailPage() {
                 variant="default"
                 size="sm"
                 className="gap-1.5 text-xs"
-                disabled={downloadingZip || pageItems.filter((item) => item.file_path).length === 0}
+                disabled={downloadingZip}
                 onClick={async () => {
-                  const ids = pageItems.filter((item) => item.file_path).map((item) => item.id);
-                  if (ids.length === 0) {
-                    toast.error("Nenhum documento com arquivo disponivel na pagina atual.");
-                    return;
-                  }
                   setDownloadingZip(true);
                   setDownloadProgress(0);
                   try {
+                    // Evita registros duplicados com o mesmo arquivo físico.
+                    const filePathToId = new Map<string, string>();
+                    for (const item of pageItems) {
+                      const fp = String(item.file_path ?? "").trim();
+                      if (!fp) continue;
+                      if (!filePathToId.has(fp)) filePathToId.set(fp, item.id);
+                    }
+                    const ids = Array.from(filePathToId.values());
+                    if (ids.length === 0) {
+                      toast.error("Nenhum documento com arquivo disponivel na pagina atual.");
+                      return;
+                    }
                     await downloadFiscalDocumentsZip(ids, type ?? undefined, (p) => setDownloadProgress(p));
-                    toast.success(`Download iniciado: ${ids.length} documento(s) listados na pagina.`);
+                    toast.success(`Download iniciado: ${ids.length} documento(s) da pagina.`);
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Erro ao baixar ZIP.");
                   } finally {

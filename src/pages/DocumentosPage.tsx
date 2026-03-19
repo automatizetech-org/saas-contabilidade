@@ -5,7 +5,7 @@ import { FileText, Download, Filter, Search, FileArchive } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import { getUnifiedDocumentsPage, type CursorPageToken } from "@/services/documentsService";
+import { getUnifiedDocumentsPage, getUnifiedDocumentsZipPaths, type CursorPageToken } from "@/services/documentsService";
 import { downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -114,6 +114,7 @@ export default function DocumentosPage() {
         cursor: currentCursor,
         limit: pageSize,
       }),
+    staleTime: 25_000,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
@@ -138,35 +139,49 @@ export default function DocumentosPage() {
       return;
     }
 
-    const listWithFiles = pageDocuments.filter((item) => item.file_path && String(item.file_path).trim());
-    if (listWithFiles.length === 0) {
-      toast.error("Nenhum documento com arquivo disponivel na pagina atual.");
-      return;
-    }
-
     setDownloadingZip(true);
     setDownloadProgress(0);
     try {
-      const items = listWithFiles.map((item) => {
-        const category = getCategoryKey(item);
-        const folder =
-          category === "certidoes"
-            ? "certidoes"
-            : category === "nfs"
-              ? "nfs"
-              : category === "nfe_nfc"
-                ? "nfe-nfc"
-                : category === "taxas_impostos"
-                  ? "taxas e impostos"
-                  : "outros";
-        return {
-          companyName: item.empresa || "EMPRESA",
-          category: folder,
-          filePath: String(item.file_path || ""),
-        };
-      });
+      // Busca todos os documentos que batem com os filtros atuais (não só a página), para o ZIP incluir a lista inteira.
+      const zipPaths = await getUnifiedDocumentsZipPaths(
+        {
+          companyIds: companyFilter ?? undefined,
+          category: selectedCategoryKey,
+          fileKind: filterFileKind,
+          search: search || undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
+        },
+        50_000
+      );
+
+      if (zipPaths.length === 0) {
+        toast.error("Nenhum documento com arquivo disponivel para os filtros atuais.");
+        return;
+      }
+
+      // Deduplicar por file_path para não enviar o mesmo arquivo mais de uma vez.
+      const uniqueByPath = new Map<string, (typeof zipPaths)[number]>();
+      for (const row of zipPaths) {
+        if (!row.file_path || uniqueByPath.has(row.file_path)) continue;
+        uniqueByPath.set(row.file_path, row);
+      }
+
+      const categoryToFolder = (key: string) =>
+        key === "certidoes" ? "certidoes"
+          : key === "nfs" ? "nfs"
+          : key === "nfe_nfc" ? "nfe-nfc"
+          : key === "taxas_impostos" ? "taxas e impostos"
+          : "outros";
+
+      const items = Array.from(uniqueByPath.values()).map((row) => ({
+        companyName: row.empresa || "EMPRESA",
+        category: categoryToFolder(row.category_key),
+        filePath: row.file_path,
+      }));
+
       await downloadListedFilesZipWithCategory(items, "documentos", (percent) => setDownloadProgress(percent));
-      toast.success(`Download em ZIP iniciado para ${items.length} arquivo(s) da pagina atual.`);
+      toast.success(`Download em ZIP iniciado: ${items.length} arquivo(s) da lista.`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Erro ao gerar ZIP.";
       if (msg.includes("Rota não encontrada") || msg.includes("404")) {
@@ -272,11 +287,11 @@ export default function DocumentosPage() {
             <Button
               type="button"
               onClick={handleZipDownload}
-              disabled={downloadingZip || !canDownload || pageDocuments.filter((item) => item.file_path).length === 0}
+              disabled={downloadingZip || !canDownload || pageDocuments.filter((item) => item.file_path && String(item.file_path).trim()).length === 0}
               className="min-h-[44px] rounded-xl px-4 py-3 text-sm"
             >
               <FileArchive className="mr-2 h-4 w-4" />
-              {downloadingZip ? "Gerando ZIP..." : "Baixar ZIP da pagina"}
+              {downloadingZip ? "Gerando ZIP..." : "Baixar ZIP da lista"}
             </Button>
           </div>
         </div>

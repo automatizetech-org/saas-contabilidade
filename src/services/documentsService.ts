@@ -134,6 +134,31 @@ export async function getUnifiedDocumentsPage(filters: UnifiedDocumentFilters): 
   return parseCursorPayload(data, mapUnifiedRpcRow)
 }
 
+export type ZipPathRow = { file_path: string; empresa: string; category_key: string }
+
+/** Retorna apenas file_path, empresa e category_key de documentos que batem com os filtros (sem cursor). */
+export async function getUnifiedDocumentsZipPaths(
+  filters: Omit<UnifiedDocumentFilters, "cursor" | "limit">,
+  limitCount = 50000
+): Promise<ZipPathRow[]> {
+  const { data, error } = await supabase.rpc("get_document_rows_zip_paths", {
+    company_ids: filters.companyIds?.length ? filters.companyIds : null,
+    category_filter: filters.category && filters.category !== "Todos" ? filters.category : null,
+    file_kind: filters.fileKind && filters.fileKind !== "Todos" ? filters.fileKind.toLowerCase() : null,
+    search_text: filters.search ?? null,
+    date_from: filters.dateFrom || null,
+    date_to: filters.dateTo || null,
+    limit_count: limitCount,
+  })
+  if (error) throw error
+  const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
+  return (arr as any[]).map((row: any) => ({
+    file_path: String(row?.file_path ?? "").trim(),
+    empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
+    category_key: String(row?.category_key ?? "").trim() || "outros",
+  })).filter((r) => r.file_path.length > 0)
+}
+
 type FiscalListRow = {
   id: string
   company_id: string
@@ -398,4 +423,30 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
       refreshAt: null,
     }
   }
+}
+
+const FISCAL_ZIP_PAGE_LIMIT = 500
+const FISCAL_ZIP_MAX_ITEMS = 50000
+
+/** Coleta todos os IDs (com file_path) da lista fiscal conforme os filtros, paginando em lotes. Para ZIP da lista inteira. */
+export async function getFiscalDetailDocumentIdsForZip(
+  filters: Omit<FiscalDetailPageFilters, "cursor" | "limit">
+): Promise<string[]> {
+  const ids: string[] = []
+  let cursor: CursorPageToken | null = null
+  do {
+    const result = await getFiscalDetailDocumentsPage({
+      ...filters,
+      cursor,
+      limit: FISCAL_ZIP_PAGE_LIMIT,
+    })
+    for (const row of result.items) {
+      if (row.file_path && String(row.file_path).trim() && ids.length < FISCAL_ZIP_MAX_ITEMS) {
+        ids.push(row.id)
+      }
+    }
+    if (!result.hasMore || !result.nextCursor || ids.length >= FISCAL_ZIP_MAX_ITEMS) break
+    cursor = result.nextCursor
+  } while (true)
+  return [...new Set(ids)]
 }

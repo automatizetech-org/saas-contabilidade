@@ -1,6 +1,6 @@
-import { ReactNode } from "react";
 import { cn } from "@/utils";
 import { LucideIcon } from "lucide-react";
+import { AnimatedNumber } from "@/components/dashboard/AnimatedNumber";
 
 interface StatsCardProps {
   title: string;
@@ -11,9 +11,25 @@ interface StatsCardProps {
   description?: string;
   className?: string;
   delay?: number;
+  /** Se false, desativa a animação de troca de número para este card. Default true. */
+  animateValue?: boolean;
 }
 
-export function StatsCard({ title, value, change, changeType = "neutral", icon: Icon, description, className, delay = 0 }: StatsCardProps) {
+function isNumericValue(v: string | number): boolean {
+  if (typeof v === "number") return true;
+  const s = String(v).trim();
+  if (s === "" || s === "—" || s === "-") return false;
+  return /^-?\d[\d.,\s]*$/.test(s) || (!Number.isNaN(parseFloat(s)) && !/[R$%kM]/.test(s));
+}
+
+export function StatsCard({ title, value, change, changeType = "neutral", icon: Icon, description, className, delay = 0, animateValue = true }: StatsCardProps) {
+  const showAnimated = animateValue && isNumericValue(value);
+  const displayValue = showAnimated ? (
+    <AnimatedNumber value={value} format={(n) => n.toLocaleString("pt-BR")} className="text-xl sm:text-2xl md:text-3xl font-bold font-display tracking-tight truncate" />
+  ) : (
+    <span className="text-xl sm:text-2xl md:text-3xl font-bold font-display tracking-tight truncate">{value}</span>
+  );
+
   return (
     <div
       className={cn(
@@ -25,7 +41,7 @@ export function StatsCard({ title, value, change, changeType = "neutral", icon: 
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1 min-w-0">
           <p className="text-xs sm:text-sm font-medium text-muted-foreground truncate">{title}</p>
-          <p className="text-xl sm:text-2xl md:text-3xl font-bold font-display tracking-tight truncate">{value}</p>
+          <p className="text-xl sm:text-2xl md:text-3xl font-bold font-display tracking-tight truncate">{displayValue}</p>
           {change && (
             <p className={cn(
               "text-xs font-medium truncate",

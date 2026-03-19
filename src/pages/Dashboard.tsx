@@ -15,6 +15,7 @@ import {
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { MiniChart, DonutChart } from "@/components/dashboard/Charts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
+import { AnimatedNumber } from "@/components/dashboard/AnimatedNumber";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { useBranding, getAnalyticsTitle } from "@/contexts/BrandingContext";
@@ -119,7 +120,7 @@ export default function Dashboard() {
             {docsByType.map((item) => (
               <div key={item.name} className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">{item.name}</span>
-                <span className="font-medium">{item.value}</span>
+                <span className="font-medium"><AnimatedNumber value={item.value} /></span>
               </div>
             ))}
           </div>
@@ -158,15 +159,15 @@ export default function Dashboard() {
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Total de documentos</span>
-              <span className="font-semibold">{overview?.executiveSummary.fiscal.totalDocumentos ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.fiscal.totalDocumentos ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Processados hoje</span>
-              <span className="font-semibold">{overview?.executiveSummary.fiscal.processadosHoje ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.fiscal.processadosHoje ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Empresas ativas</span>
-              <span className="font-semibold">{overview?.executiveSummary.fiscal.empresasAtivas ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.fiscal.empresasAtivas ?? 0} /></span>
             </div>
           </div>
         </GlassCard>
@@ -184,15 +185,15 @@ export default function Dashboard() {
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Guias geradas</span>
-              <span className="font-semibold">{overview?.executiveSummary.dp.guiasGeradas ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.dp.guiasGeradas ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Guias pendentes</span>
-              <span className="font-semibold">{overview?.executiveSummary.dp.guiasPendentes ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.dp.guiasPendentes ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Folha no mês</span>
-              <span className="font-semibold">{overview?.executiveSummary.dp.folhaProcessadaMes ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.dp.folhaProcessadaMes ?? 0} /></span>
             </div>
           </div>
         </GlassCard>
@@ -210,15 +211,15 @@ export default function Dashboard() {
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Balanços gerados</span>
-              <span className="font-semibold">{overview?.executiveSummary.contabil.balancosGerados ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.contabil.balancosGerados ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Empresas atualizadas</span>
-              <span className="font-semibold">{overview?.executiveSummary.contabil.empresasAtualizadas ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.contabil.empresasAtualizadas ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Pendentes</span>
-              <span className="font-semibold">{overview?.executiveSummary.contabil.pendentes ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.contabil.pendentes ?? 0} /></span>
             </div>
           </div>
         </GlassCard>
@@ -241,7 +242,7 @@ export default function Dashboard() {
                 .map((item) => (
                   <div key={item.name} className="flex items-center justify-between rounded-xl border border-border bg-background/70 px-3 py-2 text-xs">
                     <span className="capitalize text-muted-foreground">{item.name}</span>
-                    <span className="font-semibold">{item.value}</span>
+                    <span className="font-semibold"><AnimatedNumber value={item.value} /></span>
                   </div>
                 ))
             )}
@@ -298,7 +299,7 @@ export default function Dashboard() {
               overview?.topCompanies.map((company) => (
                 <div key={company.companyId} className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2 text-xs">
                   <span className="truncate text-muted-foreground">{company.companyName}</span>
-                  <span className="font-semibold">{company.total}</span>
+                  <span className="font-semibold"><AnimatedNumber value={company.total} /></span>
                 </div>
               ))
             )}
@@ -318,15 +319,15 @@ export default function Dashboard() {
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Eventos recentes</span>
-              <span className="font-semibold">{overview?.syncSummary.totalEventos ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.syncSummary.totalEventos ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Sucessos</span>
-              <span className="font-semibold">{overview?.syncSummary.sucessos ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.syncSummary.sucessos ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Falhas</span>
-              <span className="font-semibold">{overview?.syncSummary.falhas ?? 0}</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.syncSummary.falhas ?? 0} /></span>
             </div>
           </div>
         </GlassCard>

@@ -430,7 +430,7 @@ const handleDownloadZipByPaths = [
         const category = safeFolder(it.category || "outros");
         const filename = path.basename(realPath);
         const zipPath = `${companyName}/${category}/${filename}`;
-        toAdd.push({ fullPath: realPath, zipPath });
+        toAdd.push({ fullPath: realPath, zipPath, nameInZip: makeUniqueName(zipPath) });
       } catch (_) {
         /* ignora arquivo inexistente ou path inválido */
       }
@@ -452,8 +452,15 @@ const handleDownloadZipByPaths = [
       } catch (_) {}
     });
     archive.pipe(res);
-    for (const { fullPath, zipPath } of toAdd) {
-      archive.file(fullPath, { name: makeUniqueName(zipPath) });
+    const BATCH = 200;
+    for (let i = 0; i < toAdd.length; i += BATCH) {
+      const batch = toAdd.slice(i, i + BATCH);
+      const buffers = await Promise.all(
+        batch.map(({ fullPath }) => fs.promises.readFile(fullPath).catch(() => null))
+      );
+      for (let j = 0; j < batch.length; j++) {
+        if (buffers[j]) archive.append(buffers[j], { name: batch[j].nameInZip });
+      }
     }
     archive.finalize();
   },
@@ -619,8 +626,16 @@ app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireFo
     } catch (_) {}
   });
   archive.pipe(res);
-  for (const { fullPath, zipPath } of toAdd) {
-    archive.file(fullPath, { name: makeUniqueName(zipPath) });
+  const toAddWithNamesFiscal = toAdd.map((e) => ({ ...e, nameInZip: makeUniqueName(e.zipPath) }));
+  const BATCH_FISCAL = 200;
+  for (let i = 0; i < toAddWithNamesFiscal.length; i += BATCH_FISCAL) {
+    const batch = toAddWithNamesFiscal.slice(i, i + BATCH_FISCAL);
+    const buffers = await Promise.all(
+      batch.map(({ fullPath }) => fs.promises.readFile(fullPath).catch(() => null))
+    );
+    for (let j = 0; j < batch.length; j++) {
+      if (buffers[j]) archive.append(buffers[j], { name: batch[j].nameInZip });
+    }
   }
   archive.finalize();
 });
@@ -759,19 +774,20 @@ app.post("/api/hub-documents/download-zip", requireConnectorSecret, requireForwa
     toAdd.length = MAX_FILES_HUB_ZIP;
   }
 
-  const usedNames = new Set();
-  const makeUniqueName = (zipPath) => {
+  const usedNamesHub = new Set();
+  const makeUniqueNameHub = (zipPath) => {
     let n = zipPath;
     let i = 0;
-    while (usedNames.has(n)) {
+    while (usedNamesHub.has(n)) {
       i++;
       const ext = path.posix.extname(zipPath);
       const base = zipPath.slice(0, zipPath.length - ext.length);
       n = `${base} (${i})${ext}`;
     }
-    usedNames.add(n);
+    usedNamesHub.add(n);
     return n;
   };
+  const toAddWithNamesHub = toAdd.map((e) => ({ ...e, nameInZip: makeUniqueNameHub(e.zipPath) }));
 
   res.setHeader("Content-Type", "application/zip");
   const suffix = typeof req.body?.filename_suffix === "string" ? req.body.filename_suffix.trim() : "";
@@ -785,8 +801,15 @@ app.post("/api/hub-documents/download-zip", requireConnectorSecret, requireForwa
     try { archive.abort(); } catch (_) {}
   });
   archive.pipe(res);
-  for (const { fullPath, zipPath } of toAdd) {
-    archive.file(fullPath, { name: makeUniqueName(zipPath) });
+  const BATCH_HUB = 200;
+  for (let i = 0; i < toAddWithNamesHub.length; i += BATCH_HUB) {
+    const batch = toAddWithNamesHub.slice(i, i + BATCH_HUB);
+    const buffers = await Promise.all(
+      batch.map(({ fullPath }) => fs.promises.readFile(fullPath).catch(() => null))
+    );
+    for (let j = 0; j < batch.length; j++) {
+      if (buffers[j]) archive.append(buffers[j], { name: batch[j].nameInZip });
+    }
   }
   archive.finalize();
 });
