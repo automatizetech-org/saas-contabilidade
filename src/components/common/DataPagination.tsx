@@ -1,4 +1,3 @@
-import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Pagination,
@@ -35,10 +34,9 @@ export function DataPagination({
 }: DataPaginationProps) {
   if (totalItems <= 0) return null;
 
-  const safeTotalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safeTotalPages = Math.max(1, Number(totalPages) ?? Math.ceil(totalItems / pageSize));
   const isLastPage = currentPage >= safeTotalPages;
   const isFirstPage = currentPage <= 1;
-  const canGoToLast = safeTotalPages > 1 && !isLastPage;
 
   return (
     <div className="flex flex-col gap-3 border-t border-border bg-muted/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between min-w-0">
@@ -65,20 +63,6 @@ export function DataPagination({
         <Pagination className="mx-0 w-auto justify-start min-w-0">
           <PaginationContent className="flex-wrap gap-1">
             <PaginationItem>
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                className="h-8 gap-0.5 px-2 text-xs"
-                onClick={() => onPageChange(1)}
-                disabled={isFirstPage}
-                aria-label="Primeira página"
-              >
-                <ChevronsLeft className="h-4 w-4" />
-                <span className="hidden sm:inline">Primeira</span>
-              </Button>
-            </PaginationItem>
-            <PaginationItem>
               <PaginationPrevious
                 href="#"
                 onClick={(e) => {
@@ -102,20 +86,6 @@ export function DataPagination({
                 }}
                 className={isLastPage ? "pointer-events-none opacity-50" : ""}
               />
-            </PaginationItem>
-            <PaginationItem>
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                className="h-8 gap-0.5 px-2 text-xs shrink-0"
-                onClick={() => canGoToLast && onPageChange(safeTotalPages)}
-                disabled={!canGoToLast}
-                aria-label="Última página"
-              >
-                <span className="hidden sm:inline">Última</span>
-                <ChevronsRight className="h-4 w-4" />
-              </Button>
             </PaginationItem>
           </PaginationContent>
         </Pagination>

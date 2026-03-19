@@ -1,4 +1,3 @@
-import { ChevronsLeft, ChevronsRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Pagination,
@@ -63,19 +62,6 @@ export function CursorPagination({
         <Pagination className="mx-0 w-auto justify-start">
           <PaginationContent>
             <PaginationItem>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-0.5 px-2 text-xs"
-                onClick={onFirst}
-                disabled={currentPage <= 1}
-                aria-label="Primeira página"
-              >
-                <ChevronsLeft className="h-4 w-4" />
-                <span className="hidden sm:inline">Primeira</span>
-              </Button>
-            </PaginationItem>
-            <PaginationItem>
               <PaginationPrevious
                 href="#"
                 onClick={(e) => {
@@ -99,20 +85,6 @@ export function CursorPagination({
                 }}
                 className={!hasMore ? "pointer-events-none opacity-50" : ""}
               />
-            </PaginationItem>
-            <PaginationItem>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-0.5 px-2 text-xs shrink-0"
-                disabled={!hasMore}
-                onClick={onNext}
-                aria-label="Avançar até a última página"
-                title={hasMore ? "Avançar páginas (listagem por cursor)" : "Fim da lista"}
-              >
-                <span className="hidden sm:inline">Última</span>
-                <ChevronsRight className="h-4 w-4" />
-              </Button>
             </PaginationItem>
           </PaginationContent>
         </Pagination>
