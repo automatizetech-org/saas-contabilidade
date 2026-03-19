@@ -412,14 +412,47 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
     })
 
     const ordered = [...filtered].sort((left, right) => String(right.document_date ?? right.created_at).localeCompare(String(left.document_date ?? left.created_at)))
+
+    const deduped: FiscalListRow[] = []
+    const seenPath = new Set<string>()
+    for (const row of ordered) {
+      const fp = String(row.file_path ?? "").trim()
+      if (fp && seenPath.has(fp)) continue
+      if (fp) seenPath.add(fp)
+      deduped.push(row)
+    }
+
+    function rowBeforeCursor(row: FiscalListRow, cursor: CursorPageToken): boolean {
+      const sortDate = String(row.document_date ?? row.created_at ?? "").slice(0, 10)
+      const createdAt = String(row.created_at ?? "")
+      const id = String(row.id ?? "")
+      const cDate = (cursor.sortDate ?? "").slice(0, 10)
+      const cCreated = cursor.createdAt ?? ""
+      const cId = cursor.id ?? ""
+      if (sortDate !== cDate) return sortDate < cDate
+      if (createdAt !== cCreated) return createdAt < cCreated
+      return id < cId
+    }
+
+    const afterCursor = filters.cursor
+      ? deduped.filter((row) => rowBeforeCursor(row, filters.cursor!))
+      : deduped
+
+    const items = afterCursor.slice(0, filters.limit)
+    const lastItem = items[items.length - 1]
+    const hasMore = afterCursor.length > filters.limit
+    const nextCursor = hasMore && lastItem
+      ? {
+          sortDate: String(lastItem.document_date ?? lastItem.created_at ?? "").slice(0, 10),
+          createdAt: String(lastItem.created_at ?? ""),
+          id: String(lastItem.id ?? ""),
+        }
+      : null
+
     return {
-      items: ordered.slice(0, filters.limit),
-      nextCursor: ordered.length > filters.limit ? {
-        sortDate: String(ordered[filters.limit - 1]?.document_date ?? ordered[filters.limit - 1]?.created_at ?? "").slice(0, 10),
-        createdAt: String(ordered[filters.limit - 1]?.created_at ?? ""),
-        id: String(ordered[filters.limit - 1]?.id ?? ""),
-      } : null,
-      hasMore: ordered.length > filters.limit,
+      items,
+      nextCursor,
+      hasMore,
       refreshAt: null,
     }
   }
@@ -459,7 +492,40 @@ export type FiscalZipPathRow = {
   empresa: string
 }
 
-/** Coleta todos os `file_path` (e `empresa`) do cursor fiscal conforme os filtros, para ZIP da lista inteira. */
+const FISCAL_ZIP_RPC_LIMIT = 50000
+
+/**
+ * Uma única RPC para listar paths do ZIP fiscal (NFS/NFE-NFC). Muito mais rápido que paginar.
+ * Segurança: mesma do cursor (office_id, company_ids, filtros). Limite 50000.
+ */
+export async function getFiscalDetailDocumentZipPathsRpc(
+  filters: Omit<FiscalDetailPageFilters, "cursor" | "limit">
+): Promise<FiscalZipPathRow[]> {
+  const kind = filters.kind
+  if (kind !== "nfs" && kind !== "nfe-nfc") return []
+  const detailKind = kind === "nfe-nfc" ? "NFE_NFC" : "NFS"
+  const { data, error } = await supabase.rpc("get_fiscal_detail_document_zip_paths", {
+    detail_kind: detailKind,
+    company_ids: filters.companyIds?.length ? filters.companyIds : null,
+    search_text: filters.search ?? null,
+    date_from: filters.dateFrom || null,
+    date_to: filters.dateTo || null,
+    file_kind: filters.fileKind && filters.fileKind !== "all" ? filters.fileKind : null,
+    origem_filter: filters.origem && filters.origem !== "all" ? filters.origem : null,
+    modelo_filter: filters.modelo && filters.modelo !== "all" ? filters.modelo : null,
+    limit_count: FISCAL_ZIP_RPC_LIMIT,
+  })
+  if (error) throw error
+  const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
+  return (arr as any[])
+    .map((row: any) => ({
+      file_path: String(row?.file_path ?? "").trim(),
+      empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
+    }))
+    .filter((r) => r.file_path.length > 0)
+}
+
+/** Coleta todos os `file_path` (e `empresa`) do cursor fiscal conforme os filtros, para ZIP da lista inteira. Fallback quando a RPC de ZIP não está disponível. */
 export async function getFiscalDetailDocumentPathsForZip(
   filters: Omit<FiscalDetailPageFilters, "cursor" | "limit">
 ): Promise<FiscalZipPathRow[]> {

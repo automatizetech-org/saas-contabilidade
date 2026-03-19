@@ -6,10 +6,10 @@ import { CursorPagination } from "@/components/common/CursorPagination";
 import { useParams } from "react-router-dom";
 import { FileText, FileDown, CalendarDays, Download, AlertCircle, FileArchive, DollarSign, Calendar, Medal } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
-import { getCertidoesOverviewSummary, getFiscalDetailDocumentPathsForZip, getFiscalDetailDocumentsPage, getFiscalDetailSummary, getUnifiedDocumentsZipPaths, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
+import { getCertidoesOverviewSummary, getFiscalDetailDocumentPathsForZip, getFiscalDetailDocumentZipPathsRpc, getFiscalDetailDocumentsPage, getFiscalDetailSummary, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
 import { downloadFiscalDocument, downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
@@ -389,20 +389,6 @@ export default function FiscalDetailPage() {
 
   const currentCursor = cursorHistory[currentPage - 1] ?? null;
 
-  const { data: detailSummary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["fiscal-detail-summary", kind, companyFilter, resolvedDateFrom, resolvedDateTo],
-    queryFn: () =>
-      getFiscalDetailSummary({
-        kind,
-        companyIds: companyFilter,
-        dateFrom: resolvedDateFrom || undefined,
-        dateTo: resolvedDateTo || undefined,
-      }),
-    enabled: !isObrigacao,
-    refetchInterval: () => getVisibilityAwareRefetchInterval(),
-    refetchIntervalInBackground: true,
-  });
-
   const { data: documentsPage, isLoading: documentsLoading } = useQuery({
     queryKey: ["fiscal-detail-page", kind, companyFilter, search, resolvedDateFrom, resolvedDateTo, fileKind, origem, modelo, pageSize, currentPage, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
@@ -419,6 +405,25 @@ export default function FiscalDetailPage() {
         limit: pageSize,
       }),
     enabled: !isObrigacao,
+    // Mantém a tabela com os dados antigos durante refetch (polling), evitando "Carregando..."
+    placeholderData: keepPreviousData,
+    refetchInterval: () => getVisibilityAwareRefetchInterval(),
+    refetchIntervalInBackground: true,
+  });
+
+  const { data: detailSummary, isLoading: summaryLoading } = useQuery({
+    queryKey: ["fiscal-detail-summary", kind, companyFilter, resolvedDateFrom, resolvedDateTo],
+    queryFn: () =>
+      getFiscalDetailSummary({
+        kind,
+        companyIds: companyFilter,
+        dateFrom: resolvedDateFrom || undefined,
+        dateTo: resolvedDateTo || undefined,
+        // `limit` é exigido pelo tipo, mas a RPC/consulta de summary não depende dele.
+        limit: 50_000,
+      }),
+    // Evita disputar banda/CPU com o carregamento da tabela.
+    enabled: !isObrigacao && !documentsLoading,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
@@ -426,7 +431,7 @@ export default function FiscalDetailPage() {
   const nfsStatsQuery = useQuery({
     queryKey: ["nfs-stats", companyFilter, resolvedDateFrom, resolvedDateTo],
     queryFn: () => getNfsStatsByDateRange(companyFilter, resolvedDateFrom, resolvedDateTo),
-    enabled: isNfs && !!resolvedDateFrom && !!resolvedDateTo,
+    enabled: isNfs && !!resolvedDateFrom && !!resolvedDateTo && !documentsLoading,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
@@ -445,13 +450,13 @@ export default function FiscalDetailPage() {
   const nfsPrevStatsQuery = useQuery({
     queryKey: ["nfs-stats-prev", companyFilter, prevPeriod?.first, prevPeriod?.last],
     queryFn: () => getNfsStatsByDateRange(companyFilter, prevPeriod!.first, prevPeriod!.last),
-    enabled: Boolean(prevPeriod?.first && prevPeriod?.last),
+    enabled: Boolean(prevPeriod?.first && prevPeriod?.last) && !documentsLoading,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
 
   const pageItems = documentsPage?.items ?? [];
-  const hasMore = documentsPage?.hasMore ?? false;
+  const hasMore = Boolean(documentsPage?.nextCursor);
   const summaryCards = detailSummary?.cards ?? {
     totalDocuments: 0,
     availableDocuments: 0,
@@ -478,6 +483,9 @@ export default function FiscalDetailPage() {
       if (kind === "certidoes") {
         if (!row.file_path) throw new Error("Arquivo indisponivel.");
         await downloadServerFileByPath(row.file_path, getSuggestedName(row.file_path, "certidao.pdf"));
+      } else if (row.file_path && (isNfs || isNfeNfc)) {
+        await downloadServerFileByPath(row.file_path, getSuggestedName(row.file_path, row.chave || "documento"));
+        markFiscalDocumentDownloaded(row.id).catch(() => {});
       } else {
         await downloadFiscalDocument(row.id, getSuggestedName(row.file_path, row.chave || "documento"));
         await markFiscalDocumentDownloaded(row.id);
@@ -624,39 +632,33 @@ export default function FiscalDetailPage() {
                   setDownloadingZip(true);
                   setDownloadProgress(0);
                   try {
-                    // Mesma lógica de /documentos: uma RPC + download-zip-by-paths (rápido).
-                    const fileKindFilter: "Todos" | "XML" | "PDF" =
-                      fileKind === "all" ? "Todos" : fileKind === "xml" ? "XML" : "PDF";
-                    const zipPaths = await getUnifiedDocumentsZipPaths(
-                      {
-                        companyIds: companyFilter ?? undefined,
-                        category: kind === "nfs" ? "nfs" : "nfe_nfc",
-                        fileKind: fileKindFilter,
-                        search: search || undefined,
-                        dateFrom: resolvedDateFrom || undefined,
-                        dateTo: resolvedDateTo || undefined,
-                      },
-                      50_000
-                    );
+                    const filters = {
+                      kind,
+                      companyIds: companyFilter ?? undefined,
+                      search: search || undefined,
+                      dateFrom: resolvedDateFrom || undefined,
+                      dateTo: resolvedDateTo || undefined,
+                      fileKind,
+                      origem: isNfs ? origem : undefined,
+                      modelo: isNfeNfc ? modelo : undefined,
+                    };
+                    let zipPaths: Array<{ file_path: string; empresa: string }>;
+                    try {
+                      zipPaths = await getFiscalDetailDocumentZipPathsRpc(filters);
+                    } catch {
+                      zipPaths = await getFiscalDetailDocumentPathsForZip(filters);
+                    }
 
                     if (zipPaths.length === 0) {
                       toast.error("Nenhum documento com arquivo disponivel para os filtros atuais.");
                       return;
                     }
 
-                    const uniqueByPath = new Map<string, (typeof zipPaths)[number]>();
-                    for (const row of zipPaths) {
-                      if (!row.file_path || uniqueByPath.has(row.file_path)) continue;
-                      uniqueByPath.set(row.file_path, row);
-                    }
-
-                    const categoryToFolder = (key: string) =>
-                      key === "nfs" ? "nfs" : key === "nfe_nfc" ? "nfe-nfc" : "outros";
-
-                    const items = Array.from(uniqueByPath.values()).map((row) => ({
-                      companyName: row.empresa || "EMPRESA",
-                      category: categoryToFolder(row.category_key),
-                      filePath: row.file_path,
+                    const category = kind === "nfs" ? "nfs" : "nfe-nfc";
+                    const items = zipPaths.map((r) => ({
+                      companyName: r.empresa || "EMPRESA",
+                      category,
+                      filePath: r.file_path,
                     }));
 
                     const zipSuffix = kind === "nfs" ? "nfs" : "nfe-nfc";
@@ -677,7 +679,7 @@ export default function FiscalDetailPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          {documentsLoading ? (
+          {pageItems.length === 0 && documentsLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
           ) : pageItems.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhum documento encontrado.</div>

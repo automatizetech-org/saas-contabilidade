@@ -7,7 +7,16 @@ import { AppRoutes } from "@/routes/AppRoutes";
 import { SelectedCompaniesProvider } from "@/hooks/useSelectedCompanies";
 import { BrandingProvider } from "@/contexts/BrandingContext";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Mantém dados cacheados e reduz "telas de loading" enquanto refaz (polling/refetch).
+      staleTime: 5 * 60_000,
+      gcTime: 24 * 60 * 60_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

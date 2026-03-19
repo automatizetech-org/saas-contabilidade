@@ -8,8 +8,13 @@ import { useCompanies } from "@/hooks/useCompanies";
 import { pathToPanelKey } from "@/lib/panelAccess";
 import { cn } from "@/utils";
 import { Moon, Sun, PanelLeftClose, PanelLeft } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/services/supabaseClient";
+import { useQueryClient } from "@tanstack/react-query";
+import { getFiscalDetailDocumentsPage, getFiscalDetailSummary, type FiscalDetailKind } from "@/services/documentsService";
+import { getNfsStatsByDateRange } from "@/services/dashboardService";
+import { persistQueryClient } from "@tanstack/query-persist-client-core";
+import { createIndexedDBPersisterForOffice } from "@/lib/reactQueryPersistenceIndexedDB";
 
 const SIDEBAR_OPEN_KEY = "sidebar-open";
 
@@ -19,6 +24,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const { isSuperAdmin, profile } = useProfile();
   const { selectedCompanyIds } = useSelectedCompanyIds();
   const { data: companies = [] } = useCompanies();
+  const queryClient = useQueryClient();
+  const [prefetchedForKey, setPrefetchedForKey] = useState<string | null>(null);
+  const persistenceRef = useRef<{ officeId: string; unsubscribe: () => void } | null>(null);
   const panelKey = pathToPanelKey(location.pathname);
   const noAccess =
     !isSuperAdmin &&
@@ -53,7 +61,106 @@ export function AppLayout({ children }: { children: ReactNode }) {
     });
   }, [profile?.office_id, profile?.office_status, profile?.office_name, navigate]);
 
+  // Persistência do cache do React Query em IndexedDB (por office_id).
+  // Isso faz com que, após login/recarregar, as telas apareçam imediatamente com dados do cache.
+  useEffect(() => {
+    if (!profile?.office_id) return;
+    if (profile.office_status === "inactive") return;
+
+    const officeId = profile.office_id;
+    if (persistenceRef.current?.officeId === officeId) return;
+
+    // Para trocar de escritório, limpamos apenas o cache em memória.
+    queryClient.clear();
+    if (persistenceRef.current) {
+      persistenceRef.current.unsubscribe();
+      persistenceRef.current = null;
+    }
+
+    const persister = createIndexedDBPersisterForOffice(officeId);
+    const buster = officeId;
+    const [unsubscribe] = persistQueryClient({
+      queryClient,
+      persister,
+      buster,
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 dias
+    });
+
+    persistenceRef.current = { officeId, unsubscribe };
+
+    return () => {
+      unsubscribe();
+    };
+  }, [profile?.office_id, profile?.office_status, queryClient]);
+
+  // Warm cache após login: acelera a primeira visita ao /fiscal/nfs (e cards/quantidades).
+  useEffect(() => {
+    if (!profile?.office_id || profile.office_status === "inactive") return;
+
+    const companyFilterKey = selectedCompanyIds.length ? selectedCompanyIds.join(",") : "all";
+    const cacheKey = `${profile.office_id}|${companyFilterKey}`;
+    if (prefetchedForKey === cacheKey) return;
+    setPrefetchedForKey(cacheKey);
+
+    const now = new Date();
+    const first = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+    const kind: FiscalDetailKind = "nfs";
+    const companyIdsFilter = selectedCompanyIds.length ? selectedCompanyIds : null;
+    const prev = new Date(Number(first.slice(0, 4)), Number(first.slice(5, 7)) - 2, 1);
+    const prevFirst = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`;
+    const prevLast = new Date(prev.getFullYear(), prev.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+    // Tabela + contagens padrão (último mês / mês corrente).
+    queryClient.prefetchQuery({
+      queryKey: ["fiscal-detail-page", kind, companyIdsFilter, "", first, last, "all", "all", "all", 10, 1, null, null, null],
+      queryFn: () =>
+        getFiscalDetailDocumentsPage({
+          kind,
+          companyIds: companyIdsFilter,
+          search: "",
+          dateFrom: first,
+          dateTo: last,
+          fileKind: "all",
+          origem: "all",
+          modelo: "all",
+          certidaoTipo: undefined,
+          cursor: null,
+          limit: 10,
+        }),
+    });
+
+    queryClient.prefetchQuery({
+      queryKey: ["fiscal-detail-summary", kind, companyIdsFilter, first, last],
+      queryFn: () =>
+        getFiscalDetailSummary({
+          kind,
+          companyIds: companyIdsFilter,
+          dateFrom: first,
+          dateTo: last,
+          limit: 50_000,
+        }),
+    });
+
+    queryClient.prefetchQuery({
+      queryKey: ["nfs-stats", companyIdsFilter, first, last],
+      queryFn: () => getNfsStatsByDateRange(companyIdsFilter, first, last),
+    });
+
+    queryClient.prefetchQuery({
+      queryKey: ["nfs-stats-prev", companyIdsFilter, prevFirst, prevLast],
+      queryFn: () => getNfsStatsByDateRange(companyIdsFilter, prevFirst, prevLast),
+    });
+  }, [profile?.office_id, profile?.office_status, selectedCompanyIds, prefetchedForKey, queryClient]);
+
   const handleSignOut = async () => {
+    // Limpa o cache em memória e para a persistência em background.
+    queryClient.clear();
+    if (persistenceRef.current) {
+      persistenceRef.current.unsubscribe();
+      persistenceRef.current = null;
+    }
     await supabase.auth.signOut();
     navigate("/login", { replace: true });
   };
