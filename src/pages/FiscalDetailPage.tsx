@@ -290,7 +290,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
           </div>
         </div>
         <div className="overflow-x-auto">
-          {overviewLoading || tableLoading ? (
+          {tableLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando certidoes...</div>
           ) : items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma certidao encontrada.</div>
@@ -677,7 +677,7 @@ export default function FiscalDetailPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          {summaryLoading || documentsLoading ? (
+          {documentsLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
           ) : pageItems.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhum documento encontrado.</div>
