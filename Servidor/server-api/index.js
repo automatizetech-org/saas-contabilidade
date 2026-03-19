@@ -1158,7 +1158,11 @@ app.use(whatsappProxyViaApiPrefix);
 app.use((req, res) => {
   const path = req.path || req.url || "";
   console.warn("[server-api] 404 Rota não encontrada:", req.method, path, "| url:", req.originalUrl || req.url);
-  res.status(404).json({ error: "Rota não encontrada" });
+  const hint =
+    String(path || "").includes("download-zip-by-paths") || String(req.originalUrl || "").includes("download-zip-by-paths")
+      ? " Se esperava baixar ZIP: reinicie o Servidor (start.bat ou pm2 restart server-api) para carregar o código novo."
+      : "";
+  res.status(404).json({ error: "Rota não encontrada" + hint });
 });
 
 /** Monitoramento automático: quando novos arquivos chegam em EMPRESAS, sincroniza com Supabase. */
