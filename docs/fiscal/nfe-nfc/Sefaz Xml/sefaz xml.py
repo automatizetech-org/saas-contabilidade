@@ -270,6 +270,9 @@ def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
         headers = {}
         if "ngrok" in url_base.lower():
             headers["ngrok-skip-browser-warning"] = "true"
+        connector_secret = (os.getenv("CONNECTOR_SECRET") or "").strip()
+        if connector_secret:
+            headers["Authorization"] = f"Bearer {hashlib.sha256(connector_secret.encode('utf-8')).hexdigest()}"
         response = requests.get(
             f"{url_base}/api/robot-config",
             params={"technical_id": ROBOT_TECHNICAL_ID},
@@ -313,7 +316,7 @@ def get_robot_segment_under_company_parts() -> List[str]:
     Retorna os segmentos do robô para usar *dentro* da pasta da empresa.
 
     Ex.: se o dashboard usa segment_path = "FISCAL/NFE-NFC",
-    queremos salvar em: ...\\EMPRESAS\\<EMPRESA>\\FISCAL\\NFE-NFC\\...
+    queremos salvar em: ...\\<EMPRESA>\\FISCAL\\NFE-NFC\\...
     (respeita a estrutura 3D do dashboard).
     """
     try:

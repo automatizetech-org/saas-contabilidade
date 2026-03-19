@@ -1,4 +1,4 @@
-import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket
+import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket, hashlib
 import math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -701,18 +701,25 @@ def get_robot_supabase(preferences: Optional[Dict[str, Any]] = None) -> Tuple[Op
 _robot_api_config: Optional[Dict[str, Any]] = None
 
 
+def build_server_api_headers(url_base: str) -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if "ngrok" in url_base.lower():
+        headers["ngrok-skip-browser-warning"] = "true"
+    connector_secret = (os.environ.get("CONNECTOR_SECRET") or "").strip()
+    if connector_secret:
+        headers["Authorization"] = f"Bearer {hashlib.sha256(connector_secret.encode('utf-8')).hexdigest()}"
+    return headers
+
+
 def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
     url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
     if not url_base:
         return None
     try:
-        headers = {}
-        if "ngrok" in url_base.lower():
-            headers["ngrok-skip-browser-warning"] = "true"
         response = requests.get(
             f"{url_base}/api/robot-config",
             params={"technical_id": ROBOT_TECHNICAL_ID},
-            headers=headers,
+            headers=build_server_api_headers(url_base),
             timeout=15,
         )
         response.raise_for_status()

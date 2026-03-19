@@ -43,7 +43,9 @@ async function loadBasePathFromSupabase() {
   const url = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) {
-    console.warn("[fiscal-watcher] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente no .env; vínculo com escritório não será carregado.");
+    console.warn(
+      "[fiscal-watcher] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente no .env; vínculo com escritório não será carregado.",
+    );
     return;
   }
   try {
@@ -56,11 +58,18 @@ async function loadBasePathFromSupabase() {
         .eq("secret_hash", CONNECTOR_SECRET_HASH)
         .maybeSingle();
       if (credError) {
-        console.error("[fiscal-watcher] Erro ao buscar credential:", credError.message);
+        console.error(
+          "[fiscal-watcher] Erro ao buscar credential:",
+          credError.message,
+        );
         return;
       }
       if (!credential?.office_server_id) {
-        console.warn("[fiscal-watcher] Nenhum credential com hash", hashPreview, "no Supabase. Verifique CONNECTOR_SECRET no .env e office_server_credentials (secret_hash).");
+        console.warn(
+          "[fiscal-watcher] Nenhum credential com hash",
+          hashPreview,
+          "no Supabase. Verifique CONNECTOR_SECRET no .env e office_server_credentials (secret_hash).",
+        );
         return;
       }
       const { data: officeServer, error: osError } = await supabase
@@ -69,7 +78,10 @@ async function loadBasePathFromSupabase() {
         .eq("id", credential.office_server_id)
         .maybeSingle();
       if (osError) {
-        console.error("[fiscal-watcher] Erro ao buscar office_server:", osError.message);
+        console.error(
+          "[fiscal-watcher] Erro ao buscar office_server:",
+          osError.message,
+        );
         return;
       }
       if (officeServer?.id) {
@@ -81,19 +93,48 @@ async function loadBasePathFromSupabase() {
           .eq("id", OFFICE_ID)
           .maybeSingle();
         OFFICE_NAME = office?.name ?? null;
-        if (!ENV_BASE_PATH && officeServer?.base_path && String(officeServer.base_path).trim()) {
+        if (
+          !ENV_BASE_PATH &&
+          officeServer?.base_path &&
+          String(officeServer.base_path).trim()
+        ) {
           BASE_PATH = String(officeServer.base_path).trim();
         }
         return;
       }
     }
     if (!ENV_BASE_PATH) {
-      const { data } = await supabase.from("admin_settings").select("value").eq("key", "base_path").maybeSingle();
-      if (data?.value && String(data.value).trim()) BASE_PATH = String(data.value).trim();
+      const { data } = await supabase
+        .from("admin_settings")
+        .select("value")
+        .eq("key", "base_path")
+        .maybeSingle();
+      if (data?.value && String(data.value).trim())
+        BASE_PATH = String(data.value).trim();
     }
   } catch (err) {
-    console.error("[fiscal-watcher] loadBasePathFromSupabase:", err?.message ?? err);
+    console.error(
+      "[fiscal-watcher] loadBasePathFromSupabase:",
+      err?.message ?? err,
+    );
   }
+}
+
+function createSupabaseReadClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const key = serviceKey || anonKey;
+  if (!supabaseUrl || !key) {
+    return null;
+  }
+  return createClient(supabaseUrl, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
 }
 
 function getBaseResolved() {
@@ -101,19 +142,27 @@ function getBaseResolved() {
 }
 
 function sha256Hex(value) {
-  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+  return createHash("sha256")
+    .update(String(value || ""), "utf8")
+    .digest("hex");
 }
 
 // Normaliza o segredo: remove espaços/quebras (evita .env com \r ou espaço) e aceita só hex quando for 64 chars
 const _rawSecret = String(process.env.CONNECTOR_SECRET || "").trim();
 const _cleanHex = _rawSecret.replace(/\s+/g, "").replace(/[^0-9a-fA-F]/g, "");
-const CONNECTOR_SECRET = _cleanHex.length === 64 ? _cleanHex.toLowerCase() : _rawSecret;
-const CONNECTOR_SECRET_HASH = CONNECTOR_SECRET ? sha256Hex(CONNECTOR_SECRET) : "";
+const CONNECTOR_SECRET =
+  _cleanHex.length === 64 ? _cleanHex.toLowerCase() : _rawSecret;
+const CONNECTOR_SECRET_HASH = CONNECTOR_SECRET
+  ? sha256Hex(CONNECTOR_SECRET)
+  : "";
 
 function safeTokenEqual(expected, received) {
   const expectedBuffer = Buffer.from(String(expected || ""), "utf8");
   const receivedBuffer = Buffer.from(String(received || ""), "utf8");
-  if (expectedBuffer.length === 0 || expectedBuffer.length !== receivedBuffer.length) {
+  if (
+    expectedBuffer.length === 0 ||
+    expectedBuffer.length !== receivedBuffer.length
+  ) {
     return false;
   }
   return timingSafeEqual(expectedBuffer, receivedBuffer);
@@ -210,7 +259,10 @@ function ensureSafeExistingDirectory(fullPath) {
 
 /** Dado path lógico (ex.: FISCAL/NFS), encontra date_rule no nó folha da árvore. */
 function findDateRuleByPath(nodes, pathLogical) {
-  const parts = pathLogical.split("/").map((p) => p.trim()).filter(Boolean);
+  const parts = pathLogical
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (parts.length === 0) return null;
   const byParentAndSlug = new Map();
   for (const n of nodes) {
@@ -244,7 +296,12 @@ const corsOptions = {
     return callback(null, false);
   },
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Office-User-JWT", "ngrok-skip-browser-warning"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Office-User-JWT",
+    "ngrok-skip-browser-warning",
+  ],
 };
 app.use(cors(corsOptions));
 
@@ -253,7 +310,7 @@ app.use(
     // API JSON — não aplicamos CSP aqui; isso é do frontend (Vercel).
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
-  })
+  }),
 );
 
 app.use(
@@ -262,7 +319,7 @@ app.use(
     limit: 300,
     standardHeaders: true,
     legacyHeaders: false,
-  })
+  }),
 );
 
 const heavyLimiter = rateLimit({
@@ -274,9 +331,13 @@ const heavyLimiter = rateLimit({
 
 function requireConnectorSecret(req, res, next) {
   if (!CONNECTOR_SECRET_HASH) {
-    return res.status(500).json({ error: "Conector da VM não configurado com CONNECTOR_SECRET." });
+    return res
+      .status(500)
+      .json({ error: "Conector da VM não configurado com CONNECTOR_SECRET." });
   }
-  const providedHash = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  const providedHash = String(req.headers.authorization || "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
   if (!providedHash || !safeTokenEqual(CONNECTOR_SECRET_HASH, providedHash)) {
     return res.status(401).json({ error: "Conector não autorizado" });
   }
@@ -301,7 +362,11 @@ async function validateSupabaseJwt(req, res, next) {
   try {
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
     });
     const { data, error } = await supabase.auth.getUser();
     if (error || !data?.user?.id) {
@@ -315,11 +380,19 @@ async function validateSupabaseJwt(req, res, next) {
 }
 
 // Não consumir o body nas rotas que o proxy repassa ao WhatsApp (senão o backend recebe body vazio e dá 408)
-const whatsappPaths = ["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"];
+const whatsappPaths = [
+  "/send",
+  "/status",
+  "/groups",
+  "/qr",
+  "/connect",
+  "/disconnect",
+];
 app.use((req, res, next) => {
   const p = req.path || "/";
   const normalized = p.startsWith("/api/") ? p.slice(4) : p; // compat com túnel que expõe apenas /api/*
-  const isWhatsApp = whatsappPaths.includes(normalized) || normalized.startsWith("/qr");
+  const isWhatsApp =
+    whatsappPaths.includes(normalized) || normalized.startsWith("/qr");
   if (isWhatsApp) return next();
   const limit = process.env.BODY_LIMIT || "25mb";
   express.json({ limit })(req, res, (err) => {
@@ -335,49 +408,69 @@ app.use((req, res, next) => {
 });
 
 /**
- * GET /api/files/list?path=EMPRESAS/Grupo Fleury/NFS
+ * GET /api/files/list?path=Grupo Fleury/NFS
  * Lista arquivos (XML, PDF) de uma pasta. Path é relativo a BASE_PATH.
  */
-app.get("/api/files/list", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, (req, res) => {
-  const relPath = req.query.path;
-  try {
-    const { resolved } = normalizeRelativePath(relPath);
-    ensureSafeExistingDirectory(resolved);
-    const entries = fs.readdirSync(resolved, { withFileTypes: true });
-    const files = entries
-      .filter((e) => e.isFile())
-      .filter((e) => /\.(xml|pdf)$/i.test(e.name))
-      .map((e) => ({
-        name: e.name,
-        ext: path.extname(e.name).toLowerCase(),
-        path: path.join(String(relPath), e.name).replace(/\\/g, "/"),
-      }));
-    return res.json({ files });
-  } catch (err) {
-    const status = err.statusCode || (err.code === "ENOENT" ? 404 : 500);
-    return res.status(status).json({ error: err.message });
-  }
-});
+app.get(
+  "/api/files/list",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  (req, res) => {
+    const relPath = req.query.path;
+    try {
+      const { resolved } = normalizeRelativePath(relPath);
+      ensureSafeExistingDirectory(resolved);
+      const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const files = entries
+        .filter((e) => e.isFile())
+        .filter((e) => /\.(xml|pdf)$/i.test(e.name))
+        .map((e) => ({
+          name: e.name,
+          ext: path.extname(e.name).toLowerCase(),
+          path: path.join(String(relPath), e.name).replace(/\\/g, "/"),
+        }));
+      return res.json({ files });
+    } catch (err) {
+      const status = err.statusCode || (err.code === "ENOENT" ? 404 : 500);
+      return res.status(status).json({ error: err.message });
+    }
+  },
+);
 
 /**
- * GET /api/files/download?path=EMPRESAS/Grupo Fleury/NFS/arquivo.xml
+ * GET /api/files/download?path=Grupo Fleury/NFS/arquivo.xml
  * Baixa um arquivo por path direto (para testes, sem JWT).
  */
-app.get("/api/files/download", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, (req, res) => {
-  const inputPath = req.query.path;
-  try {
-    const { resolved } = normalizeRelativePath(inputPath);
-    const { realPath } = ensureSafeExistingFile(resolved);
-    const filename = path.basename(realPath);
-    const ext = path.extname(filename).toLowerCase();
-    const contentType = ext === ".xml" ? "application/xml" : ext === ".pdf" ? "application/pdf" : "application/octet-stream";
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Content-Type", contentType);
-    fs.createReadStream(realPath).pipe(res);
-  } catch (err) {
-    return res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
+app.get(
+  "/api/files/download",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  (req, res) => {
+    const inputPath = req.query.path;
+    try {
+      const { resolved } = normalizeRelativePath(inputPath);
+      const { realPath } = ensureSafeExistingFile(resolved);
+      const filename = path.basename(realPath);
+      const ext = path.extname(filename).toLowerCase();
+      const contentType =
+        ext === ".xml"
+          ? "application/xml"
+          : ext === ".pdf"
+            ? "application/pdf"
+            : "application/octet-stream";
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
+      res.setHeader("Content-Type", contentType);
+      fs.createReadStream(realPath).pipe(res);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
 
 const MAX_FILES_ZIP_BY_PATHS = 50000;
 
@@ -392,13 +485,20 @@ const handleDownloadZipByPaths = [
   validateSupabaseJwt,
   heavyLimiter,
   async (req, res) => {
-    console.log("[server-api] POST download-zip-by-paths recebido, path:", req.path || req.url);
+    console.log(
+      "[server-api] POST download-zip-by-paths recebido, path:",
+      req.path || req.url,
+    );
     const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
     if (rawItems.length === 0) {
-      return res.status(400).json({ error: "Nenhum arquivo informado para o ZIP." });
+      return res
+        .status(400)
+        .json({ error: "Nenhum arquivo informado para o ZIP." });
     }
     if (rawItems.length > MAX_FILES_ZIP_BY_PATHS) {
-      return res.status(400).json({ error: `Limite de ${MAX_FILES_ZIP_BY_PATHS} arquivos por download. Selecione menos itens.` });
+      return res.status(400).json({
+        error: `Limite de ${MAX_FILES_ZIP_BY_PATHS} arquivos por download. Selecione menos itens.`,
+      });
     }
     const baseResolved = path.resolve(BASE_PATH);
     const toAdd = [];
@@ -421,7 +521,8 @@ const handleDownloadZipByPaths = [
         .replace(/\s+/g, " ")
         .trim() || "outros";
     for (const it of rawItems) {
-      const filePath = typeof it?.file_path === "string" ? it.file_path.trim() : "";
+      const filePath =
+        typeof it?.file_path === "string" ? it.file_path.trim() : "";
       if (!filePath) continue;
       try {
         const { resolved } = normalizeRelativePath(filePath);
@@ -430,18 +531,32 @@ const handleDownloadZipByPaths = [
         const category = safeFolder(it.category || "outros");
         const filename = path.basename(realPath);
         const zipPath = `${companyName}/${category}/${filename}`;
-        toAdd.push({ fullPath: realPath, zipPath, nameInZip: makeUniqueName(zipPath) });
+        toAdd.push({
+          fullPath: realPath,
+          zipPath,
+          nameInZip: makeUniqueName(zipPath),
+        });
       } catch (_) {
         /* ignora arquivo inexistente ou path inválido */
       }
     }
     if (toAdd.length === 0) {
-      return res.status(404).json({ error: "Nenhum arquivo válido encontrado no disco para a lista informada." });
+      return res.status(404).json({
+        error:
+          "Nenhum arquivo válido encontrado no disco para a lista informada.",
+      });
     }
     res.setHeader("Content-Type", "application/zip");
-    const suffix = typeof req.body?.filename_suffix === "string" ? req.body.filename_suffix.trim() : "";
-    const safeSuffix = suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
-    res.setHeader("Content-Disposition", `attachment; filename="documentos${safeSuffix}.zip"`);
+    const suffix =
+      typeof req.body?.filename_suffix === "string"
+        ? req.body.filename_suffix.trim()
+        : "";
+    const safeSuffix =
+      suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="documentos${safeSuffix}.zip"`,
+    );
     const archive = archiver("zip", { zlib: { level: 0 } });
     archive.on("error", (err) => {
       if (!res.headersSent) res.status(500).json({ error: err.message });
@@ -456,10 +571,13 @@ const handleDownloadZipByPaths = [
     for (let i = 0; i < toAdd.length; i += BATCH) {
       const batch = toAdd.slice(i, i + BATCH);
       const buffers = await Promise.all(
-        batch.map(({ fullPath }) => fs.promises.readFile(fullPath).catch(() => null))
+        batch.map(({ fullPath }) =>
+          fs.promises.readFile(fullPath).catch(() => null),
+        ),
       );
       for (let j = 0; j < batch.length; j++) {
-        if (buffers[j]) archive.append(buffers[j], { name: batch[j].nameInZip });
+        if (buffers[j])
+          archive.append(buffers[j], { name: batch[j].nameInZip });
       }
     }
     archive.finalize();
@@ -468,7 +586,10 @@ const handleDownloadZipByPaths = [
 app.post("/api/documents/download-zip-by-paths", ...handleDownloadZipByPaths);
 app.post("/documents/download-zip-by-paths", ...handleDownloadZipByPaths);
 /* Se o public_base_url do escritório terminar com /api, a Edge Function chama base_url + "/api/documents/...", resultando em /api/api/documents/... */
-app.post("/api/api/documents/download-zip-by-paths", ...handleDownloadZipByPaths);
+app.post(
+  "/api/api/documents/download-zip-by-paths",
+  ...handleDownloadZipByPaths,
+);
 /* Fallback: qualquer path que contenha download-zip-by-paths (ex.: proxy que reescreve a URL) */
 app.post(/\/.*download-zip-by-paths.*/, ...handleDownloadZipByPaths);
 
@@ -476,37 +597,50 @@ app.post(/\/.*download-zip-by-paths.*/, ...handleDownloadZipByPaths);
  * GET /api/fiscal-documents/:id/download
  * Baixa arquivo fiscal por ID (busca file_path no Supabase). Requer JWT.
  */
-app.get("/api/fiscal-documents/:id/download", requireConnectorSecret, requireForwardedUserJwt, async (req, res) => {
-  const token = getForwardedUserJwt(req);
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({ error: "Supabase não configurado" });
-  }
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  const { data: doc, error } = await supabase
-    .from("fiscal_documents")
-    .select("file_path")
-    .eq("id", req.params.id)
-    .single();
-  if (error || !doc?.file_path) {
-    return res.status(404).json({ error: "Documento não encontrado" });
-  }
-  try {
-    const { resolved } = normalizeRelativePath(doc.file_path);
-    const { realPath } = ensureSafeExistingFile(resolved);
-    const filename = path.basename(realPath);
-    const ext = path.extname(filename).toLowerCase();
-    const contentType = ext === ".xml" ? "application/xml" : ext === ".pdf" ? "application/pdf" : "application/octet-stream";
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Content-Type", contentType);
-    fs.createReadStream(realPath).pipe(res);
-  } catch (err) {
-    return res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
+app.get(
+  "/api/fiscal-documents/:id/download",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  async (req, res) => {
+    const token = getForwardedUserJwt(req);
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ error: "Supabase não configurado" });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: doc, error } = await supabase
+      .from("fiscal_documents")
+      .select("file_path")
+      .eq("id", req.params.id)
+      .single();
+    if (error || !doc?.file_path) {
+      return res.status(404).json({ error: "Documento não encontrado" });
+    }
+    try {
+      const { resolved } = normalizeRelativePath(doc.file_path);
+      const { realPath } = ensureSafeExistingFile(resolved);
+      const filename = path.basename(realPath);
+      const ext = path.extname(filename).toLowerCase();
+      const contentType =
+        ext === ".xml"
+          ? "application/xml"
+          : ext === ".pdf"
+            ? "application/pdf"
+            : "application/octet-stream";
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
+      res.setHeader("Content-Type", contentType);
+      fs.createReadStream(realPath).pipe(res);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
 
 /**
  * POST /api/fiscal-documents/download-zip
@@ -514,131 +648,186 @@ app.get("/api/fiscal-documents/:id/download", requireConnectorSecret, requireFor
  * envia o ZIP na resposta e apaga o arquivo temporário em seguida.
  * Body: { ids: string[] }. Requer JWT.
  */
-app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const token = getForwardedUserJwt(req);
-  const MAX_DOCS_PER_ZIP = 50000;
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id) => id && String(id).trim()) : [];
-  const companyIds = Array.isArray(req.body?.company_ids)
-    ? req.body.company_ids.filter((id) => id && String(id).trim())
-    : [];
-  const types = Array.isArray(req.body?.types) ? req.body.types.map((t) => String(t || "").trim().toUpperCase()).filter(Boolean) : [];
-  if (companyIds.length === 0 && ids.length === 0) {
-    return res.status(400).json({ error: "Nenhum documento/empresa selecionado para baixar." });
-  }
-  if (ids.length > MAX_DOCS_PER_ZIP) {
-    return res.status(400).json({ error: `Limite de ${MAX_DOCS_PER_ZIP} documentos por download. Selecione menos itens na lista.` });
-  }
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({ error: "Supabase não configurado" });
-  }
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  // Não depende de relacionamento (FK) fiscal_documents -> companies (pode não existir no schema cache).
-  let q = supabase.from("fiscal_documents").select("id, file_path, company_id");
-  if (companyIds.length > 0) q = q.in("company_id", companyIds);
-  else q = q.in("id", ids);
-  if (types.length > 0) q = q.in("type", types);
-  const { data: rows, error } = await q;
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-  let docs = (rows || []).filter((r) => r?.file_path && String(r.file_path).trim());
-  if (docs.length > MAX_DOCS_PER_ZIP) {
-    docs = docs.slice(0, MAX_DOCS_PER_ZIP);
-  }
-  const companyIdsInDocs = [...new Set(docs.map((d) => d.company_id).filter(Boolean))];
-  const companyNameById = new Map();
-  if (companyIdsInDocs.length > 0) {
-    try {
-      const { data: companies, error: companiesErr } = await supabase
-        .from("companies")
-        .select("id, name")
-        .in("id", companyIdsInDocs);
-      if (!companiesErr && Array.isArray(companies)) {
-        for (const c of companies) {
-          if (c?.id) companyNameById.set(c.id, String(c.name || "").trim());
-        }
-      }
-    } catch (_) {}
-  }
-  const baseResolved = path.resolve(BASE_PATH);
-  const toAdd = [];
-  for (const doc of docs) {
-    const fullPath = path.join(BASE_PATH, doc.file_path);
-    if (!path.resolve(fullPath).startsWith(baseResolved)) continue;
-    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
-    const filePathNormalized = String(doc.file_path || "").replace(/\\/g, "/");
-    const parts = filePathNormalized.split("/").filter(Boolean);
-    let companyFolder = "EMPRESA";
-    let restParts = parts;
-    if (parts.length >= 2 && parts[0].toLowerCase() === "empresas") {
-      companyFolder = parts[1];
-      restParts = parts.slice(2);
-    } else if (parts.length >= 1) {
-      companyFolder = parts[0];
-      restParts = parts.slice(1);
+app.post(
+  "/api/fiscal-documents/download-zip",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    const token = getForwardedUserJwt(req);
+    const MAX_DOCS_PER_ZIP = 50000;
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((id) => id && String(id).trim())
+      : [];
+    const companyIds = Array.isArray(req.body?.company_ids)
+      ? req.body.company_ids.filter((id) => id && String(id).trim())
+      : [];
+    const types = Array.isArray(req.body?.types)
+      ? req.body.types
+          .map((t) =>
+            String(t || "")
+              .trim()
+              .toUpperCase(),
+          )
+          .filter(Boolean)
+      : [];
+    if (companyIds.length === 0 && ids.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Nenhum documento/empresa selecionado para baixar." });
     }
-    const companyNameFromDb = companyNameById.get(doc.company_id) || "";
-    if (String(companyNameFromDb || "").trim()) companyFolder = String(companyNameFromDb).trim();
-    const safeCompany = companyFolder
-      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
-      .replace(/\s+/g, " ")
-      .trim() || "EMPRESA";
-    // Dentro da pasta da empresa, separar por tipo (igual ao seletor do app).
-    const typeUpper = String(doc.type || "").trim().toUpperCase();
-    const categoryFolder = typeUpper === "NFS" ? "nfs" : (typeUpper === "NFE" || typeUpper === "NFC") ? "nfe-nfc" : "fiscal";
-    const zipFilename = path.basename(filePathNormalized);
-    const zipPath = `${safeCompany}/${categoryFolder}/${zipFilename}`;
-    toAdd.push({ fullPath, zipPath });
-  }
-  if (toAdd.length === 0) {
-    return res.status(404).json({ error: "Nenhum arquivo encontrado no disco para os documentos solicitados." });
-  }
-  const usedNames = new Set();
-  const makeUniqueName = (zipPath) => {
-    let n = zipPath;
-    let i = 0;
-    while (usedNames.has(n)) {
-      i++;
-      const ext = path.posix.extname(zipPath);
-      const base = zipPath.slice(0, zipPath.length - ext.length);
-      n = `${base} (${i})${ext}`;
+    if (ids.length > MAX_DOCS_PER_ZIP) {
+      return res.status(400).json({
+        error: `Limite de ${MAX_DOCS_PER_ZIP} documentos por download. Selecione menos itens na lista.`,
+      });
     }
-    usedNames.add(n);
-    return n;
-  };
-  res.setHeader("Content-Type", "application/zip");
-  const suffix = typeof req.body?.filename_suffix === "string" ? req.body.filename_suffix.trim() : "";
-  const safeSuffix = suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
-  res.setHeader("Content-Disposition", `attachment; filename="documentos-fiscais${safeSuffix}.zip"`);
-  // STORE (level 0): mais rápido, menor CPU. Mantém downloads rápidos.
-  const archive = archiver("zip", { zlib: { level: 0 } });
-  archive.on("error", (err) => {
-    if (!res.headersSent) res.status(500).json({ error: err.message });
-  });
-  // Se o cliente (ngrok/browser) abortar, interrompe o zip para não “ficar pendurado” até o final.
-  res.on("close", () => {
-    try {
-      archive.abort();
-    } catch (_) {}
-  });
-  archive.pipe(res);
-  const toAddWithNamesFiscal = toAdd.map((e) => ({ ...e, nameInZip: makeUniqueName(e.zipPath) }));
-  const BATCH_FISCAL = 200;
-  for (let i = 0; i < toAddWithNamesFiscal.length; i += BATCH_FISCAL) {
-    const batch = toAddWithNamesFiscal.slice(i, i + BATCH_FISCAL);
-    const buffers = await Promise.all(
-      batch.map(({ fullPath }) => fs.promises.readFile(fullPath).catch(() => null))
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ error: "Supabase não configurado" });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    // Não depende de relacionamento (FK) fiscal_documents -> companies (pode não existir no schema cache).
+    let q = supabase
+      .from("fiscal_documents")
+      .select("id, file_path, company_id");
+    if (companyIds.length > 0) q = q.in("company_id", companyIds);
+    else q = q.in("id", ids);
+    if (types.length > 0) q = q.in("type", types);
+    const { data: rows, error } = await q;
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    let docs = (rows || []).filter(
+      (r) => r?.file_path && String(r.file_path).trim(),
     );
-    for (let j = 0; j < batch.length; j++) {
-      if (buffers[j]) archive.append(buffers[j], { name: batch[j].nameInZip });
+    if (docs.length > MAX_DOCS_PER_ZIP) {
+      docs = docs.slice(0, MAX_DOCS_PER_ZIP);
     }
-  }
-  archive.finalize();
-});
+    const companyIdsInDocs = [
+      ...new Set(docs.map((d) => d.company_id).filter(Boolean)),
+    ];
+    const companyNameById = new Map();
+    if (companyIdsInDocs.length > 0) {
+      try {
+        const { data: companies, error: companiesErr } = await supabase
+          .from("companies")
+          .select("id, name")
+          .in("id", companyIdsInDocs);
+        if (!companiesErr && Array.isArray(companies)) {
+          for (const c of companies) {
+            if (c?.id) companyNameById.set(c.id, String(c.name || "").trim());
+          }
+        }
+      } catch (_) {}
+    }
+    const baseResolved = path.resolve(BASE_PATH);
+    const toAdd = [];
+    for (const doc of docs) {
+      const fullPath = path.join(BASE_PATH, doc.file_path);
+      if (!path.resolve(fullPath).startsWith(baseResolved)) continue;
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
+      const filePathNormalized = String(doc.file_path || "").replace(
+        /\\/g,
+        "/",
+      );
+      const parts = filePathNormalized.split("/").filter(Boolean);
+      let companyFolder = "EMPRESA";
+      let restParts = parts;
+      if (parts.length >= 2 && parts[0].toLowerCase() === "empresas") {
+        companyFolder = parts[1];
+        restParts = parts.slice(2);
+      } else if (parts.length >= 1) {
+        companyFolder = parts[0];
+        restParts = parts.slice(1);
+      }
+      const companyNameFromDb = companyNameById.get(doc.company_id) || "";
+      if (String(companyNameFromDb || "").trim())
+        companyFolder = String(companyNameFromDb).trim();
+      const safeCompany =
+        companyFolder
+          .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+          .replace(/\s+/g, " ")
+          .trim() || "EMPRESA";
+      // Dentro da pasta da empresa, separar por tipo (igual ao seletor do app).
+      const typeUpper = String(doc.type || "")
+        .trim()
+        .toUpperCase();
+      const categoryFolder =
+        typeUpper === "NFS"
+          ? "nfs"
+          : typeUpper === "NFE" || typeUpper === "NFC"
+            ? "nfe-nfc"
+            : "fiscal";
+      const zipFilename = path.basename(filePathNormalized);
+      const zipPath = `${safeCompany}/${categoryFolder}/${zipFilename}`;
+      toAdd.push({ fullPath, zipPath });
+    }
+    if (toAdd.length === 0) {
+      return res.status(404).json({
+        error:
+          "Nenhum arquivo encontrado no disco para os documentos solicitados.",
+      });
+    }
+    const usedNames = new Set();
+    const makeUniqueName = (zipPath) => {
+      let n = zipPath;
+      let i = 0;
+      while (usedNames.has(n)) {
+        i++;
+        const ext = path.posix.extname(zipPath);
+        const base = zipPath.slice(0, zipPath.length - ext.length);
+        n = `${base} (${i})${ext}`;
+      }
+      usedNames.add(n);
+      return n;
+    };
+    res.setHeader("Content-Type", "application/zip");
+    const suffix =
+      typeof req.body?.filename_suffix === "string"
+        ? req.body.filename_suffix.trim()
+        : "";
+    const safeSuffix =
+      suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="documentos-fiscais${safeSuffix}.zip"`,
+    );
+    // STORE (level 0): mais rápido, menor CPU. Mantém downloads rápidos.
+    const archive = archiver("zip", { zlib: { level: 0 } });
+    archive.on("error", (err) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    // Se o cliente (ngrok/browser) abortar, interrompe o zip para não “ficar pendurado” até o final.
+    res.on("close", () => {
+      try {
+        archive.abort();
+      } catch (_) {}
+    });
+    archive.pipe(res);
+    const toAddWithNamesFiscal = toAdd.map((e) => ({
+      ...e,
+      nameInZip: makeUniqueName(e.zipPath),
+    }));
+    const BATCH_FISCAL = 200;
+    for (let i = 0; i < toAddWithNamesFiscal.length; i += BATCH_FISCAL) {
+      const batch = toAddWithNamesFiscal.slice(i, i + BATCH_FISCAL);
+      const buffers = await Promise.all(
+        batch.map(({ fullPath }) =>
+          fs.promises.readFile(fullPath).catch(() => null),
+        ),
+      );
+      for (let j = 0; j < batch.length; j++) {
+        if (buffers[j])
+          archive.append(buffers[j], { name: batch[j].nameInZip });
+      }
+    }
+    archive.finalize();
+  },
+);
 
 /**
  * POST /api/hub-documents/download-zip
@@ -646,173 +835,239 @@ app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireFo
  * organizando por Empresa/<categoria>/<arquivo>.
  * Body: { company_ids: string[], categories?: string[], filename_suffix?: string }
  */
-app.post("/api/hub-documents/download-zip", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const token = getForwardedUserJwt(req);
-  const companyIds = Array.isArray(req.body?.company_ids)
-    ? req.body.company_ids.filter((id) => id && String(id).trim())
-    : [];
-  if (companyIds.length === 0) {
-    return res.status(400).json({ error: "Nenhuma empresa selecionada para baixar." });
-  }
-  const categoriesRequested = Array.isArray(req.body?.categories)
-    ? req.body.categories.map((c) => String(c || "").trim().toLowerCase()).filter(Boolean)
-    : [];
-  const allowAll = categoriesRequested.length === 0;
-  const allow = (key) => allowAll || categoriesRequested.includes(String(key || "").toLowerCase());
-
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({ error: "Supabase não configurado" });
-  }
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-
-  // Nome da empresa para pasta
-  const companyNameById = new Map();
-  try {
-    const { data: companies } = await supabase.from("companies").select("id, name").in("id", companyIds);
-    for (const c of companies || []) {
-      if (c?.id) companyNameById.set(c.id, String(c.name || "").trim());
+app.post(
+  "/api/hub-documents/download-zip",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    const token = getForwardedUserJwt(req);
+    const companyIds = Array.isArray(req.body?.company_ids)
+      ? req.body.company_ids.filter((id) => id && String(id).trim())
+      : [];
+    if (companyIds.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Nenhuma empresa selecionada para baixar." });
     }
-  } catch (_) {}
+    const categoriesRequested = Array.isArray(req.body?.categories)
+      ? req.body.categories
+          .map((c) =>
+            String(c || "")
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean)
+      : [];
+    const allowAll = categoriesRequested.length === 0;
+    const allow = (key) =>
+      allowAll || categoriesRequested.includes(String(key || "").toLowerCase());
 
-  const baseResolved = path.resolve(BASE_PATH);
-  const toAdd = [];
-
-  const safeCompanyFolder = (companyId, fallbackFromPath) => {
-    let companyFolder = String(companyNameById.get(companyId) || "").trim() || String(fallbackFromPath || "EMPRESA");
-    return companyFolder
-      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
-      .replace(/\s+/g, " ")
-      .trim() || "EMPRESA";
-  };
-
-  const addFile = (companyId, categoryFolder, fileRelPath) => {
-    const filePathNormalized = String(fileRelPath || "").replace(/\\/g, "/").trim();
-    if (!filePathNormalized) return;
-    const fullPath = path.join(BASE_PATH, filePathNormalized);
-    if (!path.resolve(fullPath).startsWith(baseResolved)) return;
-    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) return;
-    const parts = filePathNormalized.split("/").filter(Boolean);
-    let fallbackCompany = "EMPRESA";
-    if (parts.length >= 2 && parts[0].toLowerCase() === "empresas") fallbackCompany = parts[1];
-    else if (parts.length >= 1) fallbackCompany = parts[0];
-    const safeCompany = safeCompanyFolder(companyId, fallbackCompany);
-    const zipFilename = path.basename(filePathNormalized);
-    const safeCategory = String(categoryFolder || "outros")
-      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
-      .replace(/\s+/g, " ")
-      .trim() || "outros";
-    const zipPath = `${safeCompany}/${safeCategory}/${zipFilename}`;
-    toAdd.push({ fullPath, zipPath });
-  };
-
-  // Notas (fiscal_documents)
-  if (allow("nfs") || allow("nfe-nfc") || allow("fiscal")) {
-    const { data: fiscalRows } = await supabase
-      .from("fiscal_documents")
-      .select("company_id, type, file_path")
-      .in("company_id", companyIds)
-      .not("file_path", "is", null);
-    for (const r of fiscalRows || []) {
-      const typeUpper = String(r.type || "").trim().toUpperCase();
-      const cat = typeUpper === "NFS" ? "nfs" : (typeUpper === "NFE" || typeUpper === "NFC") ? "nfe-nfc" : "fiscal";
-      if (!allow(cat) && !allow("fiscal")) continue;
-      addFile(r.company_id, cat, r.file_path);
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ error: "Supabase não configurado" });
     }
-  }
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
 
-  // Certidões (sync_events payload.arquivo_pdf)
-  if (allow("certidoes") || allow("certidões")) {
-    const { data: syncRows } = await supabase
-      .from("sync_events")
-      .select("company_id, payload, created_at")
-      .eq("tipo", "certidao_resultado")
-      .in("company_id", companyIds)
-      .order("created_at", { ascending: false })
-      .limit(5000);
-    for (const r of syncRows || []) {
-      let payload = {};
-      try { payload = JSON.parse(r.payload || "{}"); } catch { payload = {}; }
-      const p = String(payload.arquivo_pdf || "").trim();
-      if (!p) continue;
-      addFile(r.company_id, "certidoes", p);
+    // Nome da empresa para pasta
+    const companyNameById = new Map();
+    try {
+      const { data: companies } = await supabase
+        .from("companies")
+        .select("id, name")
+        .in("id", companyIds);
+      for (const c of companies || []) {
+        if (c?.id) companyNameById.set(c.id, String(c.name || "").trim());
+      }
+    } catch (_) {}
+
+    const baseResolved = path.resolve(BASE_PATH);
+    const toAdd = [];
+
+    const safeCompanyFolder = (companyId, fallbackFromPath) => {
+      let companyFolder =
+        String(companyNameById.get(companyId) || "").trim() ||
+        String(fallbackFromPath || "EMPRESA");
+      return (
+        companyFolder
+          .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+          .replace(/\s+/g, " ")
+          .trim() || "EMPRESA"
+      );
+    };
+
+    const addFile = (companyId, categoryFolder, fileRelPath) => {
+      const filePathNormalized = String(fileRelPath || "")
+        .replace(/\\/g, "/")
+        .trim();
+      if (!filePathNormalized) return;
+      const fullPath = path.join(BASE_PATH, filePathNormalized);
+      if (!path.resolve(fullPath).startsWith(baseResolved)) return;
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) return;
+      const parts = filePathNormalized.split("/").filter(Boolean);
+      let fallbackCompany = "EMPRESA";
+      if (parts.length >= 2 && parts[0].toLowerCase() === "empresas")
+        fallbackCompany = parts[1];
+      else if (parts.length >= 1) fallbackCompany = parts[0];
+      const safeCompany = safeCompanyFolder(companyId, fallbackCompany);
+      const zipFilename = path.basename(filePathNormalized);
+      const safeCategory =
+        String(categoryFolder || "outros")
+          .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+          .replace(/\s+/g, " ")
+          .trim() || "outros";
+      const zipPath = `${safeCompany}/${safeCategory}/${zipFilename}`;
+      toAdd.push({ fullPath, zipPath });
+    };
+
+    // Notas (fiscal_documents)
+    if (allow("nfs") || allow("nfe-nfc") || allow("fiscal")) {
+      const { data: fiscalRows } = await supabase
+        .from("fiscal_documents")
+        .select("company_id, type, file_path")
+        .in("company_id", companyIds)
+        .not("file_path", "is", null);
+      for (const r of fiscalRows || []) {
+        const typeUpper = String(r.type || "")
+          .trim()
+          .toUpperCase();
+        const cat =
+          typeUpper === "NFS"
+            ? "nfs"
+            : typeUpper === "NFE" || typeUpper === "NFC"
+              ? "nfe-nfc"
+              : "fiscal";
+        if (!allow(cat) && !allow("fiscal")) continue;
+        addFile(r.company_id, cat, r.file_path);
+      }
     }
-  }
 
-  // Guias / taxas (dp_guias.file_path)
-  if (allow("taxas e impostos") || allow("taxas_impostos") || allow("taxas") || allow("impostos")) {
-    const { data: guiaRows } = await supabase
-      .from("dp_guias")
-      .select("company_id, file_path")
-      .in("company_id", companyIds)
-      .not("file_path", "is", null);
-    for (const r of guiaRows || []) {
-      addFile(r.company_id, "taxas e impostos", r.file_path);
+    // Certidões (sync_events payload.arquivo_pdf)
+    if (allow("certidoes") || allow("certidões")) {
+      const { data: syncRows } = await supabase
+        .from("sync_events")
+        .select("company_id, payload, created_at")
+        .eq("tipo", "certidao_resultado")
+        .in("company_id", companyIds)
+        .order("created_at", { ascending: false })
+        .limit(5000);
+      for (const r of syncRows || []) {
+        let payload = {};
+        try {
+          payload = JSON.parse(r.payload || "{}");
+        } catch {
+          payload = {};
+        }
+        const p = String(payload.arquivo_pdf || "").trim();
+        if (!p) continue;
+        addFile(r.company_id, "certidoes", p);
+      }
     }
-  }
 
-  // Impostos municipais (municipal_tax_debts.guia_pdf_path)
-  if (allow("taxas e impostos") || allow("taxas_impostos") || allow("taxas") || allow("impostos")) {
-    const { data: muniRows } = await supabase
-      .from("municipal_tax_debts")
-      .select("company_id, guia_pdf_path")
-      .in("company_id", companyIds)
-      .not("guia_pdf_path", "is", null);
-    for (const r of muniRows || []) {
-      addFile(r.company_id, "taxas e impostos", r.guia_pdf_path);
+    // Guias / taxas (dp_guias.file_path)
+    if (
+      allow("taxas e impostos") ||
+      allow("taxas_impostos") ||
+      allow("taxas") ||
+      allow("impostos")
+    ) {
+      const { data: guiaRows } = await supabase
+        .from("dp_guias")
+        .select("company_id, file_path")
+        .in("company_id", companyIds)
+        .not("file_path", "is", null);
+      for (const r of guiaRows || []) {
+        addFile(r.company_id, "taxas e impostos", r.file_path);
+      }
     }
-  }
 
-  if (toAdd.length === 0) {
-    return res.status(404).json({ error: "Nenhum arquivo encontrado no disco para as empresas solicitadas." });
-  }
-  const MAX_FILES_HUB_ZIP = 50000;
-  if (toAdd.length > MAX_FILES_HUB_ZIP) {
-    toAdd.length = MAX_FILES_HUB_ZIP;
-  }
-
-  const usedNamesHub = new Set();
-  const makeUniqueNameHub = (zipPath) => {
-    let n = zipPath;
-    let i = 0;
-    while (usedNamesHub.has(n)) {
-      i++;
-      const ext = path.posix.extname(zipPath);
-      const base = zipPath.slice(0, zipPath.length - ext.length);
-      n = `${base} (${i})${ext}`;
+    // Impostos municipais (municipal_tax_debts.guia_pdf_path)
+    if (
+      allow("taxas e impostos") ||
+      allow("taxas_impostos") ||
+      allow("taxas") ||
+      allow("impostos")
+    ) {
+      const { data: muniRows } = await supabase
+        .from("municipal_tax_debts")
+        .select("company_id, guia_pdf_path")
+        .in("company_id", companyIds)
+        .not("guia_pdf_path", "is", null);
+      for (const r of muniRows || []) {
+        addFile(r.company_id, "taxas e impostos", r.guia_pdf_path);
+      }
     }
-    usedNamesHub.add(n);
-    return n;
-  };
-  const toAddWithNamesHub = toAdd.map((e) => ({ ...e, nameInZip: makeUniqueNameHub(e.zipPath) }));
 
-  res.setHeader("Content-Type", "application/zip");
-  const suffix = typeof req.body?.filename_suffix === "string" ? req.body.filename_suffix.trim() : "";
-  const safeSuffix = suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
-  res.setHeader("Content-Disposition", `attachment; filename="documentos-hub${safeSuffix}.zip"`);
-  const archive = archiver("zip", { zlib: { level: 0 } });
-  archive.on("error", (err) => {
-    if (!res.headersSent) res.status(500).json({ error: err.message });
-  });
-  res.on("close", () => {
-    try { archive.abort(); } catch (_) {}
-  });
-  archive.pipe(res);
-  const BATCH_HUB = 200;
-  for (let i = 0; i < toAddWithNamesHub.length; i += BATCH_HUB) {
-    const batch = toAddWithNamesHub.slice(i, i + BATCH_HUB);
-    const buffers = await Promise.all(
-      batch.map(({ fullPath }) => fs.promises.readFile(fullPath).catch(() => null))
+    if (toAdd.length === 0) {
+      return res.status(404).json({
+        error:
+          "Nenhum arquivo encontrado no disco para as empresas solicitadas.",
+      });
+    }
+    const MAX_FILES_HUB_ZIP = 50000;
+    if (toAdd.length > MAX_FILES_HUB_ZIP) {
+      toAdd.length = MAX_FILES_HUB_ZIP;
+    }
+
+    const usedNamesHub = new Set();
+    const makeUniqueNameHub = (zipPath) => {
+      let n = zipPath;
+      let i = 0;
+      while (usedNamesHub.has(n)) {
+        i++;
+        const ext = path.posix.extname(zipPath);
+        const base = zipPath.slice(0, zipPath.length - ext.length);
+        n = `${base} (${i})${ext}`;
+      }
+      usedNamesHub.add(n);
+      return n;
+    };
+    const toAddWithNamesHub = toAdd.map((e) => ({
+      ...e,
+      nameInZip: makeUniqueNameHub(e.zipPath),
+    }));
+
+    res.setHeader("Content-Type", "application/zip");
+    const suffix =
+      typeof req.body?.filename_suffix === "string"
+        ? req.body.filename_suffix.trim()
+        : "";
+    const safeSuffix =
+      suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="documentos-hub${safeSuffix}.zip"`,
     );
-    for (let j = 0; j < batch.length; j++) {
-      if (buffers[j]) archive.append(buffers[j], { name: batch[j].nameInZip });
+    const archive = archiver("zip", { zlib: { level: 0 } });
+    archive.on("error", (err) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    res.on("close", () => {
+      try {
+        archive.abort();
+      } catch (_) {}
+    });
+    archive.pipe(res);
+    const BATCH_HUB = 200;
+    for (let i = 0; i < toAddWithNamesHub.length; i += BATCH_HUB) {
+      const batch = toAddWithNamesHub.slice(i, i + BATCH_HUB);
+      const buffers = await Promise.all(
+        batch.map(({ fullPath }) =>
+          fs.promises.readFile(fullPath).catch(() => null),
+        ),
+      );
+      for (let j = 0; j < batch.length; j++) {
+        if (buffers[j])
+          archive.append(buffers[j], { name: batch[j].nameInZip });
+      }
     }
-  }
-  archive.finalize();
-});
+    archive.finalize();
+  },
+);
 
 /**
  * POST /api/fiscal-sync
@@ -820,72 +1075,84 @@ app.post("/api/hub-documents/download-zip", requireConnectorSecret, requireForwa
  * Body: { path, company_id, type }
  * Requer Authorization: Bearer <jwt_do_usuario> — usa só anon key; RLS valida permissão.
  */
-app.post("/api/fiscal-sync", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const { path: relPath, company_id, type = "NFS" } = req.body || {};
-  if (!relPath || !company_id) {
-    return res.status(400).json({ error: "path e company_id são obrigatórios" });
-  }
-  const token = getForwardedUserJwt(req);
-  const fullPath = path.join(BASE_PATH, relPath);
-  if (!path.resolve(fullPath).startsWith(path.resolve(BASE_PATH))) {
-    return res.status(403).json({ error: "Path fora do diretório base" });
-  }
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({ error: "Supabase não configurado (SUPABASE_URL e SUPABASE_ANON_KEY)" });
-  }
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  try {
-    const entries = fs.readdirSync(fullPath, { withFileTypes: true });
-    const files = entries
-      .filter((e) => e.isFile())
-      .filter((e) => /\.(xml|pdf)$/i.test(e.name));
-    const periodo = new Date().toISOString().slice(0, 7);
-    const inserted = [];
-    const errors = [];
-    for (const f of files) {
-      const fileRelPath = path.join(relPath, f.name).replace(/\\/g, "/");
-      const chave = path.basename(f.name, path.extname(f.name));
-      const { data: existingRows } = await supabase
-        .from("fiscal_documents")
-        .select("id")
-        .eq("company_id", company_id)
-        .eq("file_path", fileRelPath)
-        .limit(1);
-      if (existingRows && existingRows.length > 0) continue;
-      const { data, error } = await supabase
-        .from("fiscal_documents")
-        .insert({
-          company_id,
-          type: type.toUpperCase(),
-          chave,
-          periodo,
-          status: "novo",
-          file_path: fileRelPath,
-        })
-        .select("id");
-      const row = Array.isArray(data) ? data[0] : data;
-      if (!error && row?.id) inserted.push({ id: row.id, name: f.name });
-      else if (error?.code === "23505") { /* duplicata, ignorar */ }
-      else if (error) errors.push({ name: f.name, error: error.message });
+app.post(
+  "/api/fiscal-sync",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    const { path: relPath, company_id, type = "NFS" } = req.body || {};
+    if (!relPath || !company_id) {
+      return res
+        .status(400)
+        .json({ error: "path e company_id são obrigatórios" });
     }
-    return res.json({
-      found: files.length,
-      inserted: inserted.length,
-      files: inserted,
-      errors: errors.length ? errors : undefined,
+    const token = getForwardedUserJwt(req);
+    const fullPath = path.join(BASE_PATH, relPath);
+    if (!path.resolve(fullPath).startsWith(path.resolve(BASE_PATH))) {
+      return res.status(403).json({ error: "Path fora do diretório base" });
+    }
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({
+        error: "Supabase não configurado (SUPABASE_URL e SUPABASE_ANON_KEY)",
+      });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
     });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+    try {
+      const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+      const files = entries
+        .filter((e) => e.isFile())
+        .filter((e) => /\.(xml|pdf)$/i.test(e.name));
+      const periodo = new Date().toISOString().slice(0, 7);
+      const inserted = [];
+      const errors = [];
+      for (const f of files) {
+        const fileRelPath = path.join(relPath, f.name).replace(/\\/g, "/");
+        const chave = path.basename(f.name, path.extname(f.name));
+        const { data: existingRows } = await supabase
+          .from("fiscal_documents")
+          .select("id")
+          .eq("company_id", company_id)
+          .eq("file_path", fileRelPath)
+          .limit(1);
+        if (existingRows && existingRows.length > 0) continue;
+        const { data, error } = await supabase
+          .from("fiscal_documents")
+          .insert({
+            company_id,
+            type: type.toUpperCase(),
+            chave,
+            periodo,
+            status: "novo",
+            file_path: fileRelPath,
+          })
+          .select("id");
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!error && row?.id) inserted.push({ id: row.id, name: f.name });
+        else if (error?.code === "23505") {
+          /* duplicata, ignorar */
+        } else if (error) errors.push({ name: f.name, error: error.message });
+      }
+      return res.json({
+        found: files.length,
+        inserted: inserted.length,
+        files: inserted,
+        errors: errors.length ? errors : undefined,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 /**
  * POST /api/fiscal-sync-all
- * Escaneia BASE_PATH/EMPRESAS, associa cada pasta ao company_id pelo nome da empresa,
+ * Escaneia BASE_PATH, associa cada pasta de empresa ao company_id pelo nome da empresa,
  * e sincroniza arquivos XML/PDF de FISCAL/NFS/Recebidas e FISCAL/NFS/Emitidas para fiscal_documents.
  * Requer Authorization: Bearer <jwt>.
  * Normaliza nomes (remove acentos/cedilha) para casar pasta "SERVICOS" com empresa "SERVIÇOS".
@@ -902,7 +1169,8 @@ function normalizeCompanyName(name) {
 function walkDir(dir, baseDir) {
   const results = [];
   const fullDir = path.join(baseDir, dir);
-  if (!fs.existsSync(fullDir) || !fs.statSync(fullDir).isDirectory()) return results;
+  if (!fs.existsSync(fullDir) || !fs.statSync(fullDir).isDirectory())
+    return results;
   const entries = fs.readdirSync(fullDir, { withFileTypes: true });
   for (const e of entries) {
     const rel = path.join(dir, e.name).replace(/\\/g, "/");
@@ -925,20 +1193,33 @@ function walkDir(dir, baseDir) {
 async function runFiscalSyncAll(supabase, officeId = null) {
   const result = { inserted: 0, skipped: 0, deleted: 0, errors: [] };
   const effectiveOfficeId = officeId || OFFICE_ID || null;
-  console.log(`[fiscal-watcher] runFiscalSyncAll effectiveOfficeId=${effectiveOfficeId} (officeId=${officeId}, OFFICE_ID=${OFFICE_ID})`);
+  console.log(
+    `[fiscal-watcher] runFiscalSyncAll effectiveOfficeId=${effectiveOfficeId} (officeId=${officeId}, OFFICE_ID=${OFFICE_ID})`,
+  );
   if (!effectiveOfficeId) {
-    result.errors.push({ file: "(início)", error: "office_id ausente — VM não vinculada ao escritório (CONNECTOR_SECRET no .env e credential no Supabase)" });
+    result.errors.push({
+      file: "(início)",
+      error:
+        "office_id ausente — VM não vinculada ao escritório (CONNECTOR_SECRET no .env e credential no Supabase)",
+    });
     return result;
   }
   const empresasPath = BASE_PATH;
-  const empresasExists = fs.existsSync(empresasPath) && fs.statSync(empresasPath).isDirectory();
-  const allPathsOnDisk = empresasExists ? new Set(walkDir("", BASE_PATH)) : new Set();
+  const empresasExists =
+    fs.existsSync(empresasPath) && fs.statSync(empresasPath).isDirectory();
+  const allPathsOnDisk = empresasExists
+    ? new Set(walkDir("", BASE_PATH))
+    : new Set();
 
   let q = supabase.from("companies").select("id, name, office_id");
   q = q.eq("office_id", effectiveOfficeId);
   const { data: companiesRaw } = await q;
-  const companies = (companiesRaw || []).filter((c) => c && String(c.office_id) === String(effectiveOfficeId));
-  const nameToId = new Map(companies.map((c) => [normalizeCompanyName(c.name), c.id]));
+  const companies = (companiesRaw || []).filter(
+    (c) => c && String(c.office_id) === String(effectiveOfficeId),
+  );
+  const nameToId = new Map(
+    companies.map((c) => [normalizeCompanyName(c.name), c.id]),
+  );
   /** Por company_id: Set de file_path que existem no disco. Inicializa para todas as empresas (vazio se pasta não existir). */
   const pathsOnDiskByCompany = new Map(companies.map((c) => [c.id, new Set()]));
 
@@ -951,13 +1232,18 @@ async function runFiscalSyncAll(supabase, officeId = null) {
       .not("file_path", "is", null);
     const idsToDelete = (rows || []).map((r) => r.id);
     if (idsToDelete.length > 0) {
-      const { error: deleteError } = await supabase.from("fiscal_documents").delete().in("id", idsToDelete);
+      const { error: deleteError } = await supabase
+        .from("fiscal_documents")
+        .delete()
+        .in("id", idsToDelete);
       if (!deleteError) result.deleted += idsToDelete.length;
     }
     return result;
   }
 
-  const companyDirs = fs.readdirSync(empresasPath, { withFileTypes: true }).filter((e) => e.isDirectory());
+  const companyDirs = fs
+    .readdirSync(empresasPath, { withFileTypes: true })
+    .filter((e) => e.isDirectory());
 
   for (const companyDir of companyDirs) {
     const companyName = companyDir.name;
@@ -967,7 +1253,9 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     if (!pathsOnDisk) continue;
 
     for (const sub of ["Recebidas", "Emitidas"]) {
-      const segment = path.join(companyName, "FISCAL", "NFS", sub).replace(/\\/g, "/");
+      const segment = path
+        .join(companyName, "FISCAL", "NFS", sub)
+        .replace(/\\/g, "/");
       const files = walkDir(segment, BASE_PATH);
       for (const fileRel of files) {
         pathsOnDisk.add(fileRel);
@@ -975,7 +1263,10 @@ async function runFiscalSyncAll(supabase, officeId = null) {
         const parts = fileRel.split(/[/\\]/);
         let periodo = new Date().toISOString().slice(0, 7);
         const y = parts.find((p) => /^\d{4}$/.test(p));
-        const m = parts.find((p) => /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12);
+        const m = parts.find(
+          (p) =>
+            /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+        );
         if (y && m) periodo = `${y}-${m}`;
         const { data: existingRows } = await supabase
           .from("fiscal_documents")
@@ -987,8 +1278,20 @@ async function runFiscalSyncAll(supabase, officeId = null) {
           result.skipped++;
           continue;
         }
-        const row = { office_id: String(effectiveOfficeId), company_id: companyId, type: "NFS", chave, periodo, status: "novo", file_path: fileRel };
-        if (result.inserted + result.skipped === 0) console.log("[fiscal-watcher] Primeiro insert NFS payload:", JSON.stringify(row));
+        const row = {
+          office_id: String(effectiveOfficeId),
+          company_id: companyId,
+          type: "NFS",
+          chave,
+          periodo,
+          status: "novo",
+          file_path: fileRel,
+        };
+        if (result.inserted + result.skipped === 0)
+          console.log(
+            "[fiscal-watcher] Primeiro insert NFS payload:",
+            JSON.stringify(row),
+          );
         const { error } = await supabase.from("fiscal_documents").insert(row);
         if (error) {
           if (error.code === "23505") {
@@ -1004,18 +1307,24 @@ async function runFiscalSyncAll(supabase, officeId = null) {
 
     // NFE-NFC: FISCAL/NFE-NFC/Recebidas e FISCAL/NFE-NFC/Emitidas (tipo NFE ou NFC por nome do arquivo)
     for (const sub of ["Recebidas", "Emitidas"]) {
-      const segment = path.join(companyName, "FISCAL", "NFE-NFC", sub).replace(/\\/g, "/");
+      const segment = path
+        .join(companyName, "FISCAL", "NFE-NFC", sub)
+        .replace(/\\/g, "/");
       const files = walkDir(segment, BASE_PATH);
       for (const fileRel of files) {
         pathsOnDisk.add(fileRel);
         const baseName = path.basename(fileRel, path.extname(fileRel));
         const nameLower = baseName.toLowerCase();
-        const docType = nameLower.includes("nfc") || nameLower.includes("65") ? "NFC" : "NFE";
+        const docType =
+          nameLower.includes("nfc") || nameLower.includes("65") ? "NFC" : "NFE";
         const chave = baseName;
         const parts = fileRel.split(/[/\\]/);
         let periodo = new Date().toISOString().slice(0, 7);
         const y = parts.find((p) => /^\d{4}$/.test(p));
-        const m = parts.find((p) => /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12);
+        const m = parts.find(
+          (p) =>
+            /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+        );
         if (y && m) periodo = `${y}-${m}`;
         const { data: existingRows } = await supabase
           .from("fiscal_documents")
@@ -1027,7 +1336,15 @@ async function runFiscalSyncAll(supabase, officeId = null) {
           result.skipped++;
           continue;
         }
-        const row = { office_id: String(effectiveOfficeId), company_id: companyId, type: docType, chave, periodo, status: "novo", file_path: fileRel };
+        const row = {
+          office_id: String(effectiveOfficeId),
+          company_id: companyId,
+          type: docType,
+          chave,
+          periodo,
+          status: "novo",
+          file_path: fileRel,
+        };
         const { error } = await supabase.from("fiscal_documents").insert(row);
         if (error) {
           if (error.code === "23505") {
@@ -1052,33 +1369,53 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     .filter((r) => !allPathsOnDisk.has(r.file_path))
     .map((r) => r.id);
   if (idsToDelete.length > 0) {
-    const { error: deleteError } = await supabase.from("fiscal_documents").delete().in("id", idsToDelete);
+    const { error: deleteError } = await supabase
+      .from("fiscal_documents")
+      .delete()
+      .in("id", idsToDelete);
     if (!deleteError) result.deleted += idsToDelete.length;
   }
 
   return result;
 }
 
-app.post("/api/fiscal-sync-all", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
-  const token = getForwardedUserJwt(req);
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({
-      error: "Supabase não configurado no server-api. No .env da VM defina SUPABASE_URL e SUPABASE_ANON_KEY.",
+app.post(
+  "/api/fiscal-sync-all",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    const token = getForwardedUserJwt(req);
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({
+        error:
+          "Supabase não configurado no server-api. No .env da VM defina SUPABASE_URL e SUPABASE_ANON_KEY.",
+      });
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
     });
-  }
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  try {
-    const officeId = OFFICE_ID || null;
-    const { inserted, skipped, deleted, errors } = await runFiscalSyncAll(supabase, officeId);
-    return res.json({ ok: true, inserted, skipped, deleted: deleted ?? 0, errors: errors.length ? errors : undefined });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+    try {
+      const officeId = OFFICE_ID || null;
+      const { inserted, skipped, deleted, errors } = await runFiscalSyncAll(
+        supabase,
+        officeId,
+      );
+      return res.json({
+        ok: true,
+        inserted,
+        skipped,
+        deleted: deleted ?? 0,
+        errors: errors.length ? errors : undefined,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -1088,17 +1425,23 @@ app.get("/health", (req, res) => res.json({ ok: true }));
  * Path na VM: BASE_PATH/EMPRESAS/{nome_empresa}/{segmentos do nó}
  * Leitura pública (anon) para robôs sem JWT.
  */
-app.get("/api/folder-structure", async (req, res) => {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
+app.get("/api/folder-structure", requireConnectorSecret, async (req, res) => {
+  if (!OFFICE_ID) {
+    return res.status(503).json({
+      error:
+        "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+    });
+  }
+  const supabase = createSupabaseReadClient();
+  if (!supabase) {
     return res.status(500).json({ error: "Supabase não configurado" });
   }
   try {
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    res.setHeader("Cache-Control", "no-store");
     const { data, error } = await supabase
       .from("folder_structure_nodes")
       .select("id, parent_id, name, slug, date_rule, position")
+      .eq("office_id", OFFICE_ID)
       .order("parent_id", { nullsFirst: true })
       .order("position", { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
@@ -1113,18 +1456,23 @@ app.get("/api/folder-structure", async (req, res) => {
  * Retorna configuração para o robô na VM: base_path (global), segment_path e date_rule do robô.
  * Robôs usam isso em vez de BASE_PATH e ROBOT_SEGMENT_PATH no .env (que passam a ser opcionais).
  */
-app.get("/api/robot-config", async (req, res) => {
+app.get("/api/robot-config", requireConnectorSecret, async (req, res) => {
   const technicalId = (req.query.technical_id || "").toString().trim();
   if (!technicalId) {
     return res.status(400).json({ error: "technical_id é obrigatório" });
   }
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
+  const supabase = createSupabaseReadClient();
+  if (!supabase) {
     return res.status(500).json({ error: "Supabase não configurado" });
   }
   try {
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    res.setHeader("Cache-Control", "no-store");
+    if (!OFFICE_ID) {
+      return res.status(503).json({
+        error:
+          "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+      });
+    }
     const { data: robot, error: robotErr } = await supabase
       .from("robots")
       .select("segment_path, notes_mode")
@@ -1136,10 +1484,13 @@ app.get("/api/robot-config", async (req, res) => {
     const { data: nodes, error: nodesErr } = await supabase
       .from("folder_structure_nodes")
       .select("id, parent_id, name, slug, date_rule, position")
+      .eq("office_id", OFFICE_ID)
       .order("parent_id", { nullsFirst: true })
       .order("position", { ascending: true });
     if (nodesErr) return res.status(500).json({ error: nodesErr.message });
-    const dateRule = segmentPath ? findDateRuleByPath(nodes ?? [], segmentPath) : null;
+    const dateRule = segmentPath
+      ? findDateRuleByPath(nodes ?? [], segmentPath)
+      : null;
     return res.json({
       base_path: BASE_PATH,
       segment_path: segmentPath,
@@ -1153,36 +1504,59 @@ app.get("/api/robot-config", async (req, res) => {
 });
 
 // Proxy WhatsApp (somente rotas explícitas; evita expor catch-all)
-const WHATSAPP_BACKEND_URL = process.env.WHATSAPP_BACKEND_URL || "http://localhost:3010";
+const WHATSAPP_BACKEND_URL =
+  process.env.WHATSAPP_BACKEND_URL || "http://localhost:3010";
 const whatsappProxy = createProxyMiddleware({
   target: WHATSAPP_BACKEND_URL,
   changeOrigin: true,
   proxyTimeout: 60_000,
   timeout: 60_000,
   onError: (err, req, res) => {
-    res.status(502).json({ error: "Backend WhatsApp indisponível", detail: err.message });
+    res
+      .status(502)
+      .json({ error: "Backend WhatsApp indisponível", detail: err.message });
   },
 });
 const whatsappProxyViaApiPrefix = createProxyMiddleware({
-  pathFilter: ["/api/send", "/api/status", "/api/groups", "/api/qr", "/api/connect", "/api/disconnect"],
+  pathFilter: [
+    "/api/send",
+    "/api/status",
+    "/api/groups",
+    "/api/qr",
+    "/api/connect",
+    "/api/disconnect",
+  ],
   target: WHATSAPP_BACKEND_URL,
   changeOrigin: true,
   proxyTimeout: 60_000,
   timeout: 60_000,
-  pathRewrite: (pathReq) => (pathReq.startsWith("/api/") ? pathReq.slice(4) : pathReq),
+  pathRewrite: (pathReq) =>
+    pathReq.startsWith("/api/") ? pathReq.slice(4) : pathReq,
   onError: (err, req, res) => {
-    res.status(502).json({ error: "Backend WhatsApp indisponível", detail: err.message });
+    res
+      .status(502)
+      .json({ error: "Backend WhatsApp indisponível", detail: err.message });
   },
 });
-app.use(["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"], whatsappProxy);
+app.use(
+  ["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"],
+  whatsappProxy,
+);
 // Compat: alguns túneis/reverse-proxy só expõem /api/* para fora
 app.use(whatsappProxyViaApiPrefix);
 
 app.use((req, res) => {
   const path = req.path || req.url || "";
-  console.warn("[server-api] 404 Rota não encontrada:", req.method, path, "| url:", req.originalUrl || req.url);
+  console.warn(
+    "[server-api] 404 Rota não encontrada:",
+    req.method,
+    path,
+    "| url:",
+    req.originalUrl || req.url,
+  );
   const hint =
-    String(path || "").includes("download-zip-by-paths") || String(req.originalUrl || "").includes("download-zip-by-paths")
+    String(path || "").includes("download-zip-by-paths") ||
+    String(req.originalUrl || "").includes("download-zip-by-paths")
       ? " Se esperava baixar ZIP: reinicie o Servidor (start.bat ou pm2 restart server-api) para carregar o código novo."
       : "";
   res.status(404).json({ error: "Rota não encontrada" + hint });
@@ -1193,12 +1567,19 @@ function startFiscalWatcher() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceKey) {
-    console.log("[fiscal-watcher] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; monitoramento automático desligado.");
+    console.log(
+      "[fiscal-watcher] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; monitoramento automático desligado.",
+    );
     return;
   }
   const empresasPath = BASE_PATH;
-  if (!fs.existsSync(empresasPath) || !fs.statSync(empresasPath).isDirectory()) {
-    console.log("[fiscal-watcher] Pasta base da VM não encontrada; monitoramento desligado.");
+  if (
+    !fs.existsSync(empresasPath) ||
+    !fs.statSync(empresasPath).isDirectory()
+  ) {
+    console.log(
+      "[fiscal-watcher] Pasta base da VM não encontrada; monitoramento desligado.",
+    );
     return;
   }
   const supabase = createClient(supabaseUrl, serviceKey);
@@ -1207,19 +1588,25 @@ function startFiscalWatcher() {
 
   const runSync = () => {
     if (!OFFICE_ID) {
-      console.warn("[fiscal-watcher] OFFICE_ID ausente (CONNECTOR_SECRET não vinculado a um office_server?). Sync ignorado.");
+      console.warn(
+        "[fiscal-watcher] OFFICE_ID ausente (CONNECTOR_SECRET não vinculado a um office_server?). Sync ignorado.",
+      );
       return;
     }
     runFiscalSyncAll(supabase, OFFICE_ID)
       .then(({ inserted, skipped, deleted, errors }) => {
         if (inserted > 0 || deleted > 0 || errors.length > 0) {
-          console.log(`[fiscal-watcher] Sync: ${inserted} inseridos, ${skipped} já existentes${deleted ? `, ${deleted} removidos` : ""}${errors.length ? `, ${errors.length} erros` : ""}`);
+          console.log(
+            `[fiscal-watcher] Sync: ${inserted} inseridos, ${skipped} já existentes${deleted ? `, ${deleted} removidos` : ""}${errors.length ? `, ${errors.length} erros` : ""}`,
+          );
           for (const e of errors) {
             console.error(`[fiscal-watcher] Erro: ${e.file} → ${e.error}`);
           }
         }
       })
-      .catch((err) => console.error("[fiscal-watcher] Erro ao sincronizar:", err.message));
+      .catch((err) =>
+        console.error("[fiscal-watcher] Erro ao sincronizar:", err.message),
+      );
   };
 
   try {
@@ -1231,16 +1618,24 @@ function startFiscalWatcher() {
         runSync();
       }, DEBOUNCE_MS);
     });
-    console.log("[fiscal-watcher] Monitorando a pasta base da VM — novos XML/PDF serão sincronizados automaticamente.");
+    console.log(
+      "[fiscal-watcher] Monitorando a pasta base da VM — novos XML/PDF serão sincronizados automaticamente.",
+    );
     // Sync inicial após 8s para garantir que OFFICE_ID já foi carregado do Supabase
     setTimeout(() => {
-      if (!OFFICE_ID) console.error("[fiscal-watcher] OFFICE_ID ainda null; sync inicial ignorado. Verifique CONNECTOR_SECRET e office_server_credentials no Supabase.");
+      if (!OFFICE_ID)
+        console.error(
+          "[fiscal-watcher] OFFICE_ID ainda null; sync inicial ignorado. Verifique CONNECTOR_SECRET e office_server_credentials no Supabase.",
+        );
       else runSync();
     }, 8000);
     const intervalMs = Number(process.env.FISCAL_SYNC_INTERVAL_MS || 60_000);
     setInterval(runSync, intervalMs);
   } catch (err) {
-    console.error("[fiscal-watcher] Não foi possível monitorar a pasta base da VM:", err.message);
+    console.error(
+      "[fiscal-watcher] Não foi possível monitorar a pasta base da VM:",
+      err.message,
+    );
   }
 }
 
@@ -1253,12 +1648,16 @@ function startOfficeRefreshWorker() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceKey) {
-    console.log("[office-refresh-worker] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; worker desligado.");
+    console.log(
+      "[office-refresh-worker] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; worker desligado.",
+    );
     return;
   }
 
   const p_limit = Number(process.env.OFFICE_REFRESH_WORKER_LIMIT || 25);
-  const intervalMs = Number(process.env.OFFICE_REFRESH_WORKER_INTERVAL_MS || 10_000);
+  const intervalMs = Number(
+    process.env.OFFICE_REFRESH_WORKER_INTERVAL_MS || 10_000,
+  );
   const supabase = createClient(supabaseUrl, serviceKey);
 
   let running = false;
@@ -1267,17 +1666,23 @@ function startOfficeRefreshWorker() {
     if (running) return;
     running = true;
     try {
-      const { data, error } = await supabase.rpc("process_office_refresh_queue", { p_limit });
+      const { data, error } = await supabase.rpc(
+        "process_office_refresh_queue",
+        { p_limit },
+      );
       if (error) throw error;
       rpcMissingLogged = false;
       const processed = Number(data ?? 0);
       console.log(`[office-refresh-worker] processed_count=${processed}`);
     } catch (err) {
       const msg = err?.message ?? String(err);
-      const isMissingRpc = /function.*process_office_refresh_queue.*schema cache/i.test(msg);
+      const isMissingRpc =
+        /function.*process_office_refresh_queue.*schema cache/i.test(msg);
       if (isMissingRpc && !rpcMissingLogged) {
         rpcMissingLogged = true;
-        console.warn("[office-refresh-worker] RPC process_office_refresh_queue nao encontrada. Rode as migrations no projeto Supabase (SUPABASE_URL do .env). Worker nao sera chamado ate a funcao existir.");
+        console.warn(
+          "[office-refresh-worker] RPC process_office_refresh_queue nao encontrada. Rode as migrations no projeto Supabase (SUPABASE_URL do .env). Worker nao sera chamado ate a funcao existir.",
+        );
       } else if (!isMissingRpc) {
         console.error("[office-refresh-worker] Erro ao processar fila:", msg);
       }
@@ -1298,17 +1703,21 @@ loadBasePathFromSupabase().then(() => {
     console.log(`[fiscal-watcher] ${FISCAL_SYNC_VERSION}`);
     console.log(`BASE_PATH: ${BASE_PATH}`);
     console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
-    console.log(`CONNECTOR_SECRET: ${CONNECTOR_SECRET_HASH ? "configurado" : "ausente"}`);
+    console.log(
+      `CONNECTOR_SECRET: ${CONNECTOR_SECRET_HASH ? "configurado" : "ausente"}`,
+    );
     if (OFFICE_SERVER_ID) console.log(`OFFICE_SERVER_ID: ${OFFICE_SERVER_ID}`);
     console.log(`OFFICE_ID: ${OFFICE_ID ?? "null"}`);
     if (OFFICE_NAME && OFFICE_ID) {
-      console.log(`[fiscal-watcher] ENVIO PRO ESCRITORIO: ${OFFICE_NAME} (id=${OFFICE_ID}) — dados fiscais e empresas somente deste escritório.`);
+      console.log(
+        `[fiscal-watcher] ENVIO PRO ESCRITORIO: ${OFFICE_NAME} (id=${OFFICE_ID}) — dados fiscais e empresas somente deste escritório.`,
+      );
     } else {
-      console.log(`[fiscal-watcher] ENVIO PRO ESCRITORIO: não configurado (CONNECTOR_SECRET/credential sem vínculo). Nenhum dado será enviado até vincular.`);
+      console.log(
+        `[fiscal-watcher] ENVIO PRO ESCRITORIO: não configurado (CONNECTOR_SECRET/credential sem vínculo). Nenhum dado será enviado até vincular.`,
+      );
     }
     startOfficeRefreshWorker();
     startFiscalWatcher();
   });
 });
-
-

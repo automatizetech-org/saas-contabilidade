@@ -138,6 +138,17 @@ try:
 except ImportError:
     pass
 
+CONNECTOR_SECRET = (os.environ.get("CONNECTOR_SECRET") or "").strip()
+
+
+def build_server_api_headers(url_base: str) -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if "ngrok" in url_base.lower():
+        headers["ngrok-skip-browser-warning"] = "true"
+    if CONNECTOR_SECRET:
+        headers["Authorization"] = f"Bearer {hashlib.sha256(CONNECTOR_SECRET.encode('utf-8')).hexdigest()}"
+    return headers
+
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -1285,9 +1296,7 @@ def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
     try:
         url = f"{url_base}/api/robot-config"
         params = {"technical_id": ROBOT_TECHNICAL_ID}
-        headers = {}
-        if "ngrok" in url_base.lower():
-            headers["ngrok-skip-browser-warning"] = "true"
+        headers = build_server_api_headers(url_base)
         r = requests.get(url, params=params, headers=headers, timeout=15)
         r.raise_for_status()
         return r.json()
@@ -1365,7 +1374,11 @@ def fetch_central_folder_structure(path_logical: Optional[str] = None) -> Tuple[
             return (segment_path, date_rule)
     # Fallback: chamar /api/folder-structure como antes
     try:
-        r = requests.get(f"{url_base}/api/folder-structure", timeout=10)
+        r = requests.get(
+            f"{url_base}/api/folder-structure",
+            headers=build_server_api_headers(url_base),
+            timeout=10,
+        )
         r.raise_for_status()
         data = r.json()
         nodes = data.get("nodes") or []

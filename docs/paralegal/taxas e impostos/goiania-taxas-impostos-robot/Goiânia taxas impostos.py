@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -172,6 +173,7 @@ GOIANIA_PORTAL_CPF = os.getenv("GOIANIA_PORTAL_CPF", "")
 GOIANIA_PORTAL_PASSWORD = os.getenv("GOIANIA_PORTAL_PASSWORD", "")
 # URL do server-api (dashboard); base_path e estrutura de pastas (segment_path) vêm daqui.
 SERVER_API_URL = (os.getenv("SERVER_API_URL") or "").strip()
+CONNECTOR_SECRET = (os.getenv("CONNECTOR_SECRET") or "").strip()
 # Não usado para o Chrome do robô; o robô usa apenas CHROME_PROFILE_DIR (data/chrome_cdp_profile).
 PLAYWRIGHT_USER_DATA_DIR = os.getenv("PLAYWRIGHT_USER_DATA_DIR", str(BASE_DIR / ".playwright-profile"))
 
@@ -208,7 +210,7 @@ def normalize_name(value: str | None) -> str:
 
 
 def sanitize_company_folder(name: str | None) -> str:
-    """Nome da pasta da empresa no disco (BASE_PATH/EMPRESAS/{isso})."""
+    """Nome da pasta da empresa no disco (BASE_PATH/{isso})."""
     s = (name or "").strip()
     s = re.sub(r'[<>:"/\\|?*]', "_", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -275,6 +277,8 @@ def fetch_robot_config_from_api() -> dict[str, Any] | None:
         headers: dict[str, str] = {}
         if "ngrok" in url_base.lower():
             headers["ngrok-skip-browser-warning"] = "true"
+        if CONNECTOR_SECRET:
+            headers["Authorization"] = f"Bearer {hashlib.sha256(CONNECTOR_SECRET.encode('utf-8')).hexdigest()}"
         response = requests.get(
             f"{url_base}/api/robot-config",
             params={"technical_id": ROBOT_TECHNICAL_ID},
