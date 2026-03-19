@@ -45,6 +45,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
 
+  useEffect(() => {
+    if (!profile?.office_id || profile.office_status !== "inactive") return;
+    const msg = `O escritório "${profile.office_name ?? ""}" está inativado. Entre em contato com o suporte.`;
+    supabase.auth.signOut().then(() => {
+      navigate("/login", { replace: true, state: { message: msg } });
+    });
+  }, [profile?.office_id, profile?.office_status, profile?.office_name, navigate]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     navigate("/login", { replace: true });

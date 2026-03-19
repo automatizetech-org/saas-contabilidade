@@ -11,10 +11,15 @@ export default function LoginPage() {
   const location = useLocation()
   const loginSubtitle = "Dashboard Web"
   const from = (location.state as { from?: string } | null)?.from
+  const loginMessage = (location.state as { message?: string } | null)?.message
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
+  const [error, setError] = useState(loginMessage ?? "")
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (loginMessage) setError(loginMessage)
+  }, [loginMessage])
 
   useEffect(() => {
     resetBrandingInDocument()
@@ -43,6 +48,12 @@ export default function LoginPage() {
 
       if (!profile) {
         navigate(from && from !== "/login" ? from : "/dashboard", { replace: true })
+        return
+      }
+
+      if (profile.office_id && profile.office_status === "inactive") {
+        await supabase.auth.signOut()
+        setError(`O escritório "${profile.office_name ?? "deste usuário"}" está inativado. Entre em contato com o suporte.`)
         return
       }
 

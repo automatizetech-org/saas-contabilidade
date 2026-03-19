@@ -18,6 +18,9 @@ verify_jwt = false
 [functions.primeiro-escritorio]
 verify_jwt = false
 
+[functions.manage-office]
+verify_jwt = false
+
 [functions.office-server]
 verify_jwt = false
 

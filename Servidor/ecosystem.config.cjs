@@ -1,24 +1,23 @@
 /**
- * PM2: sobe os tres servicos (WhatsApp, server-api, ngrok) com um unico comando.
- * Uso (na pasta Servidor): pm2 start ecosystem.config.cjs
- *
- * - whatsapp-emissor: porta 3010
- * - server-api: porta 3001
- * - ngrok: tunel para 3001 (interface em http://127.0.0.1:4040)
- *
- * Se existir Servidor/Ngrok/ngrok.exe, usa esse binario.
- * Caso contrario, usa o comando global "ngrok" instalado na maquina.
- * Tarefa do Agendador: executar Servidor\start.bat.
+ * PM2: sobe os três serviços (WhatsApp, server-api, ngrok).
+ * Configuração em .env (PORT_API, PORT_WHATSAPP, BASE_PATH, PM2_APPS).
+ * Uso: pm2 start ecosystem.config.cjs
  */
+require("./load-env.js");
 const fs = require("fs");
 const path = require("path");
 
 const servidorDir = __dirname;
-const ngrokDir = path.join(servidorDir, "Ngrok");
-const ngrokPath = path.join(ngrokDir, "ngrok.exe");
-const hasLocalNgrok = fs.existsSync(ngrokPath);
-const ngrokScript = hasLocalNgrok ? ngrokPath : "ngrok";
-const ngrokCwd = hasLocalNgrok ? ngrokDir : servidorDir;
+const PORT_API = process.env.PORT_API || "3001";
+const PORT_WHATSAPP = process.env.PORT_WHATSAPP || "3010";
+const BASE_PATH = process.env.BASE_PATH || "";
+
+const ngrokInServidor = path.join(servidorDir, "Ngrok", "ngrok.exe");
+const ngrokInDocuments = path.join(process.env.USERPROFILE || "", "Documents", "Ngrok", "ngrok.exe");
+const ngrokPath = fs.existsSync(ngrokInServidor) ? ngrokInServidor : (fs.existsSync(ngrokInDocuments) ? ngrokInDocuments : null);
+const hasLocalNgrok = !!ngrokPath;
+const ngrokScript = hasLocalNgrok ? ngrokPath : path.join(servidorDir, "ngrok-wrapper.js");
+const ngrokCwd = hasLocalNgrok ? path.dirname(ngrokPath) : servidorDir;
 
 module.exports = {
   apps: [
@@ -28,6 +27,7 @@ module.exports = {
       cwd: path.join(servidorDir, "whatsapp-emissor"),
       env: {
         WA_RESTART_ON_DISCONNECT: "1",
+        WA_SERVER_PORT: PORT_WHATSAPP,
       },
       restart_delay: 3000,
       max_restarts: 50,
@@ -39,7 +39,11 @@ module.exports = {
       cwd: path.join(servidorDir, "server-api"),
       interpreter: "node",
       env: {
-        PORT: "3001",
+        PORT: PORT_API,
+        BASE_PATH,
+        CONNECTOR_SECRET: process.env.CONNECTOR_SECRET || "",
+        SUPABASE_URL: process.env.SUPABASE_URL || "",
+        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
       },
       restart_delay: 2000,
       max_restarts: 20,
@@ -47,9 +51,9 @@ module.exports = {
     {
       name: "ngrok",
       script: ngrokScript,
-      args: "http 3001",
+      args: hasLocalNgrok ? `http ${PORT_API}` : "",
       cwd: ngrokCwd,
-      interpreter: hasLocalNgrok ? "none" : undefined,
+      interpreter: hasLocalNgrok ? "none" : "node",
       restart_delay: 2000,
       max_restarts: 10,
     },

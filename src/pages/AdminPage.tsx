@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Loader2, Plus, Shield, Building2, ServerCog, KeyRound, Users } from "lucide-react"
+import { Loader2, Plus, Shield, Building2, ServerCog, KeyRound, Users, Trash2, PauseCircle, PlayCircle } from "lucide-react"
 import { toast } from "sonner"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
@@ -31,6 +31,8 @@ import {
   createPrimeiroEscritorio,
   getCurrentOfficeServer,
   updateCurrentOfficeServer,
+  setOfficeStatus,
+  deleteOffice,
   type PrimeiroEscritorioInput,
 } from "@/services/officeAdminService"
 import { getCompaniesForUser } from "@/services/companiesService"
@@ -307,6 +309,12 @@ export default function AdminPage() {
   })
   const [savingServer, setSavingServer] = useState(false)
 
+  type OfficeRow = { id: string; name: string; slug: string; status: string; created_at?: string }
+  const [officeToDelete, setOfficeToDelete] = useState<OfficeRow | null>(null)
+  const [deleteConfirmSlug, setDeleteConfirmSlug] = useState("")
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [officeStatusLoading, setOfficeStatusLoading] = useState<string | null>(null)
+
   const { data: officeContext, isLoading: officeLoading } = useQuery({
     queryKey: ["admin", "office-context"],
     queryFn: getCurrentOfficeContext,
@@ -462,6 +470,42 @@ export default function AdminPage() {
       toast.error(error instanceof Error ? error.message : "Erro ao atualizar servidor")
     } finally {
       setSavingServer(false)
+    }
+  }
+
+  const handleSetOfficeStatus = async (office: OfficeRow, status: "active" | "inactive") => {
+    setOfficeStatusLoading(office.id)
+    try {
+      await setOfficeStatus(office.id, status)
+      toast.success(status === "inactive" ? "Escritório inativado. Os usuários não poderão fazer login." : "Escritório reativado.")
+      await queryClient.invalidateQueries({ queryKey: ["admin", "offices"] })
+      await queryClient.invalidateQueries({ queryKey: ["admin", "office-context"] })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao alterar status")
+    } finally {
+      setOfficeStatusLoading(null)
+    }
+  }
+
+  const handleDeleteOffice = async () => {
+    if (!officeToDelete) return
+    const slug = deleteConfirmSlug.trim().toLowerCase()
+    if (slug !== (officeToDelete.slug ?? "").trim().toLowerCase()) {
+      toast.error("Digite o slug do escritório exatamente como exibido para confirmar.")
+      return
+    }
+    setDeleteLoading(true)
+    try {
+      await deleteOffice(officeToDelete.id, slug)
+      toast.success("Escritório excluído permanentemente.")
+      setOfficeToDelete(null)
+      setDeleteConfirmSlug("")
+      await queryClient.invalidateQueries({ queryKey: ["admin", "offices"] })
+      await queryClient.invalidateQueries({ queryKey: ["admin", "office-context"] })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir escritório")
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -647,17 +691,111 @@ export default function AdminPage() {
                     <p className="text-sm text-muted-foreground">Nenhum escritório criado ainda.</p>
                   ) : (
                     offices.map((office) => (
-                      <div key={office.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+                      <div key={office.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
                         <div>
                           <p className="text-sm font-medium">{office.name}</p>
-                          <p className="text-xs text-muted-foreground">{office.slug}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{office.slug}</p>
                         </div>
-                        <StatusBadge value={office.status} />
+                        <div className="flex items-center gap-2">
+                          <StatusBadge value={office.status} />
+                          {office.status === "active" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                if (window.confirm(`Inativar o escritório "${office.name}"? Os usuários não poderão fazer login até reativar.`)) {
+                                  void handleSetOfficeStatus(office as OfficeRow, "inactive")
+                                }
+                              }}
+                              disabled={!!officeStatusLoading}
+                            >
+                              {officeStatusLoading === office.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <PauseCircle className="h-4 w-4" />
+                              )}
+                              <span className="ml-1">Inativar</span>
+                            </Button>
+                          ) : office.status === "inactive" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void handleSetOfficeStatus(office as OfficeRow, "active")}
+                              disabled={!!officeStatusLoading}
+                            >
+                              {officeStatusLoading === office.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <PlayCircle className="h-4 w-4" />
+                              )}
+                              <span className="ml-1">Reativar</span>
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => {
+                              setOfficeToDelete(office as OfficeRow)
+                              setDeleteConfirmSlug("")
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="ml-1">Excluir</span>
+                          </Button>
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
               </div>
+
+              <Dialog open={!!officeToDelete} onOpenChange={(open) => !open && setOfficeToDelete(null)}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Excluir escritório permanentemente?</DialogTitle>
+                    <DialogDescription>
+                      Esta ação não pode ser desfeita. Serão excluídos em cascata: o escritório, membros do escritório,
+                      empresas, documentos fiscais, arquivos e todos os dados relacionados. Para confirmar, digite o
+                      slug do escritório abaixo.
+                    </DialogDescription>
+                  </DialogHeader>
+                  {officeToDelete && (
+                    <>
+                      <p className="text-sm font-medium text-destructive">
+                        Escritório: {officeToDelete.name} — slug: <span className="font-mono">{officeToDelete.slug}</span>
+                      </p>
+                      <Input
+                        placeholder="Digite o slug para confirmar"
+                        value={deleteConfirmSlug}
+                        onChange={(e) => setDeleteConfirmSlug(e.target.value)}
+                        className="font-mono"
+                        autoComplete="off"
+                      />
+                    </>
+                  )}
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setOfficeToDelete(null)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={
+                        !officeToDelete ||
+                        deleteConfirmSlug.trim().toLowerCase() !== (officeToDelete?.slug ?? "").trim().toLowerCase() ||
+                        deleteLoading
+                      }
+                      onClick={() => void handleDeleteOffice()}
+                    >
+                      {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      <span className="ml-2">Excluir permanentemente</span>
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
         </GlassCard>

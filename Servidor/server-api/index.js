@@ -11,9 +11,8 @@ import dotenv from "dotenv";
 import { createHash, timingSafeEqual } from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, ".env") });
-// .env da raiz por último e override: true para prevalecer sobre env do sistema/PM2 (ex.: BASE_PATH)
-dotenv.config({ path: path.join(__dirname, "../../.env"), override: true });
+// Único .env: pasta Servidor (um nível acima). Path absoluto para PM2/Windows.
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 import express from "express";
 import cors from "cors";
@@ -32,43 +31,69 @@ const PORT = process.env.PORT || 3001;
 // (ngrok envia X-Forwarded-For)
 app.set("trust proxy", 1);
 
-// Base path: Supabase (admin) na inicialização; fallback para .env
-let BASE_PATH = (process.env.BASE_PATH || "C:\\Users\\ROBO\\Documents").trim();
+// Base path: .env tem prioridade; Supabase só sobrescreve se BASE_PATH não veio do .env
+const ENV_BASE_PATH = (process.env.BASE_PATH || "").trim();
+let BASE_PATH = ENV_BASE_PATH || "C:\\Users\\ROBO\\Documents";
 let OFFICE_SERVER_ID = null;
 let OFFICE_ID = null;
+let OFFICE_NAME = null;
+const FISCAL_SYNC_VERSION = "2025-03-18-office-id-fix-v2";
 
 async function loadBasePathFromSupabase() {
   const url = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) return;
+  if (!url || !serviceKey) {
+    console.warn("[fiscal-watcher] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente no .env; vínculo com escritório não será carregado.");
+    return;
+  }
   try {
     const supabase = createClient(url, serviceKey);
     if (CONNECTOR_SECRET_HASH) {
-      const { data: credential } = await supabase
+      const hashPreview = CONNECTOR_SECRET_HASH.slice(0, 8) + "...";
+      const { data: credential, error: credError } = await supabase
         .from("office_server_credentials")
         .select("office_server_id")
         .eq("secret_hash", CONNECTOR_SECRET_HASH)
         .maybeSingle();
-      if (credential?.office_server_id) {
-        const { data: officeServer } = await supabase
-          .from("office_servers")
-          .select("id, office_id, base_path")
-          .eq("id", credential.office_server_id)
-          .maybeSingle();
-        if (officeServer?.id) {
-          OFFICE_SERVER_ID = officeServer.id;
-          OFFICE_ID = officeServer.office_id ?? null;
-        }
-        if (officeServer?.base_path && String(officeServer.base_path).trim()) {
-          BASE_PATH = String(officeServer.base_path).trim();
-          return;
-        }
+      if (credError) {
+        console.error("[fiscal-watcher] Erro ao buscar credential:", credError.message);
+        return;
       }
-      return;
+      if (!credential?.office_server_id) {
+        console.warn("[fiscal-watcher] Nenhum credential com hash", hashPreview, "no Supabase. Verifique CONNECTOR_SECRET no .env e office_server_credentials (secret_hash).");
+        return;
+      }
+      const { data: officeServer, error: osError } = await supabase
+        .from("office_servers")
+        .select("id, office_id, base_path")
+        .eq("id", credential.office_server_id)
+        .maybeSingle();
+      if (osError) {
+        console.error("[fiscal-watcher] Erro ao buscar office_server:", osError.message);
+        return;
+      }
+      if (officeServer?.id) {
+        OFFICE_SERVER_ID = officeServer.id;
+        OFFICE_ID = officeServer.office_id ?? null;
+        const { data: office } = await supabase
+          .from("offices")
+          .select("name")
+          .eq("id", OFFICE_ID)
+          .maybeSingle();
+        OFFICE_NAME = office?.name ?? null;
+        if (!ENV_BASE_PATH && officeServer?.base_path && String(officeServer.base_path).trim()) {
+          BASE_PATH = String(officeServer.base_path).trim();
+        }
+        return;
+      }
     }
-    const { data } = await supabase.from("admin_settings").select("value").eq("key", "base_path").maybeSingle();
-    if (data?.value && String(data.value).trim()) BASE_PATH = String(data.value).trim();
-  } catch (_) {}
+    if (!ENV_BASE_PATH) {
+      const { data } = await supabase.from("admin_settings").select("value").eq("key", "base_path").maybeSingle();
+      if (data?.value && String(data.value).trim()) BASE_PATH = String(data.value).trim();
+    }
+  } catch (err) {
+    console.error("[fiscal-watcher] loadBasePathFromSupabase:", err?.message ?? err);
+  }
 }
 
 function getBaseResolved() {
@@ -79,7 +104,10 @@ function sha256Hex(value) {
   return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
 }
 
-const CONNECTOR_SECRET = String(process.env.CONNECTOR_SECRET || "").trim();
+// Normaliza o segredo: remove espaços/quebras (evita .env com \r ou espaço) e aceita só hex quando for 64 chars
+const _rawSecret = String(process.env.CONNECTOR_SECRET || "").trim();
+const _cleanHex = _rawSecret.replace(/\s+/g, "").replace(/[^0-9a-fA-F]/g, "");
+const CONNECTOR_SECRET = _cleanHex.length === 64 ? _cleanHex.toLowerCase() : _rawSecret;
 const CONNECTOR_SECRET_HASH = CONNECTOR_SECRET ? sha256Hex(CONNECTOR_SECRET) : "";
 
 function safeTokenEqual(expected, received) {
@@ -771,30 +799,35 @@ function walkDir(dir, baseDir) {
  * Executa a sincronização completa EMPRESAS -> fiscal_documents.
  * Inclui remoção: registros cujo arquivo não existe mais na pasta são removidos do banco.
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase - Cliente Supabase (JWT do usuário ou service role)
- * @returns {{ inserted: number, skipped: number, deleted: number, errors: Array<{ file: string, error: string }> }}
- */
-/**
- * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string | null} [officeId] - Se informado (ex.: watcher), usa nos inserts; senão usa current_office_id() do JWT.
+ * @returns {{ inserted: number, skipped: number, deleted: number, errors: Array<{ file: string, error: string }> }}
  */
 async function runFiscalSyncAll(supabase, officeId = null) {
   const result = { inserted: 0, skipped: 0, deleted: 0, errors: [] };
+  const effectiveOfficeId = officeId || OFFICE_ID || null;
+  console.log(`[fiscal-watcher] runFiscalSyncAll effectiveOfficeId=${effectiveOfficeId} (officeId=${officeId}, OFFICE_ID=${OFFICE_ID})`);
+  if (!effectiveOfficeId) {
+    result.errors.push({ file: "(início)", error: "office_id ausente — VM não vinculada ao escritório (CONNECTOR_SECRET no .env e credential no Supabase)" });
+    return result;
+  }
   const empresasPath = BASE_PATH;
   const empresasExists = fs.existsSync(empresasPath) && fs.statSync(empresasPath).isDirectory();
   const allPathsOnDisk = empresasExists ? new Set(walkDir("", BASE_PATH)) : new Set();
 
   let q = supabase.from("companies").select("id, name, office_id");
-  if (officeId) q = q.eq("office_id", officeId);
-  const { data: companies } = await q;
-  const nameToId = new Map((companies || []).map((c) => [normalizeCompanyName(c.name), c.id]));
+  q = q.eq("office_id", effectiveOfficeId);
+  const { data: companiesRaw } = await q;
+  const companies = (companiesRaw || []).filter((c) => c && String(c.office_id) === String(effectiveOfficeId));
+  const nameToId = new Map(companies.map((c) => [normalizeCompanyName(c.name), c.id]));
   /** Por company_id: Set de file_path que existem no disco. Inicializa para todas as empresas (vazio se pasta não existir). */
-  const pathsOnDiskByCompany = new Map((companies || []).map((c) => [c.id, new Set()]));
+  const pathsOnDiskByCompany = new Map(companies.map((c) => [c.id, new Set()]));
 
   if (!empresasExists) {
     // Pasta base não existe: espelhar “zerando” para qualquer documento salvo no fiscal_documents.
     const { data: rows } = await supabase
       .from("fiscal_documents")
       .select("id, file_path")
+      .eq("office_id", effectiveOfficeId)
       .not("file_path", "is", null);
     const idsToDelete = (rows || []).map((r) => r.id);
     if (idsToDelete.length > 0) {
@@ -811,6 +844,7 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     const companyId = nameToId.get(normalizeCompanyName(companyName));
     if (!companyId) continue;
     const pathsOnDisk = pathsOnDiskByCompany.get(companyId);
+    if (!pathsOnDisk) continue;
 
     for (const sub of ["Recebidas", "Emitidas"]) {
       const segment = path.join(companyName, "FISCAL", "NFS", sub).replace(/\\/g, "/");
@@ -833,8 +867,8 @@ async function runFiscalSyncAll(supabase, officeId = null) {
           result.skipped++;
           continue;
         }
-        const row = { company_id: companyId, type: "NFS", chave, periodo, status: "novo", file_path: fileRel };
-        if (officeId) row.office_id = officeId;
+        const row = { office_id: String(effectiveOfficeId), company_id: companyId, type: "NFS", chave, periodo, status: "novo", file_path: fileRel };
+        if (result.inserted + result.skipped === 0) console.log("[fiscal-watcher] Primeiro insert NFS payload:", JSON.stringify(row));
         const { error } = await supabase.from("fiscal_documents").insert(row);
         if (error) {
           if (error.code === "23505") {
@@ -873,8 +907,7 @@ async function runFiscalSyncAll(supabase, officeId = null) {
           result.skipped++;
           continue;
         }
-        const row = { company_id: companyId, type: docType, chave, periodo, status: "novo", file_path: fileRel };
-        if (officeId) row.office_id = officeId;
+        const row = { office_id: String(effectiveOfficeId), company_id: companyId, type: docType, chave, periodo, status: "novo", file_path: fileRel };
         const { error } = await supabase.from("fiscal_documents").insert(row);
         if (error) {
           if (error.code === "23505") {
@@ -889,10 +922,12 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     }
   }
 
-  // Espelhamento: remove do banco os registros cujo arquivo não existe mais na pasta (apagar na VM = some do dashboard).
-  let qDelete = supabase.from("fiscal_documents").select("id, file_path").not("file_path", "is", null);
-  if (officeId) qDelete = qDelete.eq("office_id", officeId);
-  const { data: rowsToMirrorDelete } = await qDelete;
+  // Espelhamento: remove do banco os registros DESTE ESCRITÓRIO cujo arquivo não existe mais na pasta.
+  const { data: rowsToMirrorDelete } = await supabase
+    .from("fiscal_documents")
+    .select("id, file_path")
+    .eq("office_id", effectiveOfficeId)
+    .not("file_path", "is", null);
   const idsToDelete = (rowsToMirrorDelete || [])
     .filter((r) => !allPathsOnDisk.has(r.file_path))
     .map((r) => r.id);
@@ -1045,7 +1080,11 @@ function startFiscalWatcher() {
   const DEBOUNCE_MS = 4000;
 
   const runSync = () => {
-    runFiscalSyncAll(supabase, OFFICE_ID || null)
+    if (!OFFICE_ID) {
+      console.warn("[fiscal-watcher] OFFICE_ID ausente (CONNECTOR_SECRET não vinculado a um office_server?). Sync ignorado.");
+      return;
+    }
+    runFiscalSyncAll(supabase, OFFICE_ID)
       .then(({ inserted, skipped, deleted, errors }) => {
         if (inserted > 0 || deleted > 0 || errors.length > 0) {
           console.log(`[fiscal-watcher] Sync: ${inserted} inseridos, ${skipped} já existentes${deleted ? `, ${deleted} removidos` : ""}${errors.length ? `, ${errors.length} erros` : ""}`);
@@ -1067,9 +1106,11 @@ function startFiscalWatcher() {
       }, DEBOUNCE_MS);
     });
     console.log("[fiscal-watcher] Monitorando a pasta base da VM — novos XML/PDF serão sincronizados automaticamente.");
-    // Sync inicial ao subir
-    setTimeout(() => { runSync(); }, 2000);
-    // Sync periódico: no Windows o fs.watch às vezes não dispara ao apagar arquivos; a cada 1 min o espelho é refeito
+    // Sync inicial após 8s para garantir que OFFICE_ID já foi carregado do Supabase
+    setTimeout(() => {
+      if (!OFFICE_ID) console.error("[fiscal-watcher] OFFICE_ID ainda null; sync inicial ignorado. Verifique CONNECTOR_SECRET e office_server_credentials no Supabase.");
+      else runSync();
+    }, 8000);
     const intervalMs = Number(process.env.FISCAL_SYNC_INTERVAL_MS || 60_000);
     setInterval(runSync, intervalMs);
   } catch (err) {
@@ -1128,11 +1169,17 @@ function startOfficeRefreshWorker() {
 loadBasePathFromSupabase().then(() => {
   app.listen(PORT, () => {
     console.log(`API unificada em http://localhost:${PORT}`);
+    console.log(`[fiscal-watcher] ${FISCAL_SYNC_VERSION}`);
     console.log(`BASE_PATH: ${BASE_PATH}`);
     console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
     console.log(`CONNECTOR_SECRET: ${CONNECTOR_SECRET_HASH ? "configurado" : "ausente"}`);
     if (OFFICE_SERVER_ID) console.log(`OFFICE_SERVER_ID: ${OFFICE_SERVER_ID}`);
-    if (OFFICE_ID) console.log(`OFFICE_ID: ${OFFICE_ID}`);
+    console.log(`OFFICE_ID: ${OFFICE_ID ?? "null"}`);
+    if (OFFICE_NAME && OFFICE_ID) {
+      console.log(`[fiscal-watcher] ENVIO PRO ESCRITORIO: ${OFFICE_NAME} (id=${OFFICE_ID}) — dados fiscais e empresas somente deste escritório.`);
+    } else {
+      console.log(`[fiscal-watcher] ENVIO PRO ESCRITORIO: não configurado (CONNECTOR_SECRET/credential sem vínculo). Nenhum dado será enviado até vincular.`);
+    }
     startOfficeRefreshWorker();
     startFiscalWatcher();
   });

@@ -11,7 +11,8 @@
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+// Único .env: pasta Servidor (um nível acima). Não use mais whatsapp-emissor/.env.
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrImage = require("qr-image");
 const { spawnSync } = require("child_process");

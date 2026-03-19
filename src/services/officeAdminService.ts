@@ -107,3 +107,22 @@ export async function updateCurrentOfficeServer(
   if (error) throw error
   return data as OfficeServerRecord
 }
+
+/** Apenas super_admin. Inativar ou reativar escritório. */
+export async function setOfficeStatus(officeId: string, status: "active" | "inactive"): Promise<{ message: string }> {
+  return invokeFunction<{ message: string }>("manage-office", {
+    action: "set_status",
+    office_id: officeId,
+    status,
+  })
+}
+
+/** Apenas super_admin. Exclui escritório e todos os dados em cascata (empresas, documentos, etc.). Exige confirm_slug. */
+export async function deleteOffice(officeId: string, confirmSlug: string): Promise<{ message: string }> {
+  return invokeFunction<{ message: string }>("manage-office", {
+    action: "delete",
+    office_id: officeId,
+    confirm_delete: true,
+    confirm_slug: confirmSlug,
+  })
+}
