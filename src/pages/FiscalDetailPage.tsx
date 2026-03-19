@@ -6,7 +6,7 @@ import { CursorPagination } from "@/components/common/CursorPagination";
 import { useParams } from "react-router-dom";
 import { FileText, FileDown, CalendarDays, Download, AlertCircle, FileArchive, DollarSign, Calendar, Medal } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
 import { getCertidoesOverviewSummary, getFiscalDetailDocumentPathsForZip, getFiscalDetailDocumentZipPathsRpc, getFiscalDetailDocumentsPage, getFiscalDetailSummary, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
@@ -161,6 +161,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
         cursor: currentCursor,
         limit: pageSize,
       }),
+    placeholderData: keepPreviousData,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
@@ -204,7 +205,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                 <Pie data={chartData} cx="50%" cy="50%" innerRadius={52} outerRadius={72} paddingAngle={2} dataKey="value" stroke="transparent" label={({ value }) => value} labelLine={false}>
                   {chartData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
                 </Pie>
-                <Tooltip formatter={(value: number) => [value, "certidoes"]} />
+                <Tooltip formatter={(value: number) => [value, "certidoes"]} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "8px", fontSize: "12px" }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -290,7 +291,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
           </div>
         </div>
         <div className="overflow-x-auto">
-          {tableLoading ? (
+          {tableLoading && items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando certidoes...</div>
           ) : items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma certidao encontrada.</div>
@@ -335,6 +336,10 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
             pageSize={pageSize}
             shownItems={items.length}
             hasMore={hasMore}
+            onFirst={() => {
+              setPage(1);
+              setCursorHistory([null]);
+            }}
             onPrevious={() => setPage((current) => Math.max(1, current - 1))}
             onNext={() => {
               if (!certidoesPage?.nextCursor || !hasMore) return;
@@ -732,6 +737,10 @@ export default function FiscalDetailPage() {
             pageSize={pageSize}
             shownItems={pageItems.length}
             hasMore={hasMore}
+            onFirst={() => {
+              setCurrentPage(1);
+              setCursorHistory([null]);
+            }}
             onPrevious={() => setCurrentPage((page) => Math.max(1, page - 1))}
             onNext={() => {
               if (!documentsPage?.nextCursor || !hasMore) return;

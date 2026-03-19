@@ -76,13 +76,13 @@ export default function Dashboard() {
           title="Fiscal hoje"
           value={overviewLoading ? "—" : (overview?.executiveSummary.fiscal.processadosHoje ?? 0).toLocaleString()}
           icon={FolderArchive}
-          description="Documentos fiscais processados hoje."
+          description="Documentos/arquivos processados hoje (data de entrada)."
         />
         <StatsCard
           title="Total de documentos"
-          value={overviewLoading ? "—" : (overview?.documentsCount ?? 0).toLocaleString()}
+          value={overviewLoading ? "—" : (overview?.totalArquivosFisicos ?? overview?.totalDocuments ?? 0).toLocaleString()}
           icon={FileText}
-          description="Quantidade total de documentos fiscais no sistema."
+          description="Total de arquivos físicos (PDF, XML e outros) armazenados."
         />
         <StatsCard
           title="Guias de DP"
@@ -158,8 +158,12 @@ export default function Dashboard() {
           </div>
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
-              <span className="text-muted-foreground">Total de documentos</span>
-              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.fiscal.totalDocumentos ?? 0} /></span>
+              <span className="text-muted-foreground">Total de notas</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.fiscal.totalNotasFiscais ?? overview?.executiveSummary.fiscal.totalDocumentos ?? 0} /></span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
+              <span className="text-muted-foreground">Total de arquivos</span>
+              <span className="font-semibold"><AnimatedNumber value={overview?.executiveSummary.fiscal.totalArquivosFisicos ?? 0} /></span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-muted/20 px-3 py-2">
               <span className="text-muted-foreground">Processados hoje</span>

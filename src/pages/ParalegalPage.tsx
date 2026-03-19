@@ -1,5 +1,5 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   ArrowDownUp,
@@ -337,6 +337,7 @@ function MunicipalTaxesPanel({
         page: tablePage,
         pageSize: tablePageSize,
       }),
+    placeholderData: keepPreviousData,
   })
 
   const pageItems = debtsPage?.items ?? []
@@ -613,7 +614,7 @@ function MunicipalTaxesPanel({
           </div>
         </div>
         <div className="overflow-x-auto -webkit-overflow-scrolling-touch rounded-b-lg border-x border-b border-border">
-          {debtsPageLoading ? (
+          {debtsPageLoading && pageItems.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">Carregando debitos municipais...</div>
           ) : pageItems.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">Nenhum debito encontrado para os filtros informados.</div>

@@ -845,7 +845,7 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
 
   let docsQuery = supabase
     .from("fiscal_documents")
-    .select("id, company_id, type, status, periodo, document_date, created_at, file_path")
+    .select("id, company_id, type, status, periodo, document_date, created_at, file_path, chave")
     .order("created_at", { ascending: false })
   if (companyFilter) docsQuery = docsQuery.in("company_id", companyFilter)
 
@@ -876,7 +876,7 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
     .select("id, company_id, periodo, status, pendencias_count, created_at")
   if (companyFilter) financialRecordsQuery = financialRecordsQuery.in("company_id", companyFilter)
 
-  const [companiesCountRes, docs, syncRes, fiscalPendencias, dpChecklist, dpGuias, financialRecords] = await Promise.all([
+  const [companiesCountRes, docsRaw, syncRes, fiscalPendencias, dpChecklist, dpGuias, financialRecords] = await Promise.all([
     supabase.from("companies").select("id", { count: "exact", head: true }),
     fetchAllPages<{
       id: string
@@ -887,6 +887,7 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
       document_date?: string | null
       created_at?: string | null
       file_path?: string | null
+      chave?: string | null
     }>((from, to) => docsQuery.range(from, to)),
     syncQuery,
     fetchAllPages<{
@@ -920,6 +921,15 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
 
   if (companiesCountRes.error) throw companiesCountRes.error
   if (syncRes.error) throw syncRes.error
+  const docKey = (d: { id: string; chave?: string | null }) =>
+    (d.chave && String(d.chave).trim() ? String(d.chave).trim() : d.id) as string
+  const seenDocs = new Set<string>()
+  const docs = docsRaw.filter((d) => {
+    const key = docKey(d)
+    if (seenDocs.has(key)) return false
+    seenDocs.add(key)
+    return true
+  })
   const companyIdsUsed = [...new Set([
     ...docs.map((doc) => doc.company_id),
     ...dpGuias.map((item) => item.company_id),
@@ -945,9 +955,11 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
     if (monthCountMap.has(refDate)) monthCountMap.set(refDate, (monthCountMap.get(refDate) ?? 0) + 1)
   }
 
-  const processedDocuments = docs.length
-  const importedDocuments = docs.filter((doc) => Boolean(doc.file_path)).length
-  const totalDocuments = docs.length
+  const totalNotasFiscais = docs.length
+  const totalArquivosFisicos = new Set(docs.map((d) => d.file_path).filter((p): p is string => Boolean(p && String(p).trim()))).size
+  const processedDocuments = totalNotasFiscais
+  const importedDocuments = totalArquivosFisicos
+  const totalDocuments = totalArquivosFisicos
   const today = new Date().toISOString().slice(0, 10)
   const currentMonth = today.slice(0, 7)
   const syncEvents = syncRes.data ?? []
@@ -979,7 +991,9 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
 
   return {
     companiesCount: companiesCountRes.count ?? 0,
-    documentsCount: processedDocuments,
+    documentsCount: totalNotasFiscais,
+    totalNotasFiscais,
+    totalArquivosFisicos,
     importedDocuments,
     totalDocuments,
     docsByType: [
@@ -995,7 +1009,7 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
     topCompanies,
     fiscalSummary: {
       totalPendencias: fiscalPendenciasAbertas.length,
-      totalDocumentos: docs.length,
+      totalDocumentos: totalNotasFiscais,
     },
     dpSummary: {
       totalPendencias: dpPendencias.length,
@@ -1019,7 +1033,9 @@ async function getDashboardOverviewLegacy(companyIds: string[] | null) {
     },
     executiveSummary: {
       fiscal: {
-        totalDocumentos: docs.length,
+        totalDocumentos: totalNotasFiscais,
+        totalNotasFiscais,
+        totalArquivosFisicos,
         processadosHoje: docs.filter((doc) => resolveDocumentReferenceDate(doc) === today).length,
         empresasAtivas: fiscalCompanyCount,
       },
@@ -1069,8 +1085,6 @@ export async function getFiscalOverviewAnalytics(companyIds: string[] | null, da
       cards?: {
         totalDocumentos?: number
         documentosHoje?: number
-        documentosPendentes?: number
-        documentosRejeitados?: number
         empresasComEmissao?: number
       }
       byType?: Array<{ name?: string; value?: number }>
@@ -1085,8 +1099,6 @@ export async function getFiscalOverviewAnalytics(companyIds: string[] | null, da
       cards: {
         totalDocumentos: Number(payload.cards?.totalDocumentos ?? 0),
         documentosHoje: Number(payload.cards?.documentosHoje ?? 0),
-        documentosPendentes: Number(payload.cards?.documentosPendentes ?? 0),
-        documentosRejeitados: Number(payload.cards?.documentosRejeitados ?? 0),
         empresasComEmissao: Number(payload.cards?.empresasComEmissao ?? 0),
       },
       byType: (payload.byType ?? []).map((item) => ({
@@ -1124,6 +1136,8 @@ export async function getDashboardOverview(companyIds: string[] | null) {
     const payload = (data ?? {}) as {
       companiesCount?: number
       documentsCount?: number
+      totalNotasFiscais?: number
+      totalArquivosFisicos?: number
       importedDocuments?: number
       totalDocuments?: number
       docsByType?: Array<{ name?: string; value?: number }>
@@ -1148,7 +1162,13 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       }
       pendingTabs?: { fiscal?: number; dp?: number; total?: number }
       executiveSummary?: {
-        fiscal?: { totalDocumentos?: number; processadosHoje?: number; empresasAtivas?: number }
+        fiscal?: {
+          totalDocumentos?: number
+          totalNotasFiscais?: number
+          totalArquivosFisicos?: number
+          processadosHoje?: number
+          empresasAtivas?: number
+        }
         dp?: { guiasGeradas?: number; guiasPendentes?: number; folhaProcessadaMes?: number }
         contabil?: { balancosGerados?: number; empresasAtualizadas?: number; pendentes?: number }
       }
@@ -1157,11 +1177,15 @@ export async function getDashboardOverview(companyIds: string[] | null) {
     }
 
     const monthLabels = new Map(buildMonthKeys(6).map((item) => [item.key, item.label]))
+    const totalNotasFiscais = Number(payload.totalNotasFiscais ?? payload.documentsCount ?? 0)
+    const totalArquivosFisicos = Number(payload.totalArquivosFisicos ?? payload.totalDocuments ?? 0)
     return {
       companiesCount: Number(payload.companiesCount ?? 0),
-      documentsCount: Number(payload.documentsCount ?? 0),
-      importedDocuments: Number(payload.importedDocuments ?? 0),
-      totalDocuments: Number(payload.totalDocuments ?? 0),
+      documentsCount: totalNotasFiscais,
+      totalNotasFiscais,
+      totalArquivosFisicos,
+      importedDocuments: totalArquivosFisicos,
+      totalDocuments: totalArquivosFisicos,
       docsByType: (payload.docsByType ?? []).map((item) => ({
         name: String(item.name ?? "Outros"),
         value: Number(item.value ?? 0),
@@ -1205,7 +1229,9 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       },
       executiveSummary: {
         fiscal: {
-          totalDocumentos: Number(payload.executiveSummary?.fiscal?.totalDocumentos ?? 0),
+          totalDocumentos: Number(payload.executiveSummary?.fiscal?.totalDocumentos ?? totalNotasFiscais),
+          totalNotasFiscais: Number(payload.executiveSummary?.fiscal?.totalNotasFiscais ?? totalNotasFiscais),
+          totalArquivosFisicos: Number(payload.executiveSummary?.fiscal?.totalArquivosFisicos ?? totalArquivosFisicos),
           processadosHoje: Number(payload.executiveSummary?.fiscal?.processadosHoje ?? 0),
           empresasAtivas: Number(payload.executiveSummary?.fiscal?.empresasAtivas ?? 0),
         },

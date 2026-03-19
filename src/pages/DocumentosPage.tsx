@@ -3,7 +3,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { FileText, Download, Filter, Search, FileArchive } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getUnifiedDocumentsPage, getUnifiedDocumentsZipPaths, type CursorPageToken } from "@/services/documentsService";
 import { downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi } from "@/services/serverFileService";
@@ -114,6 +114,7 @@ export default function DocumentosPage() {
         cursor: currentCursor,
         limit: pageSize,
       }),
+    placeholderData: keepPreviousData,
     staleTime: 25_000,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
@@ -296,7 +297,7 @@ export default function DocumentosPage() {
           </div>
         </div>
 
-        {isLoading ? (
+        {isLoading && pageDocuments.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
         ) : (
           <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
@@ -354,12 +355,16 @@ export default function DocumentosPage() {
           </div>
         )}
 
-        {!isLoading && pageDocuments.length > 0 && (
+        {pageDocuments.length > 0 && (
           <CursorPagination
             currentPage={currentPage}
             pageSize={pageSize}
             shownItems={pageDocuments.length}
             hasMore={hasMore}
+            onFirst={() => {
+              setCurrentPage(1);
+              setCursorHistory([null]);
+            }}
             onPrevious={() => setCurrentPage((page) => Math.max(1, page - 1))}
             onNext={() => {
               if (!documentsPage?.nextCursor || !hasMore) return;

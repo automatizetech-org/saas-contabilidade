@@ -578,7 +578,7 @@ export default function InteligenciaTributariaTopicPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(value: number) => formatCurrencyBRL(value)} />
+                <Tooltip formatter={(value: number) => formatCurrencyBRL(value)} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "8px", fontSize: "12px" }} />
                 <Bar dataKey="value" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -594,7 +594,7 @@ export default function InteligenciaTributariaTopicPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(value: number) => formatCurrencyBRL(value)} />
+                <Tooltip formatter={(value: number) => formatCurrencyBRL(value)} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "8px", fontSize: "12px" }} />
                 <Bar dataKey="value" fill="#0f766e" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -629,7 +629,7 @@ export default function InteligenciaTributariaTopicPage() {
                 >
                   {(result?.breakdown ?? []).map((item, index) => <Cell key={item.tax} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />)}
                 </Pie>
-                <Tooltip formatter={(value: number) => formatCurrencyBRL(value)} />
+                <Tooltip formatter={(value: number) => formatCurrencyBRL(value)} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "8px", fontSize: "12px" }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -643,7 +643,7 @@ export default function InteligenciaTributariaTopicPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.35} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(value: number) => formatPercentBRL(value, 4)} />
+                <Tooltip formatter={(value: number) => formatPercentBRL(value, 4)} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "8px", fontSize: "12px" }} />
                 <Bar dataKey="value" radius={[8, 8, 0, 0]}>
                   <Cell fill="#0f172a" />
                   <Cell fill="#2563eb" />

@@ -1,3 +1,4 @@
+import { ChevronsLeft, ChevronsRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Pagination,
@@ -12,6 +13,7 @@ type CursorPaginationProps = {
   pageSize: number;
   shownItems: number;
   hasMore: boolean;
+  onFirst: () => void;
   onPrevious: () => void;
   onNext: () => void;
   onPageSizeChange: (pageSize: number) => void;
@@ -24,6 +26,7 @@ export function CursorPagination({
   pageSize,
   shownItems,
   hasMore,
+  onFirst,
   onPrevious,
   onNext,
   onPageSizeChange,
@@ -31,6 +34,9 @@ export function CursorPagination({
   label = "por página",
 }: CursorPaginationProps) {
   if (shownItems <= 0) return null;
+
+  const from = (currentPage - 1) * pageSize + 1;
+  const to = (currentPage - 1) * pageSize + shownItems;
 
   return (
     <div className="flex flex-col gap-3 border-t border-border bg-muted/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -50,12 +56,25 @@ export function CursorPagination({
         <span className="text-xs text-muted-foreground">{label}</span>
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span className="text-xs text-muted-foreground">
-          Página {currentPage} • {shownItems} item(ns)
+          Itens {from}-{to}
         </span>
         <Pagination className="mx-0 w-auto justify-start">
           <PaginationContent>
+            <PaginationItem>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-0.5 px-2 text-xs"
+                onClick={onFirst}
+                disabled={currentPage <= 1}
+                aria-label="Primeira página"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+                <span className="hidden sm:inline">Primeira</span>
+              </Button>
+            </PaginationItem>
             <PaginationItem>
               <PaginationPrevious
                 href="#"
@@ -68,7 +87,7 @@ export function CursorPagination({
             </PaginationItem>
             <PaginationItem>
               <Button variant="outline" size="sm" className="h-8 px-3 text-xs" disabled>
-                {hasMore ? "Mais resultados disponíveis" : "Fim da lista"}
+                Página {currentPage}
               </Button>
             </PaginationItem>
             <PaginationItem>
@@ -80,6 +99,20 @@ export function CursorPagination({
                 }}
                 className={!hasMore ? "pointer-events-none opacity-50" : ""}
               />
+            </PaginationItem>
+            <PaginationItem>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-0.5 px-2 text-xs shrink-0"
+                disabled={!hasMore}
+                onClick={onNext}
+                aria-label="Avançar até a última página"
+                title={hasMore ? "Avançar páginas (listagem por cursor)" : "Fim da lista"}
+              >
+                <span className="hidden sm:inline">Última</span>
+                <ChevronsRight className="h-4 w-4" />
+              </Button>
             </PaginationItem>
           </PaginationContent>
         </Pagination>

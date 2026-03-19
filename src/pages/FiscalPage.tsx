@@ -6,7 +6,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DonutChart, MiniChart } from "@/components/dashboard/Charts";
-import { Building2, CalendarDays, FileText, FileWarning, Receipt, TimerReset } from "lucide-react";
+import { Building2, CalendarDays, Receipt } from "lucide-react";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getFiscalOverviewAnalytics, getRecentFiscalDocuments } from "@/services/dashboardService";
 
@@ -44,8 +44,6 @@ export default function FiscalPage() {
   const cards = analytics?.cards ?? {
     totalDocumentos: 0,
     documentosHoje: 0,
-    documentosPendentes: 0,
-    documentosRejeitados: 0,
     empresasComEmissao: 0,
   };
   const byType = analytics?.byType ?? [];
@@ -59,14 +57,13 @@ export default function FiscalPage() {
     { tipo: "NF-e", valor: byTypeSummary.NFE, descricao: "Notas fiscais eletrônicas", path: "/fiscal/nfe-nfc" },
     { tipo: "NFC-e", valor: byTypeSummary.NFC, descricao: "Notas ao consumidor", path: "/fiscal/nfe-nfc" },
     { tipo: "Outros", valor: byTypeSummary.outros, descricao: "Demais tipos localizados", path: "/documentos" },
-    { tipo: "Pendentes", valor: cards.documentosPendentes, descricao: "Documentos com atenção operacional", path: "/documentos" },
     { tipo: "Empresas ativas", valor: cards.empresasComEmissao, descricao: "Empresas com emissão no período", path: "/empresas" },
   ];
 
   const tooltipStyle = {
-    background: "#ffffff",
-    color: "#111827",
-    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "var(--ap-tooltip-bg)",
+    color: "var(--ap-tooltip-text)",
+    border: "1px solid var(--ap-tooltip-border)",
     borderRadius: "10px",
     fontSize: "12px",
   };
@@ -99,12 +96,10 @@ export default function FiscalPage() {
         <div className="text-sm text-muted-foreground">Carregando…</div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-            <StatsCard title="Total no período" value={cards.totalDocumentos.toLocaleString()} icon={Receipt} />
-            <StatsCard title="Emitidos hoje" value={cards.documentosHoje.toLocaleString()} icon={CalendarDays} />
-            <StatsCard title="Pendentes" value={cards.documentosPendentes.toLocaleString()} icon={TimerReset} changeType={cards.documentosPendentes > 0 ? "negative" : "positive"} />
-            <StatsCard title="Rejeitados" value={cards.documentosRejeitados.toLocaleString()} icon={FileWarning} changeType={cards.documentosRejeitados > 0 ? "negative" : "neutral"} />
-            <StatsCard title="Empresas com emissão" value={cards.empresasComEmissao.toLocaleString()} icon={Building2} />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <StatsCard title="Total no período" value={cards.totalDocumentos.toLocaleString()} icon={Receipt} description="Notas fiscais no período (documentos reais)" />
+            <StatsCard title="Emitidos hoje" value={cards.documentosHoje.toLocaleString()} icon={CalendarDays} description="Documentos com data de referência hoje" />
+            <StatsCard title="Empresas com emissão" value={cards.empresasComEmissao.toLocaleString()} icon={Building2} description="Empresas com pelo menos uma nota no período" />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

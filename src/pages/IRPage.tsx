@@ -891,7 +891,7 @@ export default function IRPage() {
                 <Pie data={progressChartData} cx="50%" cy="50%" innerRadius={54} outerRadius={82} paddingAngle={3} dataKey="value" label={({ value }) => value} labelLine={false}>
                   {progressChartData.map((item) => <Cell key={item.name} fill={item.color} />)}
                 </Pie>
-                <Tooltip formatter={(value: number) => [value, "clientes"]} contentStyle={{ background: "#ffffff", color: "#111827", border: "1px solid rgba(15, 23, 42, 0.12)", borderRadius: "10px", fontSize: "12px" }} />
+                <Tooltip formatter={(value: number) => [value, "clientes"]} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "10px", fontSize: "12px" }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -909,7 +909,7 @@ export default function IRPage() {
                     <Pie data={paymentChartData} cx="50%" cy="50%" innerRadius={54} outerRadius={82} paddingAngle={3} dataKey="value" labelLine={false}>
                       {paymentChartData.map((item) => <Cell key={item.name} fill={item.color} />)}
                     </Pie>
-                    <Tooltip formatter={(value: number) => [formatCurrency(Number(value)), "valor"]} contentStyle={{ background: "#ffffff", color: "#111827", border: "1px solid rgba(15, 23, 42, 0.12)", borderRadius: "10px", fontSize: "12px" }} />
+                    <Tooltip formatter={(value: number) => [formatCurrency(Number(value)), "valor"]} contentStyle={{ background: "var(--ap-tooltip-bg)", color: "var(--ap-tooltip-text)", border: "1px solid var(--ap-tooltip-border)", borderRadius: "10px", fontSize: "12px" }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
