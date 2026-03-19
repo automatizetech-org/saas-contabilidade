@@ -23,6 +23,7 @@ import { GlassCard } from "@/components/dashboard/GlassCard"
 import { StatsCard } from "@/components/dashboard/StatsCard"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { Progress } from "@/components/ui/progress"
 import { DataPagination } from "@/components/common/DataPagination"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -48,7 +49,7 @@ import {
   type MunicipalTaxOverview,
   type MunicipalTaxStatusClass,
 } from "@/services/municipalTaxesService"
-import { downloadServerFileByPath, downloadServerFilesZip, hasServerApi } from "@/services/serverFileService"
+import { downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi } from "@/services/serverFileService"
 import { cn } from "@/utils"
 import { toast } from "sonner"
 import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling"
@@ -296,6 +297,7 @@ function MunicipalTaxesPanel({
     totalValor: 0,
   }
   const [downloadingZip, setDownloadingZip] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState(0)
   const [tablePage, setTablePage] = useState(1)
   const [tablePageSize, setTablePageSize] = useState(10)
 
@@ -341,7 +343,13 @@ function MunicipalTaxesPanel({
   const totalPages = Math.max(1, Math.ceil(totalFiltered / tablePageSize))
   const from = (tablePage - 1) * tablePageSize
   const to = Math.min(from + tablePageSize, totalFiltered)
-  const listedGuidePaths = pageItems.map((item) => String(item.guia_pdf_path || "").trim()).filter(Boolean)
+  const listedGuideItems = pageItems
+    .filter((item) => item.guia_pdf_path && String(item.guia_pdf_path).trim())
+    .map((item) => ({
+      companyName: item.company_name || "EMPRESA",
+      category: "taxas e impostos",
+      filePath: String(item.guia_pdf_path!).trim(),
+    }))
 
   const statusChartData = useMemo(() => {
     if (municipalOverview?.byStatus?.length) {
@@ -524,6 +532,14 @@ function MunicipalTaxesPanel({
         </GlassCard>
       </div>
 
+      {downloadingZip && (
+        <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">Baixando ZIP...</p>
+          <Progress value={downloadProgress} className="h-2" />
+          <p className="text-xs text-muted-foreground">{downloadProgress}%</p>
+        </div>
+      )}
+
       <GlassCard className="overflow-hidden">
         <div className="border-b border-border p-4">
           <h3 className="text-sm font-semibold font-display">Tabela completa de debitos</h3>
@@ -553,20 +569,22 @@ function MunicipalTaxesPanel({
               <Button
                 type="button"
                 className="gap-2 xl:justify-self-end"
-                disabled={downloadingZip || listedGuidePaths.length === 0}
+                disabled={downloadingZip || listedGuideItems.length === 0}
                 onClick={async () => {
-                  if (listedGuidePaths.length === 0) {
+                  if (listedGuideItems.length === 0) {
                     toast.error("Nenhum débito com guia disponível na lista.")
                     return
                   }
                   setDownloadingZip(true)
+                  setDownloadProgress(0)
                   try {
-                    await downloadServerFilesZip(listedGuidePaths, "guias-taxas-impostos")
-                    toast.success(`Download iniciado: ${listedGuidePaths.length} guia(s) (página atual).`)
+                    await downloadListedFilesZipWithCategory(listedGuideItems, "guias-taxas-impostos", (p) => setDownloadProgress(p))
+                    toast.success(`Download iniciado: ${listedGuideItems.length} guia(s) (página atual).`)
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.")
                   } finally {
                     setDownloadingZip(false)
+                    setDownloadProgress(0)
                   }
                 }}
               >

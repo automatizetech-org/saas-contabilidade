@@ -49,6 +49,38 @@ async function readError(res: Response) {
   }
 }
 
+/** Baixa a resposta em stream e chama onProgress(0-100). Retorna o blob. */
+async function fetchBlobWithProgress(
+  response: Response,
+  onProgress?: (percent: number) => void
+): Promise<Blob> {
+  if (!response.ok) throw new Error(await readError(response))
+  if (!response.body) throw new Error("Resposta sem corpo.")
+  const contentLength = response.headers.get("Content-Length")
+  const total = contentLength ? Number(contentLength) : 0
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let received = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        chunks.push(value)
+        received += value.length
+        if (onProgress && total > 0) {
+          const percent = Math.min(99, Math.round((received / total) * 100))
+          onProgress(percent)
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  if (onProgress) onProgress(100)
+  return new Blob(chunks)
+}
+
 export function getServerApiUrl(): string {
   return ""
 }
@@ -105,6 +137,9 @@ export async function downloadServerFileByPath(filePath: string, suggestedName?:
 export async function downloadServerFilesZip(filePaths: string[], suggestedName = "guias-municipais"): Promise<void> {
   const paths = filePaths.map((filePath) => String(filePath || "").trim()).filter(Boolean)
   if (paths.length === 0) throw new Error("Nenhum arquivo selecionado para baixar.")
+  if (paths.length > MAX_FILES_CLIENT_ZIP) {
+    throw new Error(`Limite de ${MAX_FILES_CLIENT_ZIP} arquivos por download. Selecione menos itens na lista.`)
+  }
 
   const zip = new JSZip()
   const usedPaths = new Set<string>()
@@ -136,9 +171,17 @@ export async function downloadServerFilesZip(filePaths: string[], suggestedName 
   triggerBlobDownload(zipBlob, `${suggestedName}.zip`)
 }
 
+const MAX_FILES_CLIENT_ZIP = 50000
+
+/**
+ * Download rápido: um único request ao servidor, que monta o ZIP em stream no disco.
+ * Com dezenas de milhares de arquivos é muito mais rápido que N requests no cliente.
+ * onProgress(0-100) opcional para barra de progresso.
+ */
 export async function downloadListedFilesZipWithCategory(
   items: Array<{ companyName: string; category: string; filePath: string }>,
-  suggestedName = "documentos"
+  suggestedName = "documentos",
+  onProgress?: (percent: number) => void
 ): Promise<void> {
   const normalizedItems = items
     .map((it) => ({
@@ -149,6 +192,28 @@ export async function downloadListedFilesZipWithCategory(
     .filter((it) => it.filePath.length > 0)
 
   if (normalizedItems.length === 0) throw new Error("Nenhum arquivo selecionado para baixar.")
+  if (normalizedItems.length > MAX_FILES_CLIENT_ZIP) {
+    throw new Error(`Limite de ${MAX_FILES_CLIENT_ZIP} arquivos por download. Selecione menos itens na lista.`)
+  }
+
+  if (hasServerApi()) {
+    const headers = await getAuthHeaders("application/json")
+    const res = await fetchOfficeServer("download-zip-by-paths", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        items: normalizedItems.map((it) => ({
+          file_path: it.filePath,
+          company_name: it.companyName,
+          category: it.category,
+        })),
+        filename_suffix: suggestedName !== "documentos" ? suggestedName.replace(/[^a-z0-9-]/gi, "-").slice(0, 32) : undefined,
+      }),
+    })
+    const blob = await fetchBlobWithProgress(res, onProgress)
+    triggerBlobDownload(blob, `${suggestedName}.zip`)
+    return
+  }
 
   const zip = new JSZip()
   const usedPaths = new Set<string>()
@@ -190,7 +255,8 @@ export async function markFiscalDocumentDownloaded(documentId: string): Promise<
 async function downloadZipAction(
   action: string,
   payload: Record<string, unknown>,
-  filename: string
+  filename: string,
+  onProgress?: (percent: number) => void
 ): Promise<void> {
   const headers = await getAuthHeaders("application/json")
   const res = await fetchOfficeServer(action, {
@@ -198,16 +264,19 @@ async function downloadZipAction(
     headers,
     body: JSON.stringify(payload),
   })
-  if (!res.ok) throw new Error(await readError(res))
-  const blob = await res.blob()
+  const blob = await fetchBlobWithProgress(res, onProgress)
   triggerBlobDownload(blob, filename)
 }
 
-export async function downloadFiscalDocumentsZip(ids: string[], filenameSuffix?: string): Promise<void> {
+export async function downloadFiscalDocumentsZip(
+  ids: string[],
+  filenameSuffix?: string,
+  onProgress?: (percent: number) => void
+): Promise<void> {
   const idsFiltered = ids.filter((id) => id && String(id).trim())
   if (idsFiltered.length === 0) throw new Error("Nenhum documento selecionado para baixar.")
   const safeSuffix = filenameSuffix && /^[a-z0-9-]+$/i.test(filenameSuffix) ? `-${filenameSuffix}` : ""
-  await downloadZipAction("download-fiscal-documents-zip", { ids: idsFiltered }, `documentos-fiscais${safeSuffix}.zip`)
+  await downloadZipAction("download-fiscal-documents-zip", { ids: idsFiltered }, `documentos-fiscais${safeSuffix}.zip`, onProgress)
   await Promise.all(idsFiltered.map((id) => markFiscalDocumentDownloaded(id).catch(() => {})))
 }
 

@@ -1,5 +1,6 @@
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Progress } from "@/components/ui/progress";
 import { FileText, Download, Filter, Search, FileArchive } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -81,6 +82,7 @@ export default function DocumentosPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [cursorHistory, setCursorHistory] = useState<Array<CursorPageToken | null>>([null]);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const { selectedCompanyIds } = useSelectedCompanyIds();
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
 
@@ -143,6 +145,7 @@ export default function DocumentosPage() {
     }
 
     setDownloadingZip(true);
+    setDownloadProgress(0);
     try {
       const items = listWithFiles.map((item) => {
         const category = getCategoryKey(item);
@@ -162,12 +165,20 @@ export default function DocumentosPage() {
           filePath: String(item.file_path || ""),
         };
       });
-      await downloadListedFilesZipWithCategory(items, "documentos");
+      await downloadListedFilesZipWithCategory(items, "documentos", (percent) => setDownloadProgress(percent));
       toast.success(`Download em ZIP iniciado para ${items.length} arquivo(s) da pagina atual.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Erro ao gerar ZIP.");
+      const msg = error instanceof Error ? error.message : "Erro ao gerar ZIP.";
+      if (msg.includes("Rota não encontrada") || msg.includes("404")) {
+        toast.error(
+          "Servidor não reconheceu a rota. Reinicie o Servidor (stop.bat e start.bat) e confira na aba Rede (Filtro: Tudo) a requisição para office-server."
+        );
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setDownloadingZip(false);
+      setDownloadProgress(0);
     }
   };
 
@@ -185,10 +196,18 @@ export default function DocumentosPage() {
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold font-display tracking-tight text-foreground">Documentos</h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1 line-clamp-2">
-            {companyFilter ? `Filtrado por ${companyFilter.length} empresa(s)` : "Todas as empresas"} - lista unificada com paginação server-side real.
+            {companyFilter ? `Filtrado por ${companyFilter.length} empresa(s)` : "Todas as empresas"} - lista unificada de todo o dashboard (NFS, NFE/NFC, certidoes, taxas/impostos, etc.) com paginação server-side.
           </p>
         </div>
       </div>
+
+      {downloadingZip && (
+        <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">Baixando ZIP...</p>
+          <Progress value={downloadProgress} className="h-2" />
+          <p className="text-xs text-muted-foreground">{downloadProgress}%</p>
+        </div>
+      )}
 
       <GlassCard className="overflow-hidden">
         <div className="p-3 sm:p-4 border-b border-border flex flex-col gap-3">

@@ -176,6 +176,7 @@ async function proxyBinary(
       Authorization: `Bearer ${connectorSecretHash}`,
       "X-Office-User-JWT": userToken,
       "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "1",
       ...(init?.headers ?? {}),
     },
   })
@@ -188,6 +189,37 @@ async function proxyBinary(
       ...corsHeaders,
       "Content-Type": response.headers.get("Content-Type") ?? "application/octet-stream",
       "Content-Disposition": response.headers.get("Content-Disposition") ?? "attachment",
+    },
+  })
+}
+
+/** Repassa o stream do servidor para o cliente sem bufferar no edge (ZIP grande). */
+async function proxyBinaryStream(
+  server: OfficeServer,
+  connectorSecretHash: string,
+  userToken: string,
+  endpoint: string,
+  init?: RequestInit,
+) {
+  const response = await fetch(`${server.public_base_url}${endpoint}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${connectorSecretHash}`,
+      "X-Office-User-JWT": userToken,
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "1",
+      ...(init?.headers ?? {}),
+    },
+  })
+  if (!response.ok) return json({ error: await readError(response) }, response.status)
+  if (!response.body) return json({ error: "Resposta vazia do servidor." }, 502)
+
+  return new Response(response.body, {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": response.headers.get("Content-Type") ?? "application/zip",
+      "Content-Disposition": response.headers.get("Content-Disposition") ?? "attachment; filename=\"documentos.zip\"",
     },
   })
 }
@@ -215,6 +247,37 @@ Deno.serve(async (req) => {
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "Caminho inválido para download." }, 400)
     }
+  }
+
+  const MAX_FILES_ZIP_BY_PATHS = 50000
+  if (action === "download-zip-by-paths") {
+    if (!hasAnyPanelAccess(context, ["documentos", "fiscal", "paralegal"])) {
+      return json({ error: "Sem permissão para baixar arquivos deste escritório." }, 403)
+    }
+    const body = await req.json().catch(() => ({}))
+    const rawItems = Array.isArray(body.items) ? body.items : []
+    if (rawItems.length === 0) return json({ error: "Nenhum arquivo informado para o ZIP." }, 400)
+    if (rawItems.length > MAX_FILES_ZIP_BY_PATHS) {
+      return json({ error: `Limite de ${MAX_FILES_ZIP_BY_PATHS} arquivos por download. Selecione menos itens.` }, 400)
+    }
+    const items: Array<{ file_path: string; company_name?: string; category?: string }> = []
+    for (const it of rawItems) {
+      try {
+        const file_path = validateRelativePath(String(it?.file_path ?? "").trim())
+        items.push({
+          file_path,
+          company_name: typeof it?.company_name === "string" ? it.company_name.trim() : undefined,
+          category: typeof it?.category === "string" ? it.category.trim() : undefined,
+        })
+      } catch {
+        /* ignora item com path inválido */
+      }
+    }
+    if (items.length === 0) return json({ error: "Nenhum caminho válido informado." }, 400)
+    return proxyBinaryStream(server, connectorSecretHash, userToken, "/api/documents/download-zip-by-paths", {
+      method: "POST",
+      body: JSON.stringify({ items, filename_suffix: body.filename_suffix }),
+    })
   }
 
   if (action === "download-fiscal-document") {
@@ -252,6 +315,8 @@ Deno.serve(async (req) => {
     return result
   }
 
+  const MAX_DOCS_PER_ZIP = 50000
+
   if (action === "download-fiscal-documents-zip") {
     if (!hasAnyPanelAccess(context, ["fiscal"])) {
       return json({ error: "Sem permissão para baixar documentos fiscais deste escritório." }, 403)
@@ -260,6 +325,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}))
     const ids = [...new Set(Array.isArray(body.ids) ? body.ids.map((id) => String(id ?? "").trim()).filter(Boolean) : [])]
     if (ids.length === 0) return json({ error: "Nenhum documento informado." }, 400)
+    if (ids.length > MAX_DOCS_PER_ZIP) return json({ error: `Limite de ${MAX_DOCS_PER_ZIP} documentos por download. Selecione menos itens na lista.` }, 400)
 
     const { data: documents, error: documentsError } = await admin
       .from("fiscal_documents")
@@ -352,6 +418,7 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${connectorSecretHash}`,
         "X-Office-User-JWT": userToken,
         "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "1",
       },
       body: JSON.stringify({}),
     })

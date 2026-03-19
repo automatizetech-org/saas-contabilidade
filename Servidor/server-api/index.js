@@ -379,6 +379,92 @@ app.get("/api/files/download", requireConnectorSecret, requireForwardedUserJwt, 
   }
 });
 
+const MAX_FILES_ZIP_BY_PATHS = 50000;
+
+/**
+ * Handler: POST /api/documents/download-zip-by-paths (e /documents/download-zip-by-paths para compat com túnel).
+ * Gera um ZIP com os arquivos indicados (paths relativos ao BASE_PATH).
+ * Body: { items: [{ file_path, company_name?, category? }], filename_suffix?: string }
+ */
+const handleDownloadZipByPaths = [
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    console.log("[server-api] POST download-zip-by-paths recebido, path:", req.path || req.url);
+    const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (rawItems.length === 0) {
+      return res.status(400).json({ error: "Nenhum arquivo informado para o ZIP." });
+    }
+    if (rawItems.length > MAX_FILES_ZIP_BY_PATHS) {
+      return res.status(400).json({ error: `Limite de ${MAX_FILES_ZIP_BY_PATHS} arquivos por download. Selecione menos itens.` });
+    }
+    const baseResolved = path.resolve(BASE_PATH);
+    const toAdd = [];
+    const usedNames = new Set();
+    const makeUniqueName = (zipPath) => {
+      let n = zipPath;
+      let i = 0;
+      while (usedNames.has(n)) {
+        i++;
+        const ext = path.posix.extname(zipPath);
+        const base = zipPath.slice(0, zipPath.length - ext.length);
+        n = `${base} (${i})${ext}`;
+      }
+      usedNames.add(n);
+      return n;
+    };
+    const safeFolder = (s) =>
+      String(s || "")
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+        .replace(/\s+/g, " ")
+        .trim() || "outros";
+    for (const it of rawItems) {
+      const filePath = typeof it?.file_path === "string" ? it.file_path.trim() : "";
+      if (!filePath) continue;
+      try {
+        const { resolved } = normalizeRelativePath(filePath);
+        const { realPath } = ensureSafeExistingFile(resolved);
+        const companyName = safeFolder(it.company_name || "EMPRESA");
+        const category = safeFolder(it.category || "outros");
+        const filename = path.basename(realPath);
+        const zipPath = `${companyName}/${category}/${filename}`;
+        toAdd.push({ fullPath: realPath, zipPath });
+      } catch (_) {
+        /* ignora arquivo inexistente ou path inválido */
+      }
+    }
+    if (toAdd.length === 0) {
+      return res.status(404).json({ error: "Nenhum arquivo válido encontrado no disco para a lista informada." });
+    }
+    res.setHeader("Content-Type", "application/zip");
+    const suffix = typeof req.body?.filename_suffix === "string" ? req.body.filename_suffix.trim() : "";
+    const safeSuffix = suffix && /^[a-z0-9-]+$/i.test(suffix) ? `-${suffix}` : "";
+    res.setHeader("Content-Disposition", `attachment; filename="documentos${safeSuffix}.zip"`);
+    const archive = archiver("zip", { zlib: { level: 0 } });
+    archive.on("error", (err) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    res.on("close", () => {
+      try {
+        archive.abort();
+      } catch (_) {}
+    });
+    archive.pipe(res);
+    for (const { fullPath, zipPath } of toAdd) {
+      archive.file(fullPath, { name: makeUniqueName(zipPath) });
+    }
+    archive.finalize();
+  },
+];
+app.post("/api/documents/download-zip-by-paths", ...handleDownloadZipByPaths);
+app.post("/documents/download-zip-by-paths", ...handleDownloadZipByPaths);
+/* Se o public_base_url do escritório terminar com /api, a Edge Function chama base_url + "/api/documents/...", resultando em /api/api/documents/... */
+app.post("/api/api/documents/download-zip-by-paths", ...handleDownloadZipByPaths);
+/* Fallback: qualquer path que contenha download-zip-by-paths (ex.: proxy que reescreve a URL) */
+app.post(/\/.*download-zip-by-paths.*/, ...handleDownloadZipByPaths);
+
 /**
  * GET /api/fiscal-documents/:id/download
  * Baixa arquivo fiscal por ID (busca file_path no Supabase). Requer JWT.
@@ -423,6 +509,7 @@ app.get("/api/fiscal-documents/:id/download", requireConnectorSecret, requireFor
  */
 app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireForwardedUserJwt, validateSupabaseJwt, heavyLimiter, async (req, res) => {
   const token = getForwardedUserJwt(req);
+  const MAX_DOCS_PER_ZIP = 50000;
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id) => id && String(id).trim()) : [];
   const companyIds = Array.isArray(req.body?.company_ids)
     ? req.body.company_ids.filter((id) => id && String(id).trim())
@@ -430,6 +517,9 @@ app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireFo
   const types = Array.isArray(req.body?.types) ? req.body.types.map((t) => String(t || "").trim().toUpperCase()).filter(Boolean) : [];
   if (companyIds.length === 0 && ids.length === 0) {
     return res.status(400).json({ error: "Nenhum documento/empresa selecionado para baixar." });
+  }
+  if (ids.length > MAX_DOCS_PER_ZIP) {
+    return res.status(400).json({ error: `Limite de ${MAX_DOCS_PER_ZIP} documentos por download. Selecione menos itens na lista.` });
   }
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
@@ -448,7 +538,10 @@ app.post("/api/fiscal-documents/download-zip", requireConnectorSecret, requireFo
   if (error) {
     return res.status(500).json({ error: error.message });
   }
-  const docs = (rows || []).filter((r) => r?.file_path && String(r.file_path).trim());
+  let docs = (rows || []).filter((r) => r?.file_path && String(r.file_path).trim());
+  if (docs.length > MAX_DOCS_PER_ZIP) {
+    docs = docs.slice(0, MAX_DOCS_PER_ZIP);
+  }
   const companyIdsInDocs = [...new Set(docs.map((d) => d.company_id).filter(Boolean))];
   const companyNameById = new Map();
   if (companyIdsInDocs.length > 0) {
@@ -660,6 +753,10 @@ app.post("/api/hub-documents/download-zip", requireConnectorSecret, requireForwa
 
   if (toAdd.length === 0) {
     return res.status(404).json({ error: "Nenhum arquivo encontrado no disco para as empresas solicitadas." });
+  }
+  const MAX_FILES_HUB_ZIP = 50000;
+  if (toAdd.length > MAX_FILES_HUB_ZIP) {
+    toAdd.length = MAX_FILES_HUB_ZIP;
   }
 
   const usedNames = new Set();
@@ -1059,6 +1156,8 @@ app.use(["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"], whats
 app.use(whatsappProxyViaApiPrefix);
 
 app.use((req, res) => {
+  const path = req.path || req.url || "";
+  console.warn("[server-api] 404 Rota não encontrada:", req.method, path, "| url:", req.originalUrl || req.url);
   res.status(404).json({ error: "Rota não encontrada" });
 });
 

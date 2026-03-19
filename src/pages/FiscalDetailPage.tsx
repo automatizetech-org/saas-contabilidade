@@ -10,10 +10,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
 import { getCertidoesOverviewSummary, getFiscalDetailDocumentsPage, getFiscalDetailSummary, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
-import { downloadFiscalCompaniesZip, downloadFiscalDocument, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
+import { downloadFiscalDocument, downloadFiscalDocumentsZip, downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling";
 
@@ -132,6 +133,8 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [cursorHistory, setCursorHistory] = useState<Array<CursorPageToken | null>>([null]);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   useEffect(() => {
     setPage(1);
@@ -218,6 +221,14 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
         </div>
       </div>
 
+      {downloadingZip && (
+        <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">Baixando ZIP...</p>
+          <Progress value={downloadProgress} className="h-2" />
+          <p className="text-xs text-muted-foreground">{downloadProgress}%</p>
+        </div>
+      )}
+
       <GlassCard className="overflow-hidden">
         <div className="p-3 sm:p-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <h3 className="text-sm font-semibold font-display">Certidoes</h3>
@@ -234,6 +245,43 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
               </SelectContent>
             </Select>
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por empresa, CNPJ ou tipo..." className="rounded-lg border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring w-full min-w-0 sm:w-64 sm:max-w-[18rem]" />
+            {hasServerApi() && (
+              <Button
+                variant="default"
+                size="sm"
+                className="gap-1.5 text-xs shrink-0"
+                disabled={downloadingZip || items.filter((r) => r.file_path).length === 0}
+                onClick={async () => {
+                  const listWithFiles = items.filter((r) => r.file_path && String(r.file_path).trim());
+                  if (listWithFiles.length === 0) {
+                    toast.error("Nenhuma certidao com PDF disponivel na pagina atual.");
+                    return;
+                  }
+                  setDownloadingZip(true);
+                  setDownloadProgress(0);
+                  try {
+                    await downloadListedFilesZipWithCategory(
+                      listWithFiles.map((r) => ({
+                        companyName: r.empresa || "EMPRESA",
+                        category: "certidoes",
+                        filePath: String(r.file_path!),
+                      })),
+                      "certidoes",
+                      (p) => setDownloadProgress(p)
+                    );
+                    toast.success(`Download iniciado: ${listWithFiles.length} certidao(oes) da pagina.`);
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Erro ao baixar ZIP.");
+                  } finally {
+                    setDownloadingZip(false);
+                    setDownloadProgress(0);
+                  }
+                }}
+              >
+                <FileArchive className="h-3.5 w-3.5" />
+                {downloadingZip ? "Gerando..." : "Baixar ZIP da pagina"}
+              </Button>
+            )}
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -316,6 +364,7 @@ export default function FiscalDetailPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [cursorHistory, setCursorHistory] = useState<Array<CursorPageToken | null>>([null]);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const { selectedCompanyIds } = useSelectedCompanyIds();
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
   const kind = (type ?? "nfs") as FiscalDetailKind;
@@ -467,6 +516,14 @@ export default function FiscalDetailPage() {
         <p className="text-sm text-muted-foreground mt-1">Resumo por RPC e documentos com paginacao server-side real.</p>
       </div>
 
+      {downloadingZip && (
+        <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">Baixando ZIP...</p>
+          <Progress value={downloadProgress} className="h-2" />
+          <p className="text-xs text-muted-foreground">{downloadProgress}%</p>
+        </div>
+      )}
+
       {(isNfs || isNfeNfc) && (
         <GlassCard className="p-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -559,19 +616,21 @@ export default function FiscalDetailPage() {
                 className="gap-1.5 text-xs"
                 disabled={downloadingZip || pageItems.filter((item) => item.file_path).length === 0}
                 onClick={async () => {
-                  const companyIds = [...new Set(pageItems.filter((item) => item.file_path).map((item) => item.company_id))];
-                  if (companyIds.length === 0) {
+                  const ids = pageItems.filter((item) => item.file_path).map((item) => item.id);
+                  if (ids.length === 0) {
                     toast.error("Nenhum documento com arquivo disponivel na pagina atual.");
                     return;
                   }
                   setDownloadingZip(true);
+                  setDownloadProgress(0);
                   try {
-                    await downloadFiscalCompaniesZip(companyIds, type ?? undefined, []);
-                    toast.success(`Download iniciado para ${companyIds.length} empresa(s) da pagina atual.`);
+                    await downloadFiscalDocumentsZip(ids, type ?? undefined, (p) => setDownloadProgress(p));
+                    toast.success(`Download iniciado: ${ids.length} documento(s) listados na pagina.`);
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Erro ao baixar ZIP.");
                   } finally {
                     setDownloadingZip(false);
+                    setDownloadProgress(0);
                   }
                 }}
               >
