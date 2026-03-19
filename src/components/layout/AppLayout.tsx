@@ -5,11 +5,13 @@ import { CommandPalette } from "./CommandPalette";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { useCompanies } from "@/hooks/useCompanies";
+import { useSupabaseConnectionStatus } from "@/hooks/useSupabaseConnectionStatus";
 import { pathToPanelKey } from "@/lib/panelAccess";
 import { cn } from "@/utils";
 import { Moon, Sun, PanelLeftClose, PanelLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/services/supabaseClient";
+import { MaintenanceBanner } from "@/components/MaintenanceBanner";
 import { useQueryClient } from "@tanstack/react-query";
 import { getFiscalDetailDocumentsPage, getFiscalDetailSummary, type FiscalDetailKind } from "@/services/documentsService";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
@@ -43,6 +45,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
     if (stored === "true" || stored === "false") return stored === "true";
     return true;
   });
+
+  const showMaintenanceBanner = useSupabaseConnectionStatus();
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_OPEN_KEY, String(sidebarOpen));
@@ -93,9 +97,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
     };
   }, [profile?.office_id, profile?.office_status, queryClient]);
 
-  // Warm cache após login: acelera a primeira visita ao /fiscal/nfs (e cards/quantidades).
+  // Warm cache após login: antecipa cards e agregados sem disparar a lista cursorizada.
   useEffect(() => {
     if (!profile?.office_id || profile.office_status === "inactive") return;
+    if (location.pathname.startsWith("/admin")) return;
 
     const companyFilterKey = selectedCompanyIds.length ? selectedCompanyIds.join(",") : "all";
     const cacheKey = `${profile.office_id}|${companyFilterKey}`;
@@ -111,25 +116,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
     const prev = new Date(Number(first.slice(0, 4)), Number(first.slice(5, 7)) - 2, 1);
     const prevFirst = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-01`;
     const prevLast = new Date(prev.getFullYear(), prev.getMonth() + 1, 0).toISOString().slice(0, 10);
-
-    // Tabela + contagens padrão (último mês / mês corrente).
-    queryClient.prefetchQuery({
-      queryKey: ["fiscal-detail-page", kind, companyIdsFilter, "", first, last, "all", "all", "all", 10, 1, null, null, null],
-      queryFn: () =>
-        getFiscalDetailDocumentsPage({
-          kind,
-          companyIds: companyIdsFilter,
-          search: "",
-          dateFrom: first,
-          dateTo: last,
-          fileKind: "all",
-          origem: "all",
-          modelo: "all",
-          certidaoTipo: undefined,
-          cursor: null,
-          limit: 10,
-        }),
-    });
 
     queryClient.prefetchQuery({
       queryKey: ["fiscal-detail-summary", kind, companyIdsFilter, first, last],
@@ -166,13 +152,16 @@ export function AppLayout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div
-      className={cn(
-        "grid w-full max-w-full min-w-0 h-dvh overflow-x-hidden bg-background transition-colors duration-500",
-        "grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-in-out",
-        sidebarOpen ? "md:grid-cols-[16rem_1fr]" : "md:grid-cols-[0_1fr]"
-      )}
-    >
+    <>
+      {showMaintenanceBanner && <MaintenanceBanner />}
+      <div
+        className={cn(
+          "grid w-full max-w-full min-w-0 h-dvh overflow-x-hidden bg-background transition-colors duration-500",
+          "grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-in-out",
+          sidebarOpen ? "md:grid-cols-[16rem_1fr]" : "md:grid-cols-[0_1fr]",
+          showMaintenanceBanner && "pt-[52px]"
+        )}
+      >
       {/* No mobile: w-0 e h-0 para não ocupar espaço; o sidebar só mostra o botão/drawer (position fixed) */}
       <div
         className={cn(
@@ -227,5 +216,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </main>
     </div>
+    </>
   );
 }

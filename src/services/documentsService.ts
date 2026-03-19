@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient"
 import {
+  getAllHubDocuments,
   getCertidoesDocuments,
   getFiscalDocumentsByType,
   getFiscalDocumentsNfeNfc,
@@ -66,6 +67,12 @@ export type CertidoesOverview = {
   chartData: Array<{ name: string; value: number }>
 }
 
+let canUseUnifiedDocumentsCursorRpc = true
+let canUseUnifiedDocumentsZipPathsRpc = true
+let canUseFiscalDetailSummaryRpc = true
+let canUseFiscalDetailCursorRpc = true
+let canUseFiscalDetailZipPathsRpc = true
+
 function normalizeText(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -116,22 +123,138 @@ function parseCursorPayload<T>(payload: any, mapRow: (row: any) => T) {
   }
 }
 
-export async function getUnifiedDocumentsPage(filters: UnifiedDocumentFilters): Promise<UnifiedDocumentPageResult> {
-  const { data, error } = await supabase.rpc("get_document_rows_cursor", {
-    company_ids: filters.companyIds?.length ? filters.companyIds : null,
-    category_filter: filters.category && filters.category !== "Todos" ? filters.category : null,
-    file_kind: filters.fileKind && filters.fileKind !== "Todos" ? filters.fileKind.toLowerCase() : null,
-    search_text: filters.search ?? null,
-    date_from: filters.dateFrom || null,
-    date_to: filters.dateTo || null,
-    cursor_sort_date: filters.cursor?.sortDate ?? null,
-    cursor_created_at: filters.cursor?.createdAt ?? null,
-    cursor_id: filters.cursor?.id ?? null,
-    limit_count: filters.limit,
-  })
-  if (error) throw error
+function getUnifiedDocumentCategoryKey(row: UnifiedDocumentRow) {
+  const source = String(row.source || "").toLowerCase()
+  const type = String(row.type || "").toUpperCase()
 
-  return parseCursorPayload(data, mapUnifiedRpcRow)
+  if (source === "certidoes") return "certidoes"
+  if (source === "dp_guias" || source === "municipal_taxes") return "taxas_impostos"
+  if (source === "fiscal") {
+    if (type === "NFS") return "nfs"
+    if (type === "NFE" || type === "NFC") return "nfe_nfc"
+    return "fiscal_outros"
+  }
+
+  return "outros"
+}
+
+function getUnifiedDocumentSortDate(row: UnifiedDocumentRow) {
+  return String(row.document_date ?? row.created_at ?? "").slice(0, 10)
+}
+
+function isBeforeCursor(row: UnifiedDocumentRow, cursor: CursorPageToken) {
+  const rowSortDate = getUnifiedDocumentSortDate(row)
+  const rowCreatedAt = String(row.created_at ?? "")
+  const rowId = String(row.id ?? "")
+  const cursorSortDate = String(cursor.sortDate ?? "").slice(0, 10)
+  const cursorCreatedAt = String(cursor.createdAt ?? "")
+  const cursorId = String(cursor.id ?? "")
+
+  if (rowSortDate !== cursorSortDate) return rowSortDate < cursorSortDate
+  if (rowCreatedAt !== cursorCreatedAt) return rowCreatedAt < cursorCreatedAt
+  return rowId < cursorId
+}
+
+function filterUnifiedDocuments(rows: UnifiedDocumentRow[], filters: Omit<UnifiedDocumentFilters, "cursor" | "limit">) {
+  const normalizedCategory =
+    filters.category && filters.category !== "Todos"
+      ? String(filters.category).trim().toLowerCase()
+      : null
+  const normalizedFileKind =
+    filters.fileKind && filters.fileKind !== "Todos"
+      ? String(filters.fileKind).trim().toLowerCase()
+      : null
+  const normalizedSearch = normalizeText(filters.search)
+  const digitSearch = normalizeDigits(filters.search)
+
+  return rows.filter((row) => {
+    const filePath = String(row.file_path ?? "").trim()
+    if (!filePath) return false
+
+    if (normalizedCategory && getUnifiedDocumentCategoryKey(row) !== normalizedCategory) {
+      return false
+    }
+
+    if (normalizedFileKind === "xml" && !filePath.toLowerCase().endsWith(".xml")) return false
+    if (normalizedFileKind === "pdf" && !filePath.toLowerCase().endsWith(".pdf")) return false
+
+    const referenceDate = getUnifiedDocumentSortDate(row)
+    if (filters.dateFrom && referenceDate && referenceDate < filters.dateFrom) return false
+    if (filters.dateTo && referenceDate && referenceDate > filters.dateTo) return false
+
+    if (normalizedSearch || digitSearch) {
+      const searchableText = normalizeText(
+        [row.empresa, row.cnpj, row.type, row.status, row.periodo, row.chave].filter(Boolean).join(" ")
+      )
+      const searchableDigits = normalizeDigits([row.cnpj, row.chave].filter(Boolean).join(" "))
+
+      if (normalizedSearch && !searchableText.includes(normalizedSearch)) return false
+      if (digitSearch && !searchableDigits.includes(digitSearch)) return false
+    }
+
+    return true
+  })
+}
+
+async function getUnifiedDocumentsPageFallback(filters: UnifiedDocumentFilters): Promise<UnifiedDocumentPageResult> {
+  const rows = await getAllHubDocuments(filters.companyIds?.length ? filters.companyIds : null)
+  const filteredRows = filterUnifiedDocuments(rows, filters)
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    const sortDateDiff = getUnifiedDocumentSortDate(b).localeCompare(getUnifiedDocumentSortDate(a))
+    if (sortDateDiff !== 0) return sortDateDiff
+
+    const createdAtDiff = String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
+    if (createdAtDiff !== 0) return createdAtDiff
+
+    return String(b.id ?? "").localeCompare(String(a.id ?? ""))
+  })
+
+  const afterCursor = filters.cursor
+    ? sortedRows.filter((row) => isBeforeCursor(row, filters.cursor!))
+    : sortedRows
+  const items = afterCursor.slice(0, filters.limit)
+  const hasMore = afterCursor.length > filters.limit
+  const lastItem = items[items.length - 1]
+
+  return {
+    items,
+    nextCursor: hasMore && lastItem
+      ? {
+          sortDate: getUnifiedDocumentSortDate(lastItem),
+          createdAt: String(lastItem.created_at ?? ""),
+          id: String(lastItem.id ?? ""),
+        }
+      : null,
+    hasMore,
+    refreshAt: null,
+  }
+}
+
+export async function getUnifiedDocumentsPage(filters: UnifiedDocumentFilters): Promise<UnifiedDocumentPageResult> {
+  if (!canUseUnifiedDocumentsCursorRpc) {
+    return getUnifiedDocumentsPageFallback(filters)
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("get_document_rows_cursor", {
+      company_ids: filters.companyIds?.length ? filters.companyIds : null,
+      category_filter: filters.category && filters.category !== "Todos" ? filters.category : null,
+      file_kind: filters.fileKind && filters.fileKind !== "Todos" ? filters.fileKind.toLowerCase() : null,
+      search_text: filters.search ?? null,
+      date_from: filters.dateFrom || null,
+      date_to: filters.dateTo || null,
+      cursor_sort_date: filters.cursor?.sortDate ?? null,
+      cursor_created_at: filters.cursor?.createdAt ?? null,
+      cursor_id: filters.cursor?.id ?? null,
+      limit_count: filters.limit,
+    })
+    if (error) throw error
+
+    return parseCursorPayload(data, mapUnifiedRpcRow)
+  } catch {
+    canUseUnifiedDocumentsCursorRpc = false
+    return getUnifiedDocumentsPageFallback(filters)
+  }
 }
 
 export type ZipPathRow = { file_path: string; empresa: string; category_key: string }
@@ -141,22 +264,47 @@ export async function getUnifiedDocumentsZipPaths(
   filters: Omit<UnifiedDocumentFilters, "cursor" | "limit">,
   limitCount = 50000
 ): Promise<ZipPathRow[]> {
-  const { data, error } = await supabase.rpc("get_document_rows_zip_paths", {
-    company_ids: filters.companyIds?.length ? filters.companyIds : null,
-    category_filter: filters.category && filters.category !== "Todos" ? filters.category : null,
-    file_kind: filters.fileKind && filters.fileKind !== "Todos" ? filters.fileKind.toLowerCase() : null,
-    search_text: filters.search ?? null,
-    date_from: filters.dateFrom || null,
-    date_to: filters.dateTo || null,
-    limit_count: limitCount,
-  })
-  if (error) throw error
-  const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
-  return (arr as any[]).map((row: any) => ({
-    file_path: String(row?.file_path ?? "").trim(),
-    empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
-    category_key: String(row?.category_key ?? "").trim() || "outros",
-  })).filter((r) => r.file_path.length > 0)
+  if (!canUseUnifiedDocumentsZipPathsRpc) {
+    const rows = await getAllHubDocuments(filters.companyIds?.length ? filters.companyIds : null)
+    return filterUnifiedDocuments(rows, filters)
+      .slice(0, limitCount)
+      .map((row) => ({
+        file_path: String(row.file_path ?? "").trim(),
+        empresa: String(row.empresa ?? "").trim() || "EMPRESA",
+        category_key: getUnifiedDocumentCategoryKey(row),
+      }))
+      .filter((row) => row.file_path.length > 0)
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("get_document_rows_zip_paths", {
+      company_ids: filters.companyIds?.length ? filters.companyIds : null,
+      category_filter: filters.category && filters.category !== "Todos" ? filters.category : null,
+      file_kind: filters.fileKind && filters.fileKind !== "Todos" ? filters.fileKind.toLowerCase() : null,
+      search_text: filters.search ?? null,
+      date_from: filters.dateFrom || null,
+      date_to: filters.dateTo || null,
+      limit_count: limitCount,
+    })
+    if (error) throw error
+    const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
+    return (arr as any[]).map((row: any) => ({
+      file_path: String(row?.file_path ?? "").trim(),
+      empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
+      category_key: String(row?.category_key ?? "").trim() || "outros",
+    })).filter((r) => r.file_path.length > 0)
+  } catch {
+    canUseUnifiedDocumentsZipPathsRpc = false
+    const rows = await getAllHubDocuments(filters.companyIds?.length ? filters.companyIds : null)
+    return filterUnifiedDocuments(rows, filters)
+      .slice(0, limitCount)
+      .map((row) => ({
+        file_path: String(row.file_path ?? "").trim(),
+        empresa: String(row.empresa ?? "").trim() || "EMPRESA",
+        category_key: getUnifiedDocumentCategoryKey(row),
+      }))
+      .filter((row) => row.file_path.length > 0)
+  }
 }
 
 type FiscalListRow = {
@@ -253,6 +401,8 @@ export async function getCertidoesOverviewSummary(companyIds: string[] | null): 
 export async function getFiscalDetailSummary(filters: Omit<FiscalDetailPageFilters, "search" | "fileKind" | "origem" | "modelo" | "certidaoTipo" | "page" | "pageSize">): Promise<FiscalDetailSummary> {
   const detailKind = filters.kind === "nfe-nfc" ? "NFE_NFC" : filters.kind.toUpperCase()
   try {
+    if (!canUseFiscalDetailSummaryRpc) throw new Error("Fiscal detail summary RPC disabled for this session")
+
     const { data, error } = await supabase.rpc("get_fiscal_detail_summary", {
       detail_kind: detailKind,
       company_ids: filters.companyIds?.length ? filters.companyIds : null,
@@ -276,6 +426,7 @@ export async function getFiscalDetailSummary(filters: Omit<FiscalDetailPageFilte
       })),
     }
   } catch {
+    canUseFiscalDetailSummaryRpc = false
     const rows = filters.kind === "nfe-nfc"
       ? await getFiscalDocumentsNfeNfc(filters.companyIds?.length ? filters.companyIds : null)
       : await getFiscalDocumentsByType(filters.kind.toUpperCase() as "NFS" | "NFE" | "NFC", filters.companyIds?.length ? filters.companyIds : null)
@@ -328,6 +479,8 @@ function mapFiscalDetailRpcRow(row: any): FiscalListRow {
 export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilters): Promise<{ items: FiscalListRow[]; nextCursor: CursorPageToken | null; hasMore: boolean; refreshAt: string | null }> {
   const detailKind = filters.kind === "nfe-nfc" ? "NFE_NFC" : filters.kind.toUpperCase()
   try {
+    if (!canUseFiscalDetailCursorRpc) throw new Error("Fiscal detail cursor RPC disabled for this session")
+
     const { data, error } = await supabase.rpc("get_fiscal_detail_documents_cursor", {
       detail_kind: detailKind,
       company_ids: filters.companyIds?.length ? filters.companyIds : null,
@@ -347,6 +500,7 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
 
     return parseCursorPayload(data, mapFiscalDetailRpcRow)
   } catch {
+    canUseFiscalDetailCursorRpc = false
     const baseRows = filters.kind === "certidoes"
       ? (await getCertidoesDocuments(filters.companyIds?.length ? filters.companyIds : null)).map((row) => ({
           id: row.id,
@@ -503,26 +657,34 @@ export async function getFiscalDetailDocumentZipPathsRpc(
 ): Promise<FiscalZipPathRow[]> {
   const kind = filters.kind
   if (kind !== "nfs" && kind !== "nfe-nfc") return []
+  if (!canUseFiscalDetailZipPathsRpc) {
+    return getFiscalDetailDocumentPathsForZip(filters)
+  }
   const detailKind = kind === "nfe-nfc" ? "NFE_NFC" : "NFS"
-  const { data, error } = await supabase.rpc("get_fiscal_detail_document_zip_paths", {
-    detail_kind: detailKind,
-    company_ids: filters.companyIds?.length ? filters.companyIds : null,
-    search_text: filters.search ?? null,
-    date_from: filters.dateFrom || null,
-    date_to: filters.dateTo || null,
-    file_kind: filters.fileKind && filters.fileKind !== "all" ? filters.fileKind : null,
-    origem_filter: filters.origem && filters.origem !== "all" ? filters.origem : null,
-    modelo_filter: filters.modelo && filters.modelo !== "all" ? filters.modelo : null,
-    limit_count: FISCAL_ZIP_RPC_LIMIT,
-  })
-  if (error) throw error
-  const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
-  return (arr as any[])
-    .map((row: any) => ({
-      file_path: String(row?.file_path ?? "").trim(),
-      empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
-    }))
-    .filter((r) => r.file_path.length > 0)
+  try {
+    const { data, error } = await supabase.rpc("get_fiscal_detail_document_zip_paths", {
+      detail_kind: detailKind,
+      company_ids: filters.companyIds?.length ? filters.companyIds : null,
+      search_text: filters.search ?? null,
+      date_from: filters.dateFrom || null,
+      date_to: filters.dateTo || null,
+      file_kind: filters.fileKind && filters.fileKind !== "all" ? filters.fileKind : null,
+      origem_filter: filters.origem && filters.origem !== "all" ? filters.origem : null,
+      modelo_filter: filters.modelo && filters.modelo !== "all" ? filters.modelo : null,
+      limit_count: FISCAL_ZIP_RPC_LIMIT,
+    })
+    if (error) throw error
+    const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
+    return (arr as any[])
+      .map((row: any) => ({
+        file_path: String(row?.file_path ?? "").trim(),
+        empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
+      }))
+      .filter((r) => r.file_path.length > 0)
+  } catch {
+    canUseFiscalDetailZipPathsRpc = false
+    return getFiscalDetailDocumentPathsForZip(filters)
+  }
 }
 
 /** Coleta todos os `file_path` (e `empresa`) do cursor fiscal conforme os filtros, para ZIP da lista inteira. Fallback quando a RPC de ZIP não está disponível. */

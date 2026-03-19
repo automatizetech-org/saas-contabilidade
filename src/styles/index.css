@@ -672,6 +672,32 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   100% { left: 100%; }
 }
 
+/* ========== Barrinha de instabilidade/manutenção (Supabase inacessível) ========== */
+.maintenance-banner {
+  position: relative;
+}
+
+.maintenance-banner__shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.12),
+    transparent
+  );
+  animation: maintenance-shimmer 2.5s ease-in-out infinite;
+}
+
+@keyframes maintenance-shimmer {
+  0% { left: -60%; }
+  60%, 100% { left: 120%; }
+}
+
 @keyframes slideInUp {
   from { opacity: 0; transform: translateY(30px) translateZ(-50px); }
   to { opacity: 1; transform: translateY(0) translateZ(0); }

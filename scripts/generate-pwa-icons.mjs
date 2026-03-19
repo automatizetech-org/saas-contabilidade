@@ -3,17 +3,34 @@ import path from "node:path";
 import sharp from "sharp";
 
 const ROOT = process.cwd();
-const INPUT_LOGO = path.join(ROOT, "public", "logo.png");
 const OUT_DIR = path.join(ROOT, "public", "icons");
+const INPUT_LOGO_CANDIDATES = [
+  path.join(ROOT, "public", "logo.png"),
+  path.join(ROOT, "public", "assets", "logo.png"),
+  path.join(ROOT, "src", "assets", "images", "logo.png"),
+];
 
-// Tom azul escuro do app (mantido consistente com theme_color/background_color do manifest)
 const BG = "#0F172C";
 
 async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true });
 }
 
+async function resolveInputLogo() {
+  for (const file of INPUT_LOGO_CANDIDATES) {
+    try {
+      await fs.access(file);
+      return file;
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  throw new Error(`Logo de entrada nao encontrada. Caminhos tentados: ${INPUT_LOGO_CANDIDATES.join(", ")}`);
+}
+
 async function createIcon({
+  inputLogo,
   outFile,
   size,
   scale = 0.78,
@@ -29,7 +46,7 @@ async function createIcon({
     },
   });
 
-  const logo = await sharp(INPUT_LOGO)
+  const logo = await sharp(inputLogo)
     .resize({
       width: Math.round(size * scale),
       height: Math.round(size * scale),
@@ -46,66 +63,68 @@ async function createIcon({
 
 async function main() {
   await ensureDir(OUT_DIR);
+  const inputLogo = await resolveInputLogo();
 
-  // Ícones "any" (Android/Chrome)
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "app-icon-192.png"),
     size: 192,
     scale: 0.82,
   });
+
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "app-icon-512.png"),
     size: 512,
-    scale: 0.80,
+    scale: 0.8,
   });
 
-  // Compatibilidade com referência antiga (se sobrar algum link em cache)
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "app-icon.png"),
     size: 512,
-    scale: 0.80,
+    scale: 0.8,
   });
 
-  // Maskable: precisa mais “respiro” para não cortar em ícones arredondados
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "maskable-192.png"),
     size: 192,
     scale: 0.62,
   });
+
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "maskable-512.png"),
     size: 512,
     scale: 0.62,
   });
 
-  // iOS
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "apple-touch-icon.png"),
     size: 180,
-    scale: 0.80,
+    scale: 0.8,
   });
 
-  // Cópia da logo dentro de /icons, mas com fundo (sem transparência)
-  // Mantém no diretório /icons (não afeta o /public/logo.png usado no site).
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "logo.png"),
     size: 512,
-    scale: 0.90,
+    scale: 0.9,
   });
 
-  // Alias opcional (caso você já tenha referenciado esse nome em algum lugar)
   await createIcon({
+    inputLogo,
     outFile: path.join(OUT_DIR, "logo-bg.png"),
     size: 512,
-    scale: 0.90,
+    scale: 0.9,
   });
 
-  // eslint-disable-next-line no-console
-  console.log("Ícones gerados em public/icons/");
+  console.log("Icones gerados em public/icons/");
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exitCode = 1;
 });

@@ -1,6 +1,7 @@
 export { useProfile } from "./useProfile"
 export { useCompanies } from "./useCompanies"
 export { useSelectedCompanies, SelectedCompaniesProvider } from "./useSelectedCompanies"
+export { useSupabaseConnectionStatus } from "./useSupabaseConnectionStatus"
 export { useTableSort } from "./useTableSort"
 export type { SortDirection } from "./useTableSort"
 export { useToast } from "./use-toast"

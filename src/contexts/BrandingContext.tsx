@@ -177,15 +177,21 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
+      queryClient.setQueryData(["auth-session"], data.session ?? null);
       if (mounted) setHasSession(Boolean(data.session));
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      queryClient.setQueryData(["auth-session"], session ?? null);
       setHasSession(Boolean(session));
-      if (!session) {
+      if (session?.user?.id) {
+        queryClient.invalidateQueries({ queryKey: ["profile", session.user.id] });
+      } else {
         queryClient.removeQueries({ queryKey: BRANDING_QUERY_KEY });
+        queryClient.removeQueries({ queryKey: ["profile"] });
+        queryClient.removeQueries({ queryKey: ["admin"] });
       }
     });
 

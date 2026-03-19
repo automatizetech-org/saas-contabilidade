@@ -1,14 +1,46 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { Lock, Loader2, AlertCircle } from "lucide-react"
 import defaultLogoUrl from "@/assets/images/logo.png"
 import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
 import { resetBrandingInDocument } from "@/contexts/BrandingContext"
+import { useSupabaseConnectionStatus } from "@/hooks/useSupabaseConnectionStatus"
+import { MaintenanceBanner } from "@/components/MaintenanceBanner"
+
+function getLoginErrorMessage(err: unknown) {
+  let message = "Falha no login."
+
+  if (!err || typeof err !== "object" || !("message" in err)) return message
+
+  const rawMessage = String((err as { message: string }).message || "").trim()
+  const normalizedMessage = rawMessage.toLowerCase()
+
+  if (rawMessage === "Failed to fetch" || normalizedMessage.includes("fetch")) {
+    return "Nao foi possivel contactar o Supabase. Confira SUPABASE_URL e SUPABASE_ANON_KEY."
+  }
+
+  if (normalizedMessage.includes("invalid login credentials")) {
+    return "E-mail ou senha invalidos."
+  }
+
+  if (normalizedMessage.includes("email not confirmed")) {
+    return "Este e-mail ainda nao foi confirmado no Supabase."
+  }
+
+  if (normalizedMessage.includes("invalid email")) {
+    return "Informe um e-mail valido."
+  }
+
+  return rawMessage || message
+}
 
 export default function LoginPage() {
+  const queryClient = useQueryClient()
   const navigate = useNavigate()
   const location = useLocation()
+  const showMaintenanceBanner = useSupabaseConnectionStatus()
   const loginSubtitle = "Dashboard Web"
   const from = (location.state as { from?: string } | null)?.from
   const loginMessage = (location.state as { message?: string } | null)?.message
@@ -32,18 +64,40 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+
+    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedPassword = password.trim()
+
+    if (!normalizedEmail) {
+      setError("Informe seu e-mail.")
+      return
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError("Informe um e-mail valido.")
+      return
+    }
+
+    if (!normalizedPassword) {
+      setError("Informe sua senha.")
+      return
+    }
+
     setLoading(true)
     try {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+        email: normalizedEmail,
+        password: normalizedPassword,
       })
       if (signInError) throw signInError
+
+      queryClient.setQueryData(["auth-session"], data.session ?? null)
 
       const userId = data.user?.id
       if (!userId) throw new Error("Usuário não retornado")
 
       const profile = await getProfile(userId)
+      queryClient.setQueryData(["profile", userId], profile)
       setLoading(false)
 
       if (!profile) {
@@ -64,23 +118,19 @@ export default function LoginPage() {
       }
     } catch (err: unknown) {
       setLoading(false)
-      let message = "Falha no login"
-      if (err && typeof err === "object" && "message" in err) {
-        const msg = String((err as { message: string }).message)
-        if (msg === "Failed to fetch" || msg.includes("fetch")) {
-          message = "Não foi possível contactar o Supabase. Confira SUPABASE_URL e SUPABASE_ANON_KEY."
-        } else if (msg.toLowerCase().includes("invalid login")) {
-          message = "E-mail ou senha inválidos."
-        } else {
-          message = msg
-        }
-      }
-      setError(message)
+      setError(getLoginErrorMessage(err))
     }
   }
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center relative overflow-hidden p-4 bg-background">
+    <div className="min-h-[100dvh] flex flex-col relative overflow-hidden bg-background">
+      {showMaintenanceBanner && (
+        <>
+          <MaintenanceBanner />
+          <div className="h-[52px] shrink-0" aria-hidden />
+        </>
+      )}
+      <div className="flex-1 flex items-center justify-center p-4 min-h-0">
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" aria-hidden />
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-primary/10 rounded-full blur-3xl animate-pulse" />
@@ -149,6 +199,7 @@ export default function LoginPage() {
             )}
           </button>
         </form>
+      </div>
       </div>
     </div>
   )

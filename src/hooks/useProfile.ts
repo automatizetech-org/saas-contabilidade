@@ -3,7 +3,7 @@ import { supabase } from "@/services/supabaseClient"
 import { getProfile } from "@/services/profilesService"
 
 export function useProfile() {
-  const { data: session } = useQuery({
+  const { data: session, isLoading: sessionLoading } = useQuery({
     queryKey: ["auth-session"],
     queryFn: async () => {
       const { data } = await supabase.auth.getSession()
@@ -12,14 +12,18 @@ export function useProfile() {
   })
 
   const userId = session?.user?.id
-  const { data: profile, isLoading } = useQuery({
+  const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["profile", userId],
     queryFn: () => getProfile(userId!),
     enabled: !!userId,
   })
 
   const isSuperAdmin = profile?.role === "super_admin"
-  const canAccessAdmin = isSuperAdmin || profile?.office_role === "owner"
+  const canAccessAdmin =
+    isSuperAdmin ||
+    profile?.office_role === "owner" ||
+    profile?.office_role === "admin"
+  const isLoading = sessionLoading || (!!userId && profileLoading)
 
   return {
     profile,

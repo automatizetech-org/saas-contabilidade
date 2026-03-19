@@ -288,7 +288,7 @@ function UserDialog({
 export default function AdminPage() {
   const queryClient = useQueryClient()
   const { profile, isSuperAdmin, canAccessAdmin, officeId, officeRole } = useProfile()
-  const canManageOffice = isSuperAdmin || officeRole === "owner"
+  const canManageOffice = isSuperAdmin || officeRole === "owner" || officeRole === "admin"
 
   const [officeForm, setOfficeForm] = useState<PrimeiroEscritorioInput>(emptyOfficeForm)
   const [creatingOffice, setCreatingOffice] = useState(false)
@@ -316,8 +316,9 @@ export default function AdminPage() {
   const [officeStatusLoading, setOfficeStatusLoading] = useState<string | null>(null)
 
   const { data: officeContext, isLoading: officeLoading } = useQuery({
-    queryKey: ["admin", "office-context"],
+    queryKey: ["admin", "office-context", officeId, officeRole, profile?.office_name ?? null],
     queryFn: getCurrentOfficeContext,
+    enabled: canAccessAdmin && !!officeId,
   })
 
   const { data: officeServer, isLoading: serverLoading } = useQuery({
@@ -367,6 +368,11 @@ export default function AdminPage() {
     if (usersLoading) return "Carregando usuários"
     return `${officeUsers.length} usuário(s)`
   }, [officeUsers.length, usersLoading])
+
+  const isBootstrappingAdmin =
+    canAccessAdmin &&
+    !!officeId &&
+    (officeLoading || !officeContext)
 
   const openCreateUserDialog = () => {
     setEditingUser(null)
@@ -538,7 +544,7 @@ export default function AdminPage() {
               <Building2 className="h-4 w-4 text-primary-icon" />
               Contexto atual
             </div>
-            {officeLoading ? (
+            {isBootstrappingAdmin ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Carregando escritório...
@@ -801,7 +807,14 @@ export default function AdminPage() {
         </GlassCard>
       ) : null}
 
-      {officeContext && canManageOffice ? (
+      {isBootstrappingAdmin ? (
+        <GlassCard className="p-5">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Carregando administração do escritório...
+          </div>
+        </GlassCard>
+      ) : officeContext && canManageOffice ? (
         <>
           <section className="grid gap-4 xl:grid-cols-3">
             <GlassCard className="p-5 xl:col-span-2">
