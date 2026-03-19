@@ -9,8 +9,8 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
-import { getCertidoesOverviewSummary, getFiscalDetailDocumentsPage, getFiscalDetailSummary, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
-import { downloadFiscalDocument, downloadFiscalDocumentsZip, downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
+import { getCertidoesOverviewSummary, getFiscalDetailDocumentPathsForZip, getFiscalDetailDocumentsPage, getFiscalDetailSummary, getUnifiedDocumentsZipPaths, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
+import { downloadFiscalDocument, downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -250,35 +250,31 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                 variant="default"
                 size="sm"
                 className="gap-1.5 text-xs shrink-0"
-                disabled={downloadingZip || items.filter((r) => r.file_path).length === 0}
+                disabled={downloadingZip}
                 onClick={async () => {
-                  const listWithFiles = items.filter((r) => r.file_path && String(r.file_path).trim());
-                  if (listWithFiles.length === 0) {
-                    toast.error("Nenhuma certidao com PDF disponivel na pagina atual.");
-                    return;
-                  }
                   setDownloadingZip(true);
                   setDownloadProgress(0);
                   try {
-                    // Evita o ZIP ficar com múltiplas cópias do mesmo arquivo físico.
-                    const uniqueByFilePath = new Map<string, typeof listWithFiles[number]>()
-                    for (const r of listWithFiles) {
-                      const fp = String(r.file_path ?? "").trim()
-                      if (!fp) continue
-                      if (!uniqueByFilePath.has(fp)) uniqueByFilePath.set(fp, r)
-                    }
-                    const uniqueList = Array.from(uniqueByFilePath.values())
+                    const zipPaths = await getFiscalDetailDocumentPathsForZip({
+                      kind: "certidoes",
+                      companyIds: companyFilter,
+                      search: search || undefined,
+                      certidaoTipo: tipoFiltro,
+                    });
 
-                    await downloadListedFilesZipWithCategory(
-                      uniqueList.map((r) => ({
-                        companyName: r.empresa || "EMPRESA",
-                        category: "certidoes",
-                        filePath: String(r.file_path!),
-                      })),
-                      "certidoes",
-                      (p) => setDownloadProgress(p)
-                    );
-                    toast.success(`Download iniciado: ${uniqueList.length} certidao(oes) da pagina.`);
+                    if (zipPaths.length === 0) {
+                      toast.error("Nenhuma certidao com PDF disponivel para os filtros atuais.");
+                      return;
+                    }
+
+                    const itemsToZip = zipPaths.map((r) => ({
+                      companyName: r.empresa || "EMPRESA",
+                      category: "certidoes",
+                      filePath: r.file_path,
+                    }));
+
+                    await downloadListedFilesZipWithCategory(itemsToZip, "certidoes", (p) => setDownloadProgress(p));
+                    toast.success(`Download iniciado: ${itemsToZip.length} certidao(oes) da lista.`);
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Erro ao baixar ZIP.");
                   } finally {
@@ -288,7 +284,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                 }}
               >
                 <FileArchive className="h-3.5 w-3.5" />
-                {downloadingZip ? "Gerando..." : "Baixar ZIP da pagina"}
+                {downloadingZip ? "Gerando..." : "Baixar ZIP da lista"}
               </Button>
             )}
           </div>
@@ -628,20 +624,44 @@ export default function FiscalDetailPage() {
                   setDownloadingZip(true);
                   setDownloadProgress(0);
                   try {
-                    // Evita registros duplicados com o mesmo arquivo físico.
-                    const filePathToId = new Map<string, string>();
-                    for (const item of pageItems) {
-                      const fp = String(item.file_path ?? "").trim();
-                      if (!fp) continue;
-                      if (!filePathToId.has(fp)) filePathToId.set(fp, item.id);
-                    }
-                    const ids = Array.from(filePathToId.values());
-                    if (ids.length === 0) {
-                      toast.error("Nenhum documento com arquivo disponivel na pagina atual.");
+                    // Mesma lógica de /documentos: uma RPC + download-zip-by-paths (rápido).
+                    const fileKindFilter: "Todos" | "XML" | "PDF" =
+                      fileKind === "all" ? "Todos" : fileKind === "xml" ? "XML" : "PDF";
+                    const zipPaths = await getUnifiedDocumentsZipPaths(
+                      {
+                        companyIds: companyFilter ?? undefined,
+                        category: kind === "nfs" ? "nfs" : "nfe_nfc",
+                        fileKind: fileKindFilter,
+                        search: search || undefined,
+                        dateFrom: resolvedDateFrom || undefined,
+                        dateTo: resolvedDateTo || undefined,
+                      },
+                      50_000
+                    );
+
+                    if (zipPaths.length === 0) {
+                      toast.error("Nenhum documento com arquivo disponivel para os filtros atuais.");
                       return;
                     }
-                    await downloadFiscalDocumentsZip(ids, type ?? undefined, (p) => setDownloadProgress(p));
-                    toast.success(`Download iniciado: ${ids.length} documento(s) da pagina.`);
+
+                    const uniqueByPath = new Map<string, (typeof zipPaths)[number]>();
+                    for (const row of zipPaths) {
+                      if (!row.file_path || uniqueByPath.has(row.file_path)) continue;
+                      uniqueByPath.set(row.file_path, row);
+                    }
+
+                    const categoryToFolder = (key: string) =>
+                      key === "nfs" ? "nfs" : key === "nfe_nfc" ? "nfe-nfc" : "outros";
+
+                    const items = Array.from(uniqueByPath.values()).map((row) => ({
+                      companyName: row.empresa || "EMPRESA",
+                      category: categoryToFolder(row.category_key),
+                      filePath: row.file_path,
+                    }));
+
+                    const zipSuffix = kind === "nfs" ? "nfs" : "nfe-nfc";
+                    await downloadListedFilesZipWithCategory(items, zipSuffix, (p) => setDownloadProgress(p));
+                    toast.success(`Download iniciado: ${items.length} documento(s) da lista.`);
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Erro ao baixar ZIP.");
                   } finally {
@@ -651,7 +671,7 @@ export default function FiscalDetailPage() {
                 }}
               >
                 <FileArchive className="h-3.5 w-3.5" />
-                {downloadingZip ? "Gerando..." : "Baixar ZIP da pagina"}
+                {downloadingZip ? "Gerando..." : "Baixar ZIP da lista"}
               </Button>
             )}
           </div>

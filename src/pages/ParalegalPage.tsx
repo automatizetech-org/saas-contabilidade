@@ -45,6 +45,7 @@ import {
 import {
   getMunicipalTaxOverview,
   getMunicipalTaxDebtsPage,
+  getMunicipalTaxDebts,
   type MunicipalTaxDebtView,
   type MunicipalTaxOverview,
   type MunicipalTaxStatusClass,
@@ -343,13 +344,6 @@ function MunicipalTaxesPanel({
   const totalPages = Math.max(1, Math.ceil(totalFiltered / tablePageSize))
   const from = (tablePage - 1) * tablePageSize
   const to = Math.min(from + tablePageSize, totalFiltered)
-  const listedGuideItems = pageItems
-    .filter((item) => item.guia_pdf_path && String(item.guia_pdf_path).trim())
-    .map((item) => ({
-      companyName: item.company_name || "EMPRESA",
-      category: "taxas e impostos",
-      filePath: String(item.guia_pdf_path!).trim(),
-    }))
 
   const statusChartData = useMemo(() => {
     if (municipalOverview?.byStatus?.length) {
@@ -569,17 +563,41 @@ function MunicipalTaxesPanel({
               <Button
                 type="button"
                 className="gap-2 xl:justify-self-end"
-                disabled={downloadingZip || listedGuideItems.length === 0}
+                disabled={downloadingZip}
                 onClick={async () => {
-                  if (listedGuideItems.length === 0) {
-                    toast.error("Nenhum débito com guia disponível na lista.")
-                    return
-                  }
                   setDownloadingZip(true)
                   setDownloadProgress(0)
                   try {
-                    await downloadListedFilesZipWithCategory(listedGuideItems, "guias-taxas-impostos", (p) => setDownloadProgress(p))
-                    toast.success(`Download iniciado: ${listedGuideItems.length} guia(s) (página atual).`)
+                    const allDebts = await getMunicipalTaxDebts({
+                      companyIds: companyIdsFilter,
+                      year: filters.year,
+                      status: filters.status,
+                      dateFrom: filters.periodFrom || undefined,
+                      dateTo: filters.periodTo || undefined,
+                      search: filters.search,
+                    })
+
+                    // Deduplica por `guia_pdf_path` (mesmo arquivo físico).
+                    const filePathToCompany = new Map<string, string>()
+                    for (const d of allDebts) {
+                      const fp = String(d.guia_pdf_path ?? "").trim()
+                      if (!fp) continue
+                      if (!filePathToCompany.has(fp)) filePathToCompany.set(fp, d.company_name || "EMPRESA")
+                    }
+
+                    const itemsToZip = Array.from(filePathToCompany.entries()).map(([filePath, companyName]) => ({
+                      companyName,
+                      category: "taxas e impostos",
+                      filePath,
+                    }))
+
+                    if (itemsToZip.length === 0) {
+                      toast.error("Nenhum débito com guia disponível para os filtros atuais.")
+                      return
+                    }
+
+                    await downloadListedFilesZipWithCategory(itemsToZip, "guias-taxas-impostos", (p) => setDownloadProgress(p))
+                    toast.success(`Download iniciado: ${itemsToZip.length} guia(s) da lista.`)
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Erro ao baixar ZIP.")
                   } finally {

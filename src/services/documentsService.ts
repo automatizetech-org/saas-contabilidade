@@ -432,7 +432,8 @@ const FISCAL_ZIP_MAX_ITEMS = 50000
 export async function getFiscalDetailDocumentIdsForZip(
   filters: Omit<FiscalDetailPageFilters, "cursor" | "limit">
 ): Promise<string[]> {
-  const ids: string[] = []
+  // Deduplica por `file_path` (evita múltiplas cópias físicas no ZIP)
+  const filePathToId = new Map<string, string>()
   let cursor: CursorPageToken | null = null
   do {
     const result = await getFiscalDetailDocumentsPage({
@@ -441,12 +442,45 @@ export async function getFiscalDetailDocumentIdsForZip(
       limit: FISCAL_ZIP_PAGE_LIMIT,
     })
     for (const row of result.items) {
-      if (row.file_path && String(row.file_path).trim() && ids.length < FISCAL_ZIP_MAX_ITEMS) {
-        ids.push(row.id)
-      }
+      const fp = String(row.file_path ?? "").trim()
+      if (!fp) continue
+      if (!filePathToId.has(fp)) filePathToId.set(fp, row.id)
+      if (filePathToId.size >= FISCAL_ZIP_MAX_ITEMS) break
     }
-    if (!result.hasMore || !result.nextCursor || ids.length >= FISCAL_ZIP_MAX_ITEMS) break
+    if (filePathToId.size >= FISCAL_ZIP_MAX_ITEMS) break
+    if (!result.hasMore || !result.nextCursor) break
     cursor = result.nextCursor
   } while (true)
-  return [...new Set(ids)]
+  return Array.from(filePathToId.values())
+}
+
+export type FiscalZipPathRow = {
+  file_path: string
+  empresa: string
+}
+
+/** Coleta todos os `file_path` (e `empresa`) do cursor fiscal conforme os filtros, para ZIP da lista inteira. */
+export async function getFiscalDetailDocumentPathsForZip(
+  filters: Omit<FiscalDetailPageFilters, "cursor" | "limit">
+): Promise<FiscalZipPathRow[]> {
+  const filePathToEmpresa = new Map<string, string>()
+  let cursor: CursorPageToken | null = null
+  do {
+    const result = await getFiscalDetailDocumentsPage({
+      ...filters,
+      cursor,
+      limit: FISCAL_ZIP_PAGE_LIMIT,
+    })
+    for (const row of result.items) {
+      const fp = String(row.file_path ?? "").trim()
+      if (!fp) continue
+      if (!filePathToEmpresa.has(fp)) filePathToEmpresa.set(fp, row.empresa || "EMPRESA")
+      if (filePathToEmpresa.size >= FISCAL_ZIP_MAX_ITEMS) break
+    }
+    if (filePathToEmpresa.size >= FISCAL_ZIP_MAX_ITEMS) break
+    if (!result.hasMore || !result.nextCursor) break
+    cursor = result.nextCursor
+  } while (true)
+
+  return Array.from(filePathToEmpresa.entries()).map(([file_path, empresa]) => ({ file_path, empresa }))
 }
