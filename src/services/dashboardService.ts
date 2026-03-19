@@ -163,41 +163,74 @@ function sumServiceCodes(codes: ServiceCodeStat[]) {
   return codes.reduce((sum, item) => sum + parseMoneyLike(item.total_value), 0)
 }
 
+/** Contagens reais (notas únicas por chave/id). Usa a mesma RPC do dashboard quando possível. */
 export async function getDashboardCounts(companyIds: string[] | null) {
-  const filterByCompany = companyIds && companyIds.length > 0
-  const companyFilter = filterByCompany ? companyIds : undefined
-
-  const [companiesRes, docsRes] = await Promise.all([
-    supabase.from("companies").select("id", { count: "exact", head: true }),
-    companyFilter
-      ? supabase.from("fiscal_documents").select("id", { count: "exact", head: true }).in("company_id", companyFilter)
-      : supabase.from("fiscal_documents").select("id", { count: "exact", head: true }),
-  ])
-
-  return {
-    companiesCount: companiesRes.count ?? 0,
-    documentsCount: docsRes.count ?? 0,
+  try {
+    const { data, error } = await supabase.rpc("get_dashboard_overview_summary", {
+      company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
+    })
+    if (error) throw error
+    const payload = (data ?? {}) as { companiesCount?: number; totalNotasFiscais?: number; documentsCount?: number }
+    return {
+      companiesCount: Number(payload.companiesCount ?? 0),
+      documentsCount: Number(payload.totalNotasFiscais ?? payload.documentsCount ?? 0),
+    }
+  } catch {
+    const filterByCompany = companyIds && companyIds.length > 0
+    const companyFilter = filterByCompany ? companyIds : undefined
+    const [companiesRes, docsRes] = await Promise.all([
+      supabase.from("companies").select("id", { count: "exact", head: true }),
+      companyFilter
+        ? supabase.from("fiscal_documents").select("id, chave").in("company_id", companyFilter).limit(10000)
+        : supabase.from("fiscal_documents").select("id, chave").limit(10000),
+    ])
+    if (companiesRes.error) throw companiesRes.error
+    const docsResTyped = docsRes as { data?: Array<{ id: string; chave?: string | null }>; error?: Error }
+    const docs = docsResTyped.error ? [] : (docsResTyped.data ?? [])
+    const seen = new Set<string>()
+    const uniq = docs.filter((d) => {
+      const key = (d.chave && String(d.chave).trim()) ? String(d.chave).trim() : d.id
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    return {
+      companiesCount: companiesRes.count ?? 0,
+      documentsCount: uniq.length,
+    }
   }
 }
 
+/** Lista documentos fiscais recentes (um por chave/id único), ordenados por created_at. */
 export async function getRecentFiscalDocuments(companyIds: string[] | null, limit: number) {
   let q = supabase
     .from("fiscal_documents")
-    .select("id, company_id, type, status, created_at")
+    .select("id, chave, company_id, type, status, created_at")
     .order("created_at", { ascending: false })
-    .limit(limit)
+    .limit(Math.min(limit * 3, 500))
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
   const { data, error } = await q
   if (error) throw error
-  const list = data ?? []
+  const raw = (data ?? []) as Array<{ id: string; chave?: string | null; company_id: string; type: string; status: string; created_at: string }>
+  const seen = new Set<string>()
+  const list = raw.filter((d) => {
+    const key = (d.chave && String(d.chave).trim()) ? String(d.chave).trim() : d.id
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, limit)
   const companyIdsList = [...new Set(list.map((d) => d.company_id))]
   if (companyIdsList.length === 0) return []
   const companies = await fetchCompaniesByIds(companyIdsList)
   const names = new Map(companies.map((c) => [c.id, c.name]))
   return list.map((d) => ({
-    ...d,
+    id: d.id,
+    company_id: d.company_id,
+    type: d.type,
+    status: d.status,
+    created_at: d.created_at,
     companyName: names.get(d.company_id) ?? "",
   }))
 }
@@ -358,22 +391,33 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
   })
 }
 
-/** Resumo fiscal para a visão geral: totais por tipo (NFS, NFE, NFC) com métricas (total, disponíveis, este mês). Opcional: period YYYY-MM para filtrar por período. */
+/** Resumo fiscal para a visão geral: totais por tipo (NFS, NFE, NFC) com métricas reais (um documento = chave/id único). Opcional: period YYYY-MM para filtrar por período. */
 export async function getFiscalSummary(companyIds: string[] | null, period?: string) {
-  let q = supabase.from("fiscal_documents").select("type, file_path, created_at, periodo")
+  let q = supabase.from("fiscal_documents").select("id, chave, type, file_path, created_at, periodo")
   if (companyIds && companyIds.length > 0) {
     q = q.in("company_id", companyIds)
   }
   const rows = await fetchAllPages<{
+    id: string
+    chave?: string | null
     type: string
     file_path: string | null
     created_at: string
     periodo: string
   }>((from, to) => q.range(from, to))
+  const docKey = (r: { id: string; chave?: string | null }) =>
+    (r.chave && String(r.chave).trim() ? String(r.chave).trim() : r.id) as string
+  const seen = new Set<string>()
+  const rowsUniq = rows.filter((r) => {
+    const key = docKey(r)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
   const periodFilter = period && /^\d{4}-\d{2}$/.test(period) ? period : null
   const rowsFiltered = periodFilter
-    ? rows.filter((r) => (r.periodo || "").trim() === periodFilter)
-    : rows
+    ? rowsUniq.filter((r) => (r.periodo || "").trim() === periodFilter)
+    : rowsUniq
   const now = new Date()
   const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
   type ByTypeMetric = { total: number; disponiveis: number; esteMes: number }

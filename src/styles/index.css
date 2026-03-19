@@ -856,6 +856,45 @@ button, a {
   outline: none !important;
 }
 
+/* Tooltips dos gráficos (Recharts): tema escuro com texto legível */
+.dark .recharts-default-tooltip,
+.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  padding: 8px 12px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+}
+
+.dark .recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label,
+.dark .recharts-default-tooltip .recharts-tooltip-label {
+  color: hsl(var(--foreground)) !important;
+}
+
+.dark .recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-item,
+.dark .recharts-default-tooltip .recharts-tooltip-item {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Shadcn ChartTooltipContent (classe .chart-tooltip-content) em dark para contraste garantido */
+.dark .chart-tooltip-content,
+.dark .recharts-tooltip-wrapper .chart-tooltip-content {
+  background-color: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+.dark .chart-tooltip-content .text-muted-foreground,
+.dark .recharts-tooltip-wrapper .text-muted-foreground {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+.dark .chart-tooltip-content .text-foreground,
+.dark .recharts-tooltip-wrapper .text-foreground {
+  color: hsl(var(--foreground)) !important;
+}
+
 /* ========== IR Create Overlay ========== */
 .ir-create-overlay {
   position: fixed;
