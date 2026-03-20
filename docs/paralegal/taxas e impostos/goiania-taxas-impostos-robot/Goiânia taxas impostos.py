@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import hashlib
 import io
@@ -8,6 +9,7 @@ import os
 import re
 import shutil
 import socket
+import signal
 import time
 import subprocess
 import sys
@@ -49,7 +51,7 @@ from supabase import Client, create_client
 
 
 # Diretório base: quando iniciado pelo agendador, defina ROBOT_SCRIPT_DIR com a pasta do robô
-# (a que contém este .py e a pasta data/). Assim o perfil Chrome (data/chrome_cdp_profile) será sempre essa pasta.
+# (a que contém este .py e a pasta data/). Assim o perfil Chrome (data/chrome_profile) será sempre essa pasta.
 RUNTIME_FOLDER_NAME = "goiania_taxas_impostos"
 
 
@@ -87,10 +89,38 @@ BASE_DIR = _resolve_runtime_base_dir()
 os.environ.setdefault("ROBOT_SCRIPT_DIR", str(BASE_DIR))
 os.chdir(BASE_DIR)
 
-# Perfil Chrome: data/chrome_cdp_profile relativo a BASE_DIR.
-# Com agendador, defina ROBOT_SCRIPT_DIR para a pasta do robô; o perfil será BASE_DIR/data/chrome_cdp_profile.
+# Perfil Chrome: data/chrome_profile relativo a BASE_DIR.
+# Com agendador, defina ROBOT_SCRIPT_DIR para a pasta do robô; o perfil será BASE_DIR/data/chrome_profile.
+CHROME_PROFILE_DIRNAME = "chrome_profile"
+CHROME_PROFILE_BACKUP_DIRNAME = "chrome_profile_backup"
+LEGACY_CHROME_PROFILE_DIRNAME = "chrome_cdp_profile"
+LEGACY_CHROME_PROFILE_BACKUP_DIRNAME = "chrome_cdp_profile_backup"
+
+
 def _get_chrome_profile_dir() -> Path:
-    return (BASE_DIR / "data" / "chrome_cdp_profile").resolve()
+    return (BASE_DIR / "data" / CHROME_PROFILE_DIRNAME).resolve()
+
+
+def _get_chrome_profile_backup_dir() -> Path:
+    return (BASE_DIR / "data" / CHROME_PROFILE_BACKUP_DIRNAME).resolve()
+
+
+def _migrate_legacy_profile_dir(preferred_dir: Path, legacy_dir: Path) -> None:
+    if preferred_dir.exists() or not legacy_dir.exists():
+        return
+    try:
+        legacy_dir.replace(preferred_dir)
+        return
+    except Exception:
+        pass
+    try:
+        shutil.copytree(legacy_dir, preferred_dir)
+    except Exception:
+        return
+    try:
+        shutil.rmtree(legacy_dir, ignore_errors=True)
+    except Exception:
+        pass
 
 def _resolve_robots_base_env_dir() -> Path:
     candidates: list[Path] = []
@@ -154,7 +184,7 @@ class JsonRobotRuntime:
         return self.technical_id
 
     def load_job(self) -> Optional[dict[str, Any]]:
-        if self.result_path.exists() or not self.job_path.exists():
+        if not self.job_path.exists():
             return None
         try:
             payload = json.loads(self.job_path.read_text(encoding="utf-8"))
@@ -168,6 +198,28 @@ class JsonRobotRuntime:
             payload["job_id"] = payload.get("id")
         if not payload.get("execution_request_id"):
             payload["execution_request_id"] = payload.get("id")
+        job_execution_id = str(
+            payload.get("execution_request_id")
+            or payload.get("job_id")
+            or payload.get("id")
+            or ""
+        ).strip()
+        if not job_execution_id:
+            return None
+        if self.result_path.exists():
+            try:
+                result_payload = json.loads(self.result_path.read_text(encoding="utf-8"))
+            except Exception:
+                result_payload = None
+            if isinstance(result_payload, dict):
+                result_execution_id = str(
+                    result_payload.get("execution_request_id")
+                    or result_payload.get("job_id")
+                    or result_payload.get("event_id")
+                    or ""
+                ).strip()
+                if result_execution_id and result_execution_id == job_execution_id:
+                    return None
         return payload
 
     def load_job_companies(
@@ -274,6 +326,7 @@ PLAYWRIGHT_DIR = DATA_DIR / "ms-playwright"
 EXTENSIONS_DIR = DATA_DIR / "extensions"
 LOGS_DIR = DATA_DIR / "logs"
 RUNTIME_LOG_PATH = LOGS_DIR / "runtime.log"
+INSTANCE_LOCK_PATH = DATA_DIR / "runtime.lock"
 CDP_PORT = int(os.getenv("GOIANIA_CDP_PORT", "9223"))
 
 
@@ -289,11 +342,29 @@ def _is_cdp_port_in_use() -> bool:
 PROXY_DIR = DATA_DIR / "proxy"
 PROXIES_FILE = PROXY_DIR / "proxies.txt"
 CHROME_EXE = (DATA_DIR / "Chrome" / "chrome.exe").resolve()
-# Perfil obrigatório: só data/chrome_cdp_profile do robô (nunca AppData/Playwright).
+# Perfil obrigatório: só data/chrome_profile do robô (nunca AppData/Playwright).
 CHROME_PROFILE_DIR = _get_chrome_profile_dir()
-CHROME_PROFILE_BACKUP_DIR = (DATA_DIR / "chrome_cdp_profile_backup").resolve()
+CHROME_PROFILE_BACKUP_DIR = _get_chrome_profile_backup_dir()
+_migrate_legacy_profile_dir(CHROME_PROFILE_DIR, (DATA_DIR / LEGACY_CHROME_PROFILE_DIRNAME).resolve())
+_migrate_legacy_profile_dir(CHROME_PROFILE_BACKUP_DIR, (DATA_DIR / LEGACY_CHROME_PROFILE_BACKUP_DIRNAME).resolve())
 CHROME_LOG_PATH = (DATA_DIR / "chrome_start.log").resolve()
+SYSTEM_CHROME_USER_DATA_DIR = (
+    (Path(os.getenv("LOCALAPPDATA")) / "Google" / "Chrome" / "User Data").resolve()
+    if os.getenv("LOCALAPPDATA")
+    else Path()
+)
+SYSTEM_CHROME_DEFAULT_PROFILE_DIR = (
+    (SYSTEM_CHROME_USER_DATA_DIR / "Default").resolve()
+    if str(SYSTEM_CHROME_USER_DATA_DIR)
+    else Path()
+)
+SYSTEM_CHROME_PROFILE_1_DIR = (
+    (SYSTEM_CHROME_USER_DATA_DIR / "Profile 1").resolve()
+    if str(SYSTEM_CHROME_USER_DATA_DIR)
+    else Path()
+)
 SKILL_UP_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
+HELPER_CAPTCHA_EXTENSION_ID = "hlifkpholllijblknnmbfagnkjneagid"
 SKILL_UP_EXTENSION_UPDATE_URL = (
     "https://clients2.google.com/service/update2/crx"
     "?response=redirect"
@@ -383,7 +454,7 @@ GOIANIA_PORTAL_PASSWORD = os.getenv("GOIANIA_PORTAL_PASSWORD", "")
 # URL do server-api (dashboard); base_path e estrutura de pastas (segment_path) vêm daqui.
 SERVER_API_URL = (os.getenv("SERVER_API_URL") or "").strip()
 CONNECTOR_SECRET = (os.getenv("CONNECTOR_SECRET") or "").strip()
-# Não usado para o Chrome do robô; o robô usa apenas CHROME_PROFILE_DIR (data/chrome_cdp_profile).
+# Não usado para o Chrome do robô; o robô usa apenas CHROME_PROFILE_DIR (data/chrome_profile).
 PLAYWRIGHT_USER_DATA_DIR = os.getenv("PLAYWRIGHT_USER_DATA_DIR", str(BASE_DIR / ".playwright-profile"))
 
 ROBOT_TECHNICAL_ID = "goiania_taxas_impostos"
@@ -407,6 +478,65 @@ JSON_RUNTIME = JsonRobotRuntime(
     BASE_DIR,
 )
 
+_PROCESS_SHUTDOWN_MARKED_INACTIVE = False
+_WINDOWS_CONSOLE_HANDLER = None
+
+
+def _mark_process_inactive(window: Any | None = None, reason: str = "process_exit") -> None:
+    global _PROCESS_SHUTDOWN_MARKED_INACTIVE
+    if _PROCESS_SHUTDOWN_MARKED_INACTIVE:
+        return
+    _PROCESS_SHUTDOWN_MARKED_INACTIVE = True
+    try:
+        JSON_RUNTIME.write_heartbeat(
+            status="inactive",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message=reason,
+        )
+    except Exception:
+        pass
+    try:
+        if window is not None and getattr(window, "backend", None) is not None:
+            window.backend.ensure_robot_registration()
+            window.backend.update_robot_status("inactive")
+    except Exception:
+        pass
+
+
+def _install_process_shutdown_handlers(window: Any | None = None) -> None:
+    global _WINDOWS_CONSOLE_HANDLER
+
+    def _handle_signal(signum, _frame) -> None:
+        _mark_process_inactive(window, f"signal_{signum}")
+        raise SystemExit(0)
+
+    atexit.register(lambda: _mark_process_inactive(window, "atexit"))
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, signal_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_signal)
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+            @handler_type
+            def _console_handler(ctrl_type: int) -> bool:
+                _mark_process_inactive(window, f"console_ctrl_{ctrl_type}")
+                return False
+
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler, True)
+            _WINDOWS_CONSOLE_HANDLER = _console_handler
+        except Exception:
+            pass
+
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -429,6 +559,55 @@ def append_runtime_log(message: str) -> None:
             handle.write(message.rstrip() + "\n")
     except Exception:
         pass
+
+
+def emit_terminal_log(message: str) -> str:
+    text = str(message or "").rstrip()
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    line = f"[{timestamp}] [GOIANIA] {text}" if text else f"[{timestamp}] [GOIANIA]"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    return line
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def ensure_single_instance() -> None:
+    INSTANCE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    current_pid = os.getpid()
+    if INSTANCE_LOCK_PATH.exists():
+        try:
+            existing_pid = int((INSTANCE_LOCK_PATH.read_text(encoding="utf-8") or "").strip() or "0")
+        except Exception:
+            existing_pid = 0
+        if existing_pid and existing_pid != current_pid and _pid_is_alive(existing_pid):
+            append_runtime_log(f"[Robo] Instância já em execução (PID {existing_pid}). Encerrando novo processo.")
+            raise SystemExit(0)
+    INSTANCE_LOCK_PATH.write_text(str(current_pid), encoding="utf-8")
+
+    def _cleanup() -> None:
+        try:
+            if not INSTANCE_LOCK_PATH.exists():
+                return
+            saved_pid = int((INSTANCE_LOCK_PATH.read_text(encoding="utf-8") or "").strip() or "0")
+            if saved_pid == current_pid:
+                INSTANCE_LOCK_PATH.unlink()
+        except Exception:
+            pass
+
+    atexit.register(_cleanup)
 
 
 def _extract_crx_payload(crx_bytes: bytes) -> bytes:
@@ -748,6 +927,9 @@ class RobotBackend:
         self.pending_result_operations: list[dict[str, Any]] = []
         self.pending_run_rows: dict[str, dict[str, Any]] = {}
         self.pending_company_debts: dict[str, list[dict[str, Any]]] = {}
+        self._skill_up_extension_ready = False
+        self._extension_profile_seeded = False
+        self._working_profile_prepared = False
 
     def _reset_pending_result_payload(self) -> None:
         self.pending_result_operations.clear()
@@ -838,13 +1020,72 @@ class RobotBackend:
         self._proxy_list = _load_proxy_list()
         self._proxy_index = 0
 
+    async def _ensure_skill_up_extension_ready(self) -> None:
+        if self._skill_up_extension_ready or self.context is None:
+            return
+
+        if self._profile_has_skill_up_installed(_get_chrome_profile_dir()):
+            self._skill_up_extension_ready = True
+            return
+
+        extension_url_prefix = f"chrome-extension://{SKILL_UP_EXTENSION_ID}/"
+        setup_url = f"{extension_url_prefix}setup.html"
+        extension_confirmed = False
+
+        for _ in range(30):
+            try:
+                workers = list(getattr(self.context, "service_workers", []) or [])
+            except Exception:
+                workers = []
+            if any(SKILL_UP_EXTENSION_ID in (getattr(worker, "url", "") or "") for worker in workers):
+                extension_confirmed = True
+                break
+            await asyncio.sleep(0.5)
+
+        if not extension_confirmed:
+            try:
+                response = requests.get(f"http://127.0.0.1:{CDP_PORT}/json/list", timeout=3)
+                response.raise_for_status()
+                targets = response.json() or []
+                extension_confirmed = any(
+                    SKILL_UP_EXTENSION_ID in str((target or {}).get("url") or "")
+                    for target in targets
+                    if isinstance(target, dict)
+                )
+            except Exception as exc:
+                self._log(f"[WARN] Não foi possível consultar os alvos CDP da extensão Skill Up: {exc}")
+
+        setup_page: Page | None = None
+        try:
+            setup_page = await self.context.new_page()
+            await setup_page.goto(setup_url, wait_until="domcontentloaded", timeout=20_000)
+            await asyncio.sleep(2)
+            extension_confirmed = True
+            self._log("Extensão Skill Up carregada e página de setup validada.")
+        except Exception as exc:
+            self._log(f"[WARN] Não foi possível validar a página da extensão Skill Up: {exc}")
+        finally:
+            if setup_page is not None:
+                try:
+                    await setup_page.close()
+                except Exception:
+                    pass
+
+        if not extension_confirmed:
+            raise RuntimeError(
+                "Extensão Skill Up não foi confirmada no Chrome. O robô não pode prosseguir sem a extensão."
+            )
+        self._skill_up_extension_ready = True
+
     def set_log_callback(self, cb: Callable[[str], None] | None) -> None:
         self._log_cb = cb
 
     def _log(self, message: str) -> None:
-        print(message, file=sys.stderr)
         if self._log_cb:
             self._log_cb(message)
+            return
+        line = emit_terminal_log(message)
+        append_runtime_log(line)
 
     def _client(self) -> Client:
         if self.supabase is None:
@@ -1480,6 +1721,7 @@ class RobotBackend:
             viewport={"width": 1440, "height": 960},
         )
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+        await self._ensure_skill_up_extension_ready()
         self.portal_home_page = self.page
         self.page.set_default_timeout(90000)
         self.context.set_default_navigation_timeout(90000)
@@ -1493,9 +1735,7 @@ class RobotBackend:
 
         profile_dir = _get_chrome_profile_dir()
         backup_dir = CHROME_PROFILE_BACKUP_DIR
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        if not self._is_profile_healthy(profile_dir) and self._is_profile_healthy(backup_dir):
-            self._restore_profile_from_backup(profile_dir, backup_dir)
+        self._prepare_working_profile(profile_dir, backup_dir)
 
         last_error: Exception | None = None
         for attempt in range(2):
@@ -1530,11 +1770,11 @@ class RobotBackend:
                     proxy_url = None
                     self._log("Nenhum proxy respondeu; iniciando sem proxy.")
 
-            extension_dir = ensure_skill_up_extension_dir()
             chrome_cmd = [
                 str(chrome_exe),
                 f"--remote-debugging-port={CDP_PORT}",
                 f"--user-data-dir={profile_dir}",
+                "--profile-directory=Default",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
@@ -1546,13 +1786,6 @@ class RobotBackend:
                 "--start-maximized",
                 "--ignore-certificate-errors",
             ]
-            if extension_dir:
-                chrome_cmd.extend(
-                    [
-                        f"--disable-extensions-except={extension_dir}",
-                        f"--load-extension={extension_dir}",
-                    ]
-                )
             if proxy_url:
                 chrome_cmd.append(f"--proxy-server={proxy_url}")
             CHROME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1564,6 +1797,7 @@ class RobotBackend:
                     f"PROFILE_BACKUP_DIR: {backup_dir}\n"
                     f"CDP_PORT: {CDP_PORT}\n"
                     f"PROXY: {proxy_url or 'nenhum'}\n"
+                    "EXTENSION_MODE: backup-profile-only\n"
                     f"TENTATIVA: {attempt + 1}\n"
                     f"CMD: {' '.join(chrome_cmd)}\n\n"
                 )
@@ -1584,6 +1818,7 @@ class RobotBackend:
                     viewport={"width": 1440, "height": 960},
                 )
                 self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
+                await self._ensure_skill_up_extension_ready()
                 self.portal_home_page = self.page
                 self.page.set_default_timeout(90000)
                 self.context.set_default_navigation_timeout(90000)
@@ -1607,7 +1842,8 @@ class RobotBackend:
                 self.playwright = None
                 self._kill_automation_chrome()
                 self.chrome_proc = None
-                if attempt == 0 and self._restore_profile_from_backup(profile_dir, backup_dir):
+                if attempt == 0:
+                    self._restore_working_profile(profile_dir, backup_dir)
                     continue
                 break
         if last_error:
@@ -1642,10 +1878,7 @@ class RobotBackend:
                 await asyncio.sleep(2.5)
             except Exception:
                 pass
-            try:
-                self._snapshot_profile_backup(_get_chrome_profile_dir(), CHROME_PROFILE_BACKUP_DIR)
-            except Exception:
-                pass
+            self._restore_working_profile(_get_chrome_profile_dir(), CHROME_PROFILE_BACKUP_DIR)
 
     def _stop_mitmdump(self) -> None:
         """Encerra o processo mitmdump iniciado por este backend."""
@@ -1727,6 +1960,252 @@ class RobotBackend:
             pass
         return CHROME_EXE
 
+    def _resolve_extension_source_profile(self) -> Path | None:
+        explicit = (os.getenv("GOIANIA_EXTENSION_SOURCE_PROFILE") or "").strip()
+        candidates: list[Path] = []
+        if explicit:
+            candidates.append(Path(explicit))
+        if str(SYSTEM_CHROME_PROFILE_1_DIR):
+            candidates.append(SYSTEM_CHROME_PROFILE_1_DIR)
+        if str(SYSTEM_CHROME_DEFAULT_PROFILE_DIR):
+            candidates.append(SYSTEM_CHROME_DEFAULT_PROFILE_DIR)
+        seen: set[str] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            key = str(resolved).lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            if self._source_profile_has_captcha_stack(resolved):
+                return resolved
+        return None
+
+    def _source_profile_has_captcha_stack(self, source_profile_dir: Path) -> bool:
+        secure_prefs = source_profile_dir / "Secure Preferences"
+        helper_root = source_profile_dir / "Extensions" / HELPER_CAPTCHA_EXTENSION_ID
+        if not secure_prefs.exists() or not helper_root.exists():
+            return False
+        try:
+            payload = json.loads(secure_prefs.read_text(encoding="utf-8", errors="ignore"))
+            settings = (payload.get("extensions") or {}).get("settings") or {}
+            entry = settings.get(HELPER_CAPTCHA_EXTENSION_ID)
+            if not isinstance(entry, dict):
+                return False
+            manifest = entry.get("manifest") or {}
+            return "Captcha Solver" in str(manifest.get("name") or "")
+        except Exception:
+            return False
+
+    def _profile_has_skill_up_installed(self, profile_dir: Path) -> bool:
+        secure_prefs = profile_dir / "Default" / "Secure Preferences"
+        extension_root = profile_dir / "Default" / "Extensions" / SKILL_UP_EXTENSION_ID
+        if not secure_prefs.exists() or not extension_root.exists():
+            return False
+        try:
+            payload = json.loads(secure_prefs.read_text(encoding="utf-8", errors="ignore"))
+            settings = (payload.get("extensions") or {}).get("settings") or {}
+            entry = settings.get(SKILL_UP_EXTENSION_ID)
+            if not isinstance(entry, dict):
+                return False
+            manifest = entry.get("manifest") or {}
+            return "Skill Up" in str(manifest.get("name") or "")
+        except Exception:
+            return False
+
+    def _inject_skill_up_into_profile(self, target_profile_dir: Path) -> bool:
+        target_default = target_profile_dir / "Default"
+        secure_prefs_path = target_default / "Secure Preferences"
+        preferences_path = target_default / "Preferences"
+        default_secure_prefs_path = SYSTEM_CHROME_DEFAULT_PROFILE_DIR / "Secure Preferences"
+        skill_up_bundle = ensure_skill_up_extension_dir()
+        if skill_up_bundle is None:
+            return False
+        if not secure_prefs_path.exists() or not default_secure_prefs_path.exists():
+            return False
+        try:
+            skill_up_target = target_default / "Extensions" / SKILL_UP_EXTENSION_ID / "1.4.0_0"
+            skill_up_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(skill_up_bundle, skill_up_target, dirs_exist_ok=True)
+
+            manifest_path = skill_up_target / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8", errors="ignore"))
+            if not manifest.get("key"):
+                manifest["key"] = (
+                    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqdo3sqelSaciAVW56eUtqgv0zs7qA+bj//DczBD1Pc9VR2UbtY0iDFJXJKH/4nxQ1rNVmUYZzjmdsAmvdh3UbH3TuVPWV486cHB80u8ON1fwEURRHdQizEkLj39i8B6WUzI48KTXN49ItzN5wGu9ScXH4S78HwgjQ8qFIoqLC1HF+t7OFrU2YilHD7AcfC3d3TDPVq4IMwvdRHjy1tIirSbtQdTAYUlG134R6UhIlEJLvPQ/1eQDDYVJL8r6PP4LtNzU5lnaLm9Ip044xG+/wwV7C1rfIDDXTQtCwwSaetBgiCtqyZdmESJ8dqa+Ps8e/ZY8lK4Gk+rrbcSclCCs2wIDAQAB"
+                )
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            default_secure = json.loads(default_secure_prefs_path.read_text(encoding="utf-8", errors="ignore"))
+            skill_entry = (((default_secure.get("extensions") or {}).get("settings")) or {}).get(SKILL_UP_EXTENSION_ID)
+            if not isinstance(skill_entry, dict):
+                return False
+
+            secure_payload = json.loads(secure_prefs_path.read_text(encoding="utf-8", errors="ignore"))
+            secure_payload.setdefault("extensions", {}).setdefault("settings", {})[SKILL_UP_EXTENSION_ID] = skill_entry
+            secure_prefs_path.write_text(json.dumps(secure_payload, ensure_ascii=False), encoding="utf-8")
+
+            if preferences_path.exists():
+                prefs_payload = json.loads(preferences_path.read_text(encoding="utf-8", errors="ignore"))
+                prefs_payload.setdefault("extensions", {}).setdefault("ui", {}).setdefault("developer_mode", True)
+                preferences_path.write_text(json.dumps(prefs_payload, ensure_ascii=False), encoding="utf-8")
+
+            for folder_name in ["Local Extension Settings", "Managed Extension Settings", "Sync Extension Settings"]:
+                source_dir = SYSTEM_CHROME_DEFAULT_PROFILE_DIR / folder_name / SKILL_UP_EXTENSION_ID
+                if not source_dir.exists():
+                    continue
+                target_dir = target_default / folder_name / SKILL_UP_EXTENSION_ID
+                target_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+            return True
+        except Exception as exc:
+            self._log(f"Aviso: falha ao injetar Skill Up no perfil Chrome do robô: {exc}")
+            return False
+
+    def _sync_extension_profile_from_source(self, target_profile_dir: Path) -> bool:
+        source_profile_dir = self._resolve_extension_source_profile()
+        if source_profile_dir is None:
+            return False
+        source_user_data_dir = source_profile_dir.parent
+        temp_dir = target_profile_dir.with_name(f"{target_profile_dir.name}_seed_tmp")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        (temp_dir / "Default").mkdir(parents=True, exist_ok=True)
+        copy_items = [
+            ("Local State", False),
+            ("Preferences", True),
+            ("Secure Preferences", True),
+            ("Extensions", True),
+            ("Local Extension Settings", True),
+            ("Managed Extension Settings", True),
+            ("Sync Extension Settings", True),
+            ("Extension Rules", True),
+            ("Extension Scripts", True),
+            ("Extension State", True),
+            ("Service Worker", True),
+        ]
+        try:
+            for relative_name, in_default in copy_items:
+                source_path = (source_profile_dir / relative_name) if in_default else (source_user_data_dir / relative_name)
+                target_path = (temp_dir / "Default" / relative_name) if in_default else (temp_dir / relative_name)
+                if not source_path.exists():
+                    continue
+                if source_path.is_dir():
+                    shutil.copytree(source_path, target_path, dirs_exist_ok=True)
+                else:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, target_path)
+
+            if not self._inject_skill_up_into_profile(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return False
+
+            if not self._profile_has_skill_up_installed(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return False
+
+            if target_profile_dir.exists():
+                try:
+                    old_dir = target_profile_dir.with_name(
+                        f"{target_profile_dir.name}_seed_old_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    )
+                    target_profile_dir.replace(old_dir)
+                except Exception:
+                    shutil.rmtree(target_profile_dir, ignore_errors=True)
+            temp_dir.replace(target_profile_dir)
+            self._cleanup_profile_runtime_files(target_profile_dir)
+            self._log("Perfil Chrome do robô atualizado a partir das extensões do Chrome local.")
+            return True
+        except Exception as exc:
+            self._log(f"Aviso: falha ao sincronizar perfil Chrome com extensões locais: {exc}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return False
+
+    def _prepare_extension_enabled_profile(self, profile_dir: Path, backup_dir: Path) -> bool:
+        if self._profile_has_skill_up_installed(profile_dir):
+            self._extension_profile_seeded = True
+            return True
+        if self._profile_has_skill_up_installed(backup_dir) and self._restore_profile_from_backup(profile_dir, backup_dir):
+            self._extension_profile_seeded = True
+            return True
+        if self._sync_extension_profile_from_source(profile_dir):
+            self._extension_profile_seeded = True
+            try:
+                self._copy_profile_tree(profile_dir, backup_dir)
+            except Exception:
+                pass
+            return True
+        self._extension_profile_seeded = False
+        return False
+
+    def _remove_tree_with_retries(self, target: Path, *, max_attempts: int = 6) -> None:
+        if not target.exists():
+            return
+        for attempt in range(max_attempts):
+            try:
+                shutil.rmtree(target, ignore_errors=False)
+            except FileNotFoundError:
+                return
+            except Exception:
+                time.sleep(1.0 + attempt * 0.5)
+            if not target.exists():
+                return
+        shutil.rmtree(target, ignore_errors=True)
+        if target.exists():
+            raise RuntimeError(f"Nao foi possivel remover completamente o perfil Chrome em {target}")
+
+    def _ensure_profile_backup(self, profile_dir: Path, backup_dir: Path) -> None:
+        profile_dir.parent.mkdir(parents=True, exist_ok=True)
+        backup_dir.parent.mkdir(parents=True, exist_ok=True)
+        if not profile_dir.exists():
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            self._log(f"Pasta do perfil Chrome criada em {profile_dir}.")
+        if self._is_profile_healthy(backup_dir) and self._profile_has_skill_up_installed(backup_dir):
+            return
+        if self._is_profile_healthy(profile_dir) and self._profile_has_skill_up_installed(profile_dir):
+            self._log("Criando backup estavel do perfil Chrome preparado do robo.")
+            self._copy_profile_tree(profile_dir, backup_dir)
+            self._cleanup_profile_runtime_files(backup_dir)
+            return
+        if self._sync_extension_profile_from_source(backup_dir):
+            self._cleanup_profile_runtime_files(backup_dir)
+            self._log("Backup estavel do perfil Chrome criado a partir do perfil preparado do Chrome local.")
+            return
+        raise RuntimeError(
+            "Perfil Chrome preparado do robo nao encontrado. "
+            "Prepare data/chrome_profile com a extensao/configuracao necessaria antes de executar."
+        )
+
+    def _prepare_working_profile(self, profile_dir: Path, backup_dir: Path) -> None:
+        self._ensure_profile_backup(profile_dir, backup_dir)
+        self._kill_automation_chrome()
+        self._remove_tree_with_retries(profile_dir)
+        profile_dir.parent.mkdir(parents=True, exist_ok=True)
+        self._copy_profile_tree(backup_dir, profile_dir)
+        self._cleanup_profile_runtime_files(profile_dir)
+        if not self._profile_has_skill_up_installed(profile_dir):
+            raise RuntimeError("O perfil de trabalho nao contem a extensao Skill Up preparada.")
+        self._extension_profile_seeded = True
+        self._working_profile_prepared = True
+        self._log("Perfil Chrome de trabalho recriado a partir do backup estavel.")
+
+    def _restore_working_profile(self, profile_dir: Path, backup_dir: Path) -> None:
+        try:
+            self._ensure_profile_backup(profile_dir, backup_dir)
+        except Exception as exc:
+            self._log(f"Aviso: backup do perfil Chrome indisponivel para restauracao: {exc}")
+            return
+        try:
+            self._remove_tree_with_retries(profile_dir)
+            profile_dir.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_profile_tree(backup_dir, profile_dir)
+            self._cleanup_profile_runtime_files(profile_dir)
+            self._working_profile_prepared = False
+            self._log("Perfil Chrome de trabalho descartado e restaurado a partir do backup estavel.")
+        except Exception as exc:
+            self._log(f"Aviso: falha ao restaurar o perfil Chrome de trabalho: {exc}")
+
     def _cleanup_profile_runtime_files(self, profile_dir: Path) -> None:
         runtime_entries = [
             "DevToolsActivePort",
@@ -1777,9 +2256,7 @@ class RobotBackend:
             "Network Persistent State",
             "Session Storage",
             "Sessions",
-            "Extension State",
             "Local Storage",
-            "Service Worker",
             "shared_proto_db",
             "Site Characteristics Database",
             "Sync Data",
@@ -3655,8 +4132,7 @@ class MainWindow(QMainWindow):
         self._start_worker(companies, job=job, origin_message=f"Job do dashboard com {len(companies)} empresa(s).")
 
     def append_log(self, message: str) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] {message}"
+        line = emit_terminal_log(message)
         self.log_frame.append(line)
         append_runtime_log(line)
 
@@ -3748,8 +4224,11 @@ def sync_local_resources() -> None:
 
 def main() -> int:
     sync_local_resources()
+    ensure_single_instance()
     app = QApplication(sys.argv)
     window = MainWindow()
+    app.aboutToQuit.connect(lambda: _mark_process_inactive(window, "qt_about_to_quit"))
+    _install_process_shutdown_handlers(window)
     scheduler_mode = str(os.getenv("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
         "1",
         "true",

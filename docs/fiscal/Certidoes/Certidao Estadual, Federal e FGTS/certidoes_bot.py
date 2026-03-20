@@ -1,4 +1,4 @@
-import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket, hashlib, io, zipfile
+import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket, hashlib, io, zipfile, atexit, signal
 import math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -160,7 +160,7 @@ class JsonRobotRuntime:
         return self.technical_id
 
     def load_job(self) -> Optional[dict[str, Any]]:
-        if self.result_path.exists() or not self.job_path.exists():
+        if not self.job_path.exists():
             return None
         try:
             payload = json.loads(self.job_path.read_text(encoding="utf-8"))
@@ -174,6 +174,28 @@ class JsonRobotRuntime:
             payload["job_id"] = payload.get("id")
         if not payload.get("execution_request_id"):
             payload["execution_request_id"] = payload.get("id")
+        job_execution_id = str(
+            payload.get("execution_request_id")
+            or payload.get("job_id")
+            or payload.get("id")
+            or ""
+        ).strip()
+        if not job_execution_id:
+            return None
+        if self.result_path.exists():
+            try:
+                result_payload = json.loads(self.result_path.read_text(encoding="utf-8"))
+            except Exception:
+                result_payload = None
+            if isinstance(result_payload, dict):
+                result_execution_id = str(
+                    result_payload.get("execution_request_id")
+                    or result_payload.get("job_id")
+                    or result_payload.get("event_id")
+                    or ""
+                ).strip()
+                if result_execution_id and result_execution_id == job_execution_id:
+                    return None
         return payload
 
     def load_job_companies(
@@ -334,6 +356,7 @@ def get_data_dir() -> Path:
 DATA_DIR = get_data_dir()
 LOGS_DIR = DATA_DIR / "logs"
 RUNTIME_LOG_PATH = LOGS_DIR / "runtime.log"
+INSTANCE_LOCK_PATH = DATA_DIR / "runtime.lock"
 
 
 def get_config_dir():
@@ -382,10 +405,31 @@ AUTOMATION_NAME = "CertidoesBot"
 PORTAL_TIMEOUT = 90000
 CDP_PORT = 9222
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
-PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
+CHROME_PROFILE_DIRNAME = "chrome_profile"
+CHROME_PROFILE_BACKUP_DIRNAME = "chrome_profile_backup"
+LEGACY_CHROME_PROFILE_DIRNAME = "chrome_cdp_profile"
+LEGACY_CHROME_PROFILE_BACKUP_DIRNAME = "chrome_cdp_profile_backup"
+PROFILE_DIR = DATA_DIR / CHROME_PROFILE_DIRNAME
+PROFILE_BACKUP_DIR = DATA_DIR / CHROME_PROFILE_BACKUP_DIRNAME
 EXTENSIONS_DIR = DATA_DIR / "extensions"
+SYSTEM_CHROME_USER_DATA_DIR = (
+    (Path(os.getenv("LOCALAPPDATA")) / "Google" / "Chrome" / "User Data").resolve()
+    if os.getenv("LOCALAPPDATA")
+    else Path()
+)
+SYSTEM_CHROME_DEFAULT_PROFILE_DIR = (
+    (SYSTEM_CHROME_USER_DATA_DIR / "Default").resolve()
+    if str(SYSTEM_CHROME_USER_DATA_DIR)
+    else Path()
+)
+SYSTEM_CHROME_PROFILE_1_DIR = (
+    (SYSTEM_CHROME_USER_DATA_DIR / "Profile 1").resolve()
+    if str(SYSTEM_CHROME_USER_DATA_DIR)
+    else Path()
+)
 # CDP / Chrome portátil:
-# - Por padrão, usa o Chrome portátil em data/Chrome/chrome.exe e o perfil persistente em PROFILE_DIR.
+# - Por padrão, usa o Chrome portátil em data/Chrome/chrome.exe e um perfil de trabalho descartável em PROFILE_DIR.
+# - O backup imutável do perfil preparado fica em PROFILE_BACKUP_DIR.
 # - Você pode sobrescrever o executável via env CERTIDOES_CHROME_EXE (útil para testes locais).
 CHROME_CDP_PORT = int((os.environ.get("CERTIDOES_CDP_PORT") or str(CDP_PORT)).strip() or CDP_PORT)
 ROBOT_TECHNICAL_ID = "certidoes"
@@ -403,6 +447,68 @@ ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
 PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
 LAST_JSON_RESULT_DETAILS: Dict[str, Dict[str, Any]] = {}
 SKILL_UP_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
+_PROCESS_SHUTDOWN_MARKED_INACTIVE = False
+_WINDOWS_CONSOLE_HANDLER = None
+
+
+def _mark_process_inactive(window: Any | None = None, reason: str = "process_exit") -> None:
+    global _PROCESS_SHUTDOWN_MARKED_INACTIVE
+    if _PROCESS_SHUTDOWN_MARKED_INACTIVE:
+        return
+    _PROCESS_SHUTDOWN_MARKED_INACTIVE = True
+    try:
+        JSON_RUNTIME.write_heartbeat(
+            status="inactive",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message=reason,
+        )
+    except Exception:
+        pass
+    try:
+        if window is not None and getattr(window, "_robot_id", None):
+            update_robot_status(
+                getattr(window, "_robot_supabase_url", "") or "",
+                getattr(window, "_robot_supabase_key", "") or "",
+                getattr(window, "_robot_id", "") or "",
+                "inactive",
+            )
+    except Exception:
+        pass
+
+
+def _install_process_shutdown_handlers(window: Any | None = None) -> None:
+    global _WINDOWS_CONSOLE_HANDLER
+
+    def _handle_signal(signum, _frame) -> None:
+        _mark_process_inactive(window, f"signal_{signum}")
+        raise SystemExit(0)
+
+    atexit.register(lambda: _mark_process_inactive(window, "atexit"))
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, signal_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_signal)
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+            @handler_type
+            def _console_handler(ctrl_type: int) -> bool:
+                _mark_process_inactive(window, f"console_ctrl_{ctrl_type}")
+                return False
+
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler, True)
+            _WINDOWS_CONSOLE_HANDLER = _console_handler
+        except Exception:
+            pass
 SKILL_UP_EXTENSION_UPDATE_URL = (
     "https://clients2.google.com/service/update2/crx"
     "?response=redirect"
@@ -416,9 +522,31 @@ def _current_json_job() -> Optional[Dict[str, Any]]:
     return ACTIVE_JSON_JOB if isinstance(ACTIVE_JSON_JOB, dict) else None
 
 
+def _migrate_legacy_profile_dir(preferred_dir: Path, legacy_dir: Path) -> None:
+    if preferred_dir.exists() or not legacy_dir.exists():
+        return
+    try:
+        legacy_dir.replace(preferred_dir)
+        return
+    except Exception:
+        pass
+    try:
+        shutil.copytree(legacy_dir, preferred_dir)
+    except Exception:
+        return
+    try:
+        shutil.rmtree(legacy_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def _set_current_json_job(job: Optional[Dict[str, Any]]) -> None:
     global ACTIVE_JSON_JOB
     ACTIVE_JSON_JOB = job if isinstance(job, dict) else None
+
+
+_migrate_legacy_profile_dir(PROFILE_DIR, DATA_DIR / LEGACY_CHROME_PROFILE_DIRNAME)
+_migrate_legacy_profile_dir(PROFILE_BACKUP_DIR, DATA_DIR / LEGACY_CHROME_PROFILE_BACKUP_DIRNAME)
 
 
 def _clear_pending_result_operations() -> None:
@@ -993,8 +1121,9 @@ def only_digits(text: str) -> str:
 
 
 def _robot_log(message: str) -> None:
+    line = emit_terminal_log(message)
     try:
-        print(message, file=sys.stderr)
+        append_runtime_log(line)
     except Exception:
         pass
 
@@ -1221,6 +1350,55 @@ def append_runtime_log(message: str) -> None:
             handler.write(f"{message}\n")
     except Exception:
         pass
+
+
+def emit_terminal_log(message: str) -> str:
+    text = str(message or "").rstrip()
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    line = f"[{timestamp}] [CERTIDOES] {text}" if text else f"[{timestamp}] [CERTIDOES]"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    return line
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def ensure_single_instance() -> None:
+    INSTANCE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    current_pid = os.getpid()
+    if INSTANCE_LOCK_PATH.exists():
+        try:
+            existing_pid = int((INSTANCE_LOCK_PATH.read_text(encoding="utf-8") or "").strip() or "0")
+        except Exception:
+            existing_pid = 0
+        if existing_pid and existing_pid != current_pid and _pid_is_alive(existing_pid):
+            append_runtime_log(f"[Robo] Instância já em execução (PID {existing_pid}). Encerrando novo processo.")
+            raise SystemExit(0)
+    INSTANCE_LOCK_PATH.write_text(str(current_pid), encoding="utf-8")
+
+    def _cleanup() -> None:
+        try:
+            if not INSTANCE_LOCK_PATH.exists():
+                return
+            saved_pid = int((INSTANCE_LOCK_PATH.read_text(encoding="utf-8") or "").strip() or "0")
+            if saved_pid == current_pid:
+                INSTANCE_LOCK_PATH.unlink()
+        except Exception:
+            pass
+
+    atexit.register(_cleanup)
 
 
 def update_robot_status(supabase_url: str, supabase_anon_key: str, robot_id: str, status: str) -> None:
@@ -2147,7 +2325,9 @@ class AutomationThread(QThread):
         self.finished_at: Optional[datetime] = None
         self._minimize_log_sent = False
         self._chrome_proc: Optional[subprocess.Popen] = None
+        self._skill_up_extension_ready = False
         self._stop_requested = False
+        self._working_profile_prepared = False
 
     def stop(self) -> None:
         # Parada cooperativa (evita deixar Chrome/processos/perfil órfãos).
@@ -2227,6 +2407,220 @@ class AutomationThread(QThread):
                 except Exception:
                     pass
 
+    def _profile_has_skill_up_installed(self, profile_dir: Path) -> bool:
+        secure_prefs = profile_dir / "Default" / "Secure Preferences"
+        extension_root = profile_dir / "Default" / "Extensions" / SKILL_UP_EXTENSION_ID
+        if not extension_root.exists():
+            return False
+        if not secure_prefs.exists():
+            return False
+        try:
+            payload = json.loads(secure_prefs.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        settings = (((payload.get("extensions") or {}).get("settings")) or {})
+        extension_row = settings.get(SKILL_UP_EXTENSION_ID)
+        if not isinstance(extension_row, dict):
+            return False
+        state = str(extension_row.get("state") or "").strip()
+        path_value = str(extension_row.get("path") or "").strip()
+        return state in {"1", "enabled", "ENABLED"} or bool(path_value)
+
+    def _resolve_extension_source_profile(self) -> Optional[Path]:
+        candidates = []
+        if SYSTEM_CHROME_DEFAULT_PROFILE_DIR:
+            candidates.append(SYSTEM_CHROME_DEFAULT_PROFILE_DIR)
+        if SYSTEM_CHROME_PROFILE_1_DIR:
+            candidates.append(SYSTEM_CHROME_PROFILE_1_DIR)
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            key = str(resolved).lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            if self._source_profile_has_skill_up(resolved):
+                return resolved
+        return None
+
+    def _source_profile_has_skill_up(self, source_profile_dir: Path) -> bool:
+        secure_prefs = source_profile_dir / "Secure Preferences"
+        extension_root = source_profile_dir / "Extensions" / SKILL_UP_EXTENSION_ID
+        if not secure_prefs.exists() or not extension_root.exists():
+            return False
+        try:
+            payload = json.loads(secure_prefs.read_text(encoding="utf-8", errors="ignore"))
+            settings = (payload.get("extensions") or {}).get("settings") or {}
+            entry = settings.get(SKILL_UP_EXTENSION_ID)
+            if not isinstance(entry, dict):
+                return False
+            manifest = entry.get("manifest") or {}
+            return "Skill Up" in str(manifest.get("name") or "")
+        except Exception:
+            return False
+
+    def _is_profile_healthy(self, profile_dir: Path) -> bool:
+        required = (
+            profile_dir / "Local State",
+            profile_dir / "Default" / "Preferences",
+            profile_dir / "Default" / "Secure Preferences",
+        )
+        return all(path.exists() for path in required)
+
+    def _copy_profile_tree(self, source: Path, target: Path) -> None:
+        ignore_names = {
+            "Cache",
+            "Code Cache",
+            "GPUCache",
+            "GrShaderCache",
+            "GraphiteDawnCache",
+            "DawnGraphiteCache",
+            "DawnWebGPUCache",
+            "ShaderCache",
+            "Crashpad",
+            "BrowserMetrics",
+            "BrowserMetrics-spare.pma",
+            "DevToolsActivePort",
+            "SingletonCookie",
+            "SingletonLock",
+            "SingletonSocket",
+            "lockfile",
+            "LOCK",
+            "Cookies",
+            "Cookies-journal",
+            "Network Persistent State",
+            "Session Storage",
+            "Sessions",
+            "Local Storage",
+            "shared_proto_db",
+            "Site Characteristics Database",
+            "Sync Data",
+            "Safe Browsing Network",
+        }
+
+        def _ignore(_dir: str, names: List[str]) -> set[str]:
+            return {name for name in names if name in ignore_names}
+
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(source, target, ignore=_ignore)
+
+    def _remove_tree_with_retries(self, target: Path, *, max_attempts: int = 6) -> None:
+        if not target.exists():
+            return
+        for attempt in range(max_attempts):
+            try:
+                shutil.rmtree(target, ignore_errors=False)
+            except FileNotFoundError:
+                return
+            except Exception:
+                time.sleep(1.0 + attempt * 0.5)
+            if not target.exists():
+                return
+        shutil.rmtree(target, ignore_errors=True)
+        if target.exists():
+            raise RuntimeError(f"Não foi possível remover completamente o perfil Chrome em {target}")
+
+    def _seed_profile_backup_from_source(self, backup_dir: Path) -> bool:
+        source_profile_dir = self._resolve_extension_source_profile()
+        if source_profile_dir is None:
+            return False
+        source_user_data_dir = source_profile_dir.parent
+        temp_dir = backup_dir.with_name(f"{backup_dir.name}_seed_tmp")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        (temp_dir / "Default").mkdir(parents=True, exist_ok=True)
+        copy_items = [
+            ("Local State", False),
+            ("Preferences", True),
+            ("Secure Preferences", True),
+            ("Extensions", True),
+            ("Local Extension Settings", True),
+            ("Managed Extension Settings", True),
+            ("Sync Extension Settings", True),
+            ("Extension Rules", True),
+            ("Extension Scripts", True),
+            ("Extension State", True),
+            ("Service Worker", True),
+        ]
+        try:
+            for relative_name, in_default in copy_items:
+                source_path = (source_profile_dir / relative_name) if in_default else (source_user_data_dir / relative_name)
+                target_path = (temp_dir / "Default" / relative_name) if in_default else (temp_dir / relative_name)
+                if not source_path.exists():
+                    continue
+                if source_path.is_dir():
+                    shutil.copytree(source_path, target_path, dirs_exist_ok=True)
+                else:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, target_path)
+
+            if not self._profile_has_skill_up_installed(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return False
+
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir, ignore_errors=True)
+            temp_dir.replace(backup_dir)
+            self._cleanup_profile_runtime_files(backup_dir)
+            self.log.emit("🧱 Backup estável do perfil Chrome criado a partir do perfil preparado do Chrome local.")
+            return True
+        except Exception as exc:
+            self.log.emit(f"[WARN] Falha ao criar backup do perfil Chrome a partir do Chrome local: {exc}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return False
+
+    def _ensure_profile_backup(self, profile_dir: Path, backup_dir: Path) -> None:
+        profile_dir.parent.mkdir(parents=True, exist_ok=True)
+        backup_dir.parent.mkdir(parents=True, exist_ok=True)
+        if not profile_dir.exists():
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            self.log.emit(f"🧱 Pasta do perfil Chrome criada em {profile_dir}.")
+        if self._is_profile_healthy(backup_dir) and self._profile_has_skill_up_installed(backup_dir):
+            return
+        if self._is_profile_healthy(profile_dir) and self._profile_has_skill_up_installed(profile_dir):
+            self.log.emit("🧱 Criando backup estável do perfil Chrome preparado do robô.")
+            self._copy_profile_tree(profile_dir, backup_dir)
+            self._cleanup_profile_runtime_files(backup_dir)
+            return
+        if self._seed_profile_backup_from_source(backup_dir):
+            return
+        raise RuntimeError(
+            "Perfil Chrome preparado do robô não encontrado. "
+            "Prepare data/chrome_profile com a extensão/configuração necessária antes de executar."
+        )
+
+    def _prepare_working_profile(self, profile_dir: Path, backup_dir: Path) -> None:
+        self._ensure_profile_backup(profile_dir, backup_dir)
+        self._kill_stale_chrome_processes(str(CHROME_EXE), profile_dir, int(CHROME_CDP_PORT))
+        self._remove_tree_with_retries(profile_dir)
+        profile_dir.parent.mkdir(parents=True, exist_ok=True)
+        self._copy_profile_tree(backup_dir, profile_dir)
+        self._cleanup_profile_runtime_files(profile_dir)
+        if not self._profile_has_skill_up_installed(profile_dir):
+            raise RuntimeError("O perfil de trabalho não contém a extensão Skill Up preparada.")
+        self._working_profile_prepared = True
+        self.log.emit("🧱 Perfil Chrome de trabalho recriado a partir do backup estável.")
+
+    def _restore_working_profile(self, profile_dir: Path, backup_dir: Path) -> None:
+        try:
+            self._ensure_profile_backup(profile_dir, backup_dir)
+        except Exception as exc:
+            self.log.emit(f"[WARN] Backup do perfil Chrome indisponível para restauração: {exc}")
+            return
+        try:
+            self._remove_tree_with_retries(profile_dir)
+            profile_dir.parent.mkdir(parents=True, exist_ok=True)
+            self._copy_profile_tree(backup_dir, profile_dir)
+            self._cleanup_profile_runtime_files(profile_dir)
+            self._working_profile_prepared = False
+            self.log.emit("🧱 Perfil Chrome de trabalho descartado e restaurado a partir do backup estável.")
+        except Exception as exc:
+            self.log.emit(f"[WARN] Falha ao restaurar o perfil Chrome de trabalho: {exc}")
+
     def _kill_stale_chrome_processes(self, chrome_exe: str, profile_dir: Path, port: int) -> None:
         chrome_hint = os.path.normcase(str(chrome_exe or "")).lower()
         profile_hint = os.path.normcase(str(profile_dir.resolve())).lower()
@@ -2282,12 +2676,9 @@ Get-CimInstance Win32_Process | Where-Object {{
         if not exe:
             raise RuntimeError("Chrome portátil não encontrado em data/Chrome/chrome.exe.")
 
-        # 2) Perfil: sempre o mesmo (persistente)
+        # 2) Perfil: sempre o mesmo backup preparado, recriado como cópia de trabalho descartável.
         profile_dir = PROFILE_DIR if isinstance(PROFILE_DIR, Path) else Path(PROFILE_DIR)
-        try:
-            profile_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
+        self._prepare_working_profile(profile_dir, PROFILE_BACKUP_DIR)
 
         # 3) CDP: 1 Chrome só. Se já existir escutando na porta, só conecta.
         port = int(CHROME_CDP_PORT)
@@ -2310,7 +2701,6 @@ Get-CimInstance Win32_Process | Where-Object {{
         if not _cdp_ready():
             self._kill_stale_chrome_processes(exe, profile_dir, port)
             self._cleanup_profile_runtime_files(profile_dir)
-            extension_dir = ensure_skill_up_extension_dir()
             chrome_args = [
                 f"--remote-debugging-port={port}",
                 "--remote-debugging-address=127.0.0.1",
@@ -2324,13 +2714,6 @@ Get-CimInstance Win32_Process | Where-Object {{
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
             ]
-            if extension_dir:
-                chrome_args.extend(
-                    [
-                        f"--disable-extensions-except={extension_dir}",
-                        f"--load-extension={extension_dir}",
-                    ]
-                )
             try:
                 self._chrome_proc = subprocess.Popen(
                     [exe, *chrome_args],
@@ -2396,6 +2779,7 @@ Get-CimInstance Win32_Process | Where-Object {{
         if not page:
             page = ctx.new_page()
         try:
+            self._ensure_skill_up_extension_ready(ctx)
             page = self._ensure_single_tab(ctx)
             page.goto("about:blank", wait_until="domcontentloaded", timeout=15000)
         except Exception:
@@ -2629,6 +3013,44 @@ Get-CimInstance Win32_Process | Where-Object {{
                 pdf_page.wait_for_load_state("load", timeout=15000)
         except Exception:
             pass
+
+    def _ensure_skill_up_extension_ready(self, ctx) -> None:
+        if self._skill_up_extension_ready or not ctx:
+            return
+
+        extension_url_prefix = f"chrome-extension://{SKILL_UP_EXTENSION_ID}/"
+        setup_url = f"{extension_url_prefix}setup.html"
+        service_worker_seen = False
+
+        for _ in range(30):
+            try:
+                workers = list(getattr(ctx, "service_workers", []) or [])
+            except Exception:
+                workers = []
+            if any(SKILL_UP_EXTENSION_ID in (getattr(worker, "url", "") or "") for worker in workers):
+                service_worker_seen = True
+                break
+            time.sleep(0.5)
+
+        setup_page = None
+        try:
+            setup_page = ctx.new_page()
+            setup_page.goto(setup_url, wait_until="domcontentloaded", timeout=20000)
+            setup_page.wait_for_timeout(2000)
+            service_worker_seen = True
+            self.log.emit("🧩 Extensão Skill Up carregada e página de setup validada.")
+        except Exception as exc:
+            self.log.emit(f"[WARN] Não foi possível validar a página da extensão Skill Up: {exc}")
+        finally:
+            if setup_page is not None:
+                try:
+                    setup_page.close()
+                except Exception:
+                    pass
+
+        if not service_worker_seen:
+            raise RuntimeError("Extensão Skill Up não foi confirmada no Chrome. O robô não pode prosseguir sem a extensão.")
+        self._skill_up_extension_ready = True
         try:
             pdf_page.wait_for_timeout(800 if is_pdf_viewer else 450)
         except Exception:
@@ -3405,7 +3827,7 @@ Get-CimInstance Win32_Process | Where-Object {{
                 pass
             try:
                 profile_dir = PROFILE_DIR if isinstance(PROFILE_DIR, Path) else Path(PROFILE_DIR)
-                self._cleanup_profile_runtime_files(profile_dir)
+                self._restore_working_profile(profile_dir, PROFILE_BACKUP_DIR)
             except Exception:
                 pass
             self._chrome_proc = None
@@ -4256,8 +4678,9 @@ class MainWindow(QMainWindow):
         self._update_chk_text(checked)
 
     def log_message(self, msg: str):
-        self.log_frame.text.appendPlainText(msg)
-        append_runtime_log(msg)
+        line = emit_terminal_log(msg)
+        self.log_frame.text.appendPlainText(line)
+        append_runtime_log(line)
         QApplication.processEvents()
 
     # ---------- scheduling ----------
@@ -4606,6 +5029,7 @@ class MainWindow(QMainWindow):
 # =============================================================================
 if __name__ == "__main__":
     scheduler_mode = is_scheduler_mode_enabled()
+    ensure_single_instance()
     app = QApplication(sys.argv)
     try:
         app_icon = _load_app_icon()
@@ -4616,6 +5040,8 @@ if __name__ == "__main__":
     if not scheduler_mode and not ensure_license_valid(app):
         sys.exit(0)
     w = MainWindow()
+    app.aboutToQuit.connect(lambda: _mark_process_inactive(w, "qt_about_to_quit"))
+    _install_process_shutdown_handlers(w)
     if scheduler_mode:
         w.hide()
     else:

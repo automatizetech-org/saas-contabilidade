@@ -39,6 +39,8 @@ import sys
 import os
 import pathlib
 import json
+import atexit
+import signal
 import subprocess
 import shutil
 import tempfile
@@ -189,7 +191,7 @@ class JsonRobotRuntime:
         return self.technical_id
 
     def load_job(self) -> Optional[dict[str, Any]]:
-        if self.result_path.exists() or not self.job_path.exists():
+        if not self.job_path.exists():
             return None
         try:
             payload = json.loads(self.job_path.read_text(encoding="utf-8"))
@@ -203,6 +205,28 @@ class JsonRobotRuntime:
             payload["job_id"] = payload.get("id")
         if not payload.get("execution_request_id"):
             payload["execution_request_id"] = payload.get("id")
+        job_execution_id = str(
+            payload.get("execution_request_id")
+            or payload.get("job_id")
+            or payload.get("id")
+            or ""
+        ).strip()
+        if not job_execution_id:
+            return None
+        if self.result_path.exists():
+            try:
+                result_payload = json.loads(self.result_path.read_text(encoding="utf-8"))
+            except Exception:
+                result_payload = None
+            if isinstance(result_payload, dict):
+                result_execution_id = str(
+                    result_payload.get("execution_request_id")
+                    or result_payload.get("job_id")
+                    or result_payload.get("event_id")
+                    or ""
+                ).strip()
+                if result_execution_id and result_execution_id == job_execution_id:
+                    return None
         return payload
 
     def load_job_companies(
@@ -430,6 +454,63 @@ JSON_RUNTIME = JsonRobotRuntime(
 )
 ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
 PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
+
+_PROCESS_SHUTDOWN_MARKED_INACTIVE = False
+_WINDOWS_CONSOLE_HANDLER = None
+
+
+def _mark_process_inactive(window: Any | None = None, reason: str = "process_exit") -> None:
+    global _PROCESS_SHUTDOWN_MARKED_INACTIVE
+    if _PROCESS_SHUTDOWN_MARKED_INACTIVE:
+        return
+    _PROCESS_SHUTDOWN_MARKED_INACTIVE = True
+    try:
+        JSON_RUNTIME.write_heartbeat(
+            status="inactive",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message=reason,
+        )
+    except Exception:
+        pass
+    try:
+        robot_id = getattr(window, "robot_id", None) if window is not None else None
+        if robot_id:
+            update_robot_status(robot_id, "inactive")
+    except Exception:
+        pass
+
+
+def _install_process_shutdown_handlers(window: Any | None = None) -> None:
+    global _WINDOWS_CONSOLE_HANDLER
+
+    def _handle_signal(signum, _frame) -> None:
+        _mark_process_inactive(window, f"signal_{signum}")
+        raise SystemExit(0)
+
+    atexit.register(lambda: _mark_process_inactive(window, "atexit"))
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, signal_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_signal)
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        try:
+            handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+            @handler_type
+            def _console_handler(ctrl_type: int) -> bool:
+                _mark_process_inactive(window, f"console_ctrl_{ctrl_type}")
+                return False
+
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler, True)
+            _WINDOWS_CONSOLE_HANDLER = _console_handler
+        except Exception:
+            pass
 
 
 def _current_json_job() -> Optional[Dict[str, Any]]:
@@ -1217,6 +1298,17 @@ def append_runtime_log(message: str) -> None:
             handle.write(str(message).rstrip() + "\n")
     except Exception:
         pass
+
+
+def emit_terminal_log(message: str) -> str:
+    text = str(message or "").rstrip()
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    line = f"[{timestamp}] [SEFAZ XML] {text}" if text else f"[{timestamp}] [SEFAZ XML]"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    return line
 
 CHROME_EXE = os.path.join(DATA_DIR, "Chrome", "chrome.exe")
 RUNTIME_DIR = get_runtime_dir()
@@ -6306,6 +6398,7 @@ def aguardar_e_baixar_arquivos(
     tipo: Optional[str] = None,
     download_option: Optional[str] = None,
     max_sem_resultados: int = 5,
+    max_reaberturas_historico: int = 4,
 ) -> List[str]:
 
     """
@@ -6332,6 +6425,7 @@ def aguardar_e_baixar_arquivos(
     inicio = datetime.now()
     ultimo_refresh = datetime.now()
     intervalo_refresh = 60  # segundos
+    tentativas_reabertura_historico = 0
     tentativas_sem_resultados = 0  # contador específico para o bug "Sem resultados"
 
     safe_makedirs(caminho_destino)
@@ -6378,10 +6472,19 @@ def aguardar_e_baixar_arquivos(
 
         # -------- ROTINA DE REABERTURA DO HISTÓRICO APÓS 1 MINUTO --------
         if (datetime.now() - ultimo_refresh).total_seconds() >= intervalo_refresh:
+            tentativas_reabertura_historico += 1
+            if tentativas_reabertura_historico > max_reaberturas_historico:
+                if callable(log_fn):
+                    log_fn(
+                        "[ERRO] ❌ Limite de reaberturas do Histórico de Downloads atingido. "
+                        "Desistindo deste download para evitar loop infinito."
+                    )
+                return []
             if callable(log_fn):
                 log_fn(
                     "[INFO] 🔄 Mais de 1 minuto aguardando download sem 'Concluído'. "
-                    "Recarregando página e reabrindo o Histórico de Downloads através de nova pesquisa."
+                    f"Recarregando página e reabrindo o Histórico de Downloads através de nova pesquisa "
+                    f"({tentativas_reabertura_historico}/{max_reaberturas_historico})."
                 )
             ultimo_refresh = datetime.now()
 
@@ -8424,7 +8527,6 @@ class AutomationWorker(QThread):
         self.page = None
 
     def _log(self, msg: str):
-        print(msg)
         self.log_signal.emit(msg)
 
     def stop(self):
@@ -12251,7 +12353,8 @@ class MyCompactUI(QMainWindow):
             return
 
         msg = str(message)
-        append_runtime_log(msg)
+        line = emit_terminal_log(msg)
+        append_runtime_log(line)
 
         # =====================================================================
         # 1) CABEÇALHO ESPECIAL POR EMPRESA
@@ -17468,6 +17571,8 @@ if __name__ == "__main__":
     # INICIALIZAÇÃO DA APLICAÇÃO
     # =============================================================================
     window = MyCompactUI()
+    app.aboutToQuit.connect(lambda: _mark_process_inactive(window, "qt_about_to_quit"))
+    _install_process_shutdown_handlers(window)
     if scheduler_mode:
         window.hide()
     else:

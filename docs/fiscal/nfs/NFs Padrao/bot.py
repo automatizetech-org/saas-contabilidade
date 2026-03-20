@@ -17,6 +17,8 @@ import re
 import shutil
 import subprocess
 import sys
+import atexit
+import signal
 import tempfile
 import threading
 import time
@@ -138,6 +140,30 @@ def resolve_base_dir() -> Path:
     return _resolve_runtime_base_dir()
 
 
+RUNTIME_LOGS_DIR = _resolve_runtime_base_dir() / "data" / "logs"
+RUNTIME_LOG_PATH = RUNTIME_LOGS_DIR / "runtime.log"
+
+
+def append_runtime_log(message: str) -> None:
+    try:
+        RUNTIME_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        with RUNTIME_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(str(message).rstrip() + "\n")
+    except Exception:
+        pass
+
+
+def emit_terminal_log(message: str) -> str:
+    text = str(message or "").rstrip()
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    line = f"[{timestamp}] [NFS] {text}" if text else f"[{timestamp}] [NFS]"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    return line
+
+
 def _json_runtime_utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -169,7 +195,7 @@ class JsonRobotRuntime:
         return self.technical_id
 
     def load_job(self) -> Optional[dict[str, Any]]:
-        if self.result_path.exists() or not self.job_path.exists():
+        if not self.job_path.exists():
             return None
         try:
             payload = json.loads(self.job_path.read_text(encoding="utf-8"))
@@ -183,6 +209,28 @@ class JsonRobotRuntime:
             payload["job_id"] = payload.get("id")
         if not payload.get("execution_request_id"):
             payload["execution_request_id"] = payload.get("id")
+        job_execution_id = str(
+            payload.get("execution_request_id")
+            or payload.get("job_id")
+            or payload.get("id")
+            or ""
+        ).strip()
+        if not job_execution_id:
+            return None
+        if self.result_path.exists():
+            try:
+                result_payload = json.loads(self.result_path.read_text(encoding="utf-8"))
+            except Exception:
+                result_payload = None
+            if isinstance(result_payload, dict):
+                result_execution_id = str(
+                    result_payload.get("execution_request_id")
+                    or result_payload.get("job_id")
+                    or result_payload.get("event_id")
+                    or ""
+                ).strip()
+                if result_execution_id and result_execution_id == job_execution_id:
+                    return None
         return payload
 
     def load_job_companies(
@@ -632,6 +680,68 @@ JSON_RUNTIME = JsonRobotRuntime(
 ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
 LAST_JSON_RESULT_SUMMARY: Optional[Dict[str, Any]] = None
 PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
+_PROCESS_SHUTDOWN_MARKED_INACTIVE = False
+_WINDOWS_CONSOLE_HANDLER = None
+
+
+def _mark_process_inactive(window: Any | None = None, reason: str = "process_exit") -> None:
+    global _PROCESS_SHUTDOWN_MARKED_INACTIVE
+    if _PROCESS_SHUTDOWN_MARKED_INACTIVE:
+        return
+    _PROCESS_SHUTDOWN_MARKED_INACTIVE = True
+    try:
+        JSON_RUNTIME.write_heartbeat(
+            status="inactive",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message=reason,
+        )
+    except Exception:
+        pass
+    try:
+        if window is not None and getattr(window, "_robot_id", None):
+            update_robot_status(
+                getattr(window, "_robot_supabase_url", "") or "",
+                getattr(window, "_robot_supabase_key", "") or "",
+                getattr(window, "_robot_id", "") or "",
+                "inactive",
+            )
+    except Exception:
+        pass
+
+
+def _install_process_shutdown_handlers(window: Any | None = None) -> None:
+    global _WINDOWS_CONSOLE_HANDLER
+
+    def _handle_signal(signum, _frame) -> None:
+        _mark_process_inactive(window, f"signal_{signum}")
+        raise SystemExit(0)
+
+    atexit.register(lambda: _mark_process_inactive(window, "atexit"))
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, signal_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_signal)
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+            @handler_type
+            def _console_handler(ctrl_type: int) -> bool:
+                _mark_process_inactive(window, f"console_ctrl_{ctrl_type}")
+                return False
+
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler, True)
+            _WINDOWS_CONSOLE_HANDLER = _console_handler
+        except Exception:
+            pass
 
 # --------------------------------------------------------------------
 # Helpers de documento (CPF/CNPJ) e persistencia
@@ -6031,7 +6141,9 @@ class MainWindow(QMainWindow):
         return None
 
     def _log(self, msg: str) -> None:
-        self.log_frame.append(self._format_log(msg))
+        line = emit_terminal_log(msg)
+        append_runtime_log(line)
+        self.log_frame.append(self._format_log(line))
 
     def _format_log(self, msg: str) -> str:
         """
@@ -6889,6 +7001,8 @@ def main():
         """
     )
     win = MainWindow()
+    app.aboutToQuit.connect(lambda: _mark_process_inactive(win, "qt_about_to_quit"))
+    _install_process_shutdown_handlers(win)
     if scheduler_mode:
         win.hide()
     else:

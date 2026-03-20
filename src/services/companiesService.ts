@@ -139,6 +139,30 @@ export async function getCompanyRobotConfigs(companyId: string): Promise<Company
   return (data ?? []) as CompanyRobotConfig[]
 }
 
+export async function getCompanyRobotConfigsForSelection(params: {
+  companyIds: string[]
+  robotTechnicalIds?: string[]
+}): Promise<CompanyRobotConfig[]> {
+  const companyIds = Array.from(new Set(params.companyIds.map((id) => String(id).trim()).filter(Boolean)))
+  if (companyIds.length === 0) return []
+
+  let query = supabase
+    .from("company_robot_config")
+    .select("*")
+    .in("company_id", companyIds)
+
+  const robotTechnicalIds = Array.from(
+    new Set((params.robotTechnicalIds ?? []).map((id) => String(id).trim()).filter(Boolean)),
+  )
+  if (robotTechnicalIds.length > 0) {
+    query = query.in("robot_technical_id", robotTechnicalIds)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []) as CompanyRobotConfig[]
+}
+
 export async function upsertCompanyRobotConfig(
   companyId: string,
   robotTechnicalId: string,

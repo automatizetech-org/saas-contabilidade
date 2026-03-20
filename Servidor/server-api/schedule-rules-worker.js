@@ -8,19 +8,12 @@
 
 import { randomUUID } from "crypto";
 import { listRobotRuntimeRows } from "./robot-json-runtime.js";
+import { filterEligibleCompaniesForRobot, getRequestedCityNameFromJob } from "./robot-eligibility.js";
 
 const TZ = "America/Sao_Paulo";
 
 function coerceJsonObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function normalizeCityName(value) {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .trim()
-    .toLowerCase();
 }
 
 function dateKeyInTz(isoOrDate, tz) {
@@ -108,23 +101,6 @@ function getRobotNotesMode(robot) {
     return kind === "nfe_nfc" ? "modelo_55" : "recebidas";
   }
   return mode;
-}
-
-function getRobotExecutionCity(robot) {
-  const executionDefaults = coerceJsonObject(robot.execution_defaults);
-  const value = String(executionDefaults.city_name ?? "").trim();
-  return value || null;
-}
-
-function getEligibleCompanyIds(robot, selectedCompanyIds, companies) {
-  const cityFilter = getRobotExecutionCity(robot);
-  if (!cityFilter) return selectedCompanyIds;
-  const normalizedCity = normalizeCityName(cityFilter);
-  const companyById = new Map((companies ?? []).map((c) => [c.id, c]));
-  return selectedCompanyIds.filter((companyId) => {
-    const company = companyById.get(companyId);
-    return normalizeCityName(company?.city_name) === normalizedCity;
-  });
 }
 
 function computeScheduledPeriodForRobot(robot, todayYmd) {
@@ -247,14 +223,30 @@ export async function processDueScheduleRules({ supabase, officeId, officeServer
     const companyIds = Array.isArray(rule.company_ids) ? rule.company_ids : [];
     if (companyIds.length === 0) continue;
 
-    const { data: companies, error: companiesError } = await supabase
-      .from("companies")
-      .select("id, city_name")
-      .in("id", companyIds);
-    if (companiesError) throw companiesError;
-
     const orderedIds = expandRobotTechnicalIds(rule, mergedRobots);
     if (orderedIds.length === 0) continue;
+
+    const [{ data: companies, error: companiesError }, { data: configRows, error: configError }] = await Promise.all([
+      supabase
+        .from("companies")
+        .select("id, active, document, auth_mode, cert_blob_b64, cert_password, cert_valid_until, contador_cpf, state_registration, city_name, cae, sefaz_go_logins")
+        .in("id", companyIds),
+      supabase
+        .from("company_robot_config")
+        .select("*")
+        .in("company_id", companyIds)
+        .in("robot_technical_id", orderedIds),
+    ]);
+    if (companiesError) throw companiesError;
+    if (configError) throw configError;
+
+    const companiesById = new Map((companies ?? []).map((company) => [company.id, company]));
+    const configByRobotTechnicalId = new Map();
+    for (const row of configRows ?? []) {
+      const byCompany = configByRobotTechnicalId.get(row.robot_technical_id) ?? new Map();
+      byCompany.set(row.company_id, row);
+      configByRobotTechnicalId.set(row.robot_technical_id, byCompany);
+    }
 
     const executionGroupId = randomUUID();
     const executionMode = String(rule.execution_mode || "sequential").trim().toLowerCase() === "parallel" ? "parallel" : "sequential";
@@ -265,7 +257,17 @@ export async function processDueScheduleRules({ supabase, officeId, officeServer
       if (!robot) continue;
 
       const { periodStart, periodEnd } = computeScheduledPeriodForRobot(robot, todayYmd);
-      const eligibleCompanyIds = getEligibleCompanyIds(robot, companyIds, companies ?? []);
+      const requestedCityName = getRequestedCityNameFromJob(buildRobotExecutionSnapshot(robot), robot);
+      const eligibleCompanies = filterEligibleCompaniesForRobot({
+        robotRow: robot,
+        companies: companyIds.map((companyId) => {
+          const company = companiesById.get(companyId);
+          return company ? { ...company, company_id: company.id } : null;
+        }).filter(Boolean),
+        configByCompanyId: configByRobotTechnicalId.get(technicalId) ?? new Map(),
+        cityName: requestedCityName,
+      });
+      const eligibleCompanyIds = eligibleCompanies.map((company) => company.company_id || company.id);
       if (eligibleCompanyIds.length === 0) continue;
 
       await deletePendingForRobot(supabase, officeId, technicalId);

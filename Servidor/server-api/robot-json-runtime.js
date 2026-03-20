@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
+import { filterEligibleCompaniesForRobot, getRequestedCityNameFromJob } from "./robot-eligibility.js";
 
 function normalizedResolvedPath(inputPath) {
   const resolved = path.resolve(String(inputPath || ""));
@@ -30,7 +31,7 @@ function normalizeRuntimeRelPath(value, fallback) {
 
 function safeReadJson(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return null;
-  const raw = fs.readFileSync(filePath, "utf8");
+  const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
   if (!raw.trim()) return null;
   return JSON.parse(raw);
 }
@@ -48,15 +49,23 @@ function removeFileIfExists(filePath) {
   }
 }
 
-function archiveJsonFile(filePath, payload, suffix = "snapshot") {
+function writeProcessedJson(filePath, payload, extra = {}) {
   if (!filePath) return;
-  const archiveDir = path.join(path.dirname(filePath), "archive");
-  ensureDirectory(archiveDir);
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const baseName = path.basename(filePath, path.extname(filePath));
-  const archivePath = path.join(archiveDir, `${baseName}.${stamp}.${suffix}.json`);
-  writeJsonAtomic(archivePath, payload);
-  removeFileIfExists(filePath);
+  writeJsonAtomic(filePath, {
+    ...coerceJsonObject(payload),
+    ...coerceJsonObject(extra),
+  });
+}
+
+function executionIdFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  return String(payload.execution_request_id || payload.job_id || payload.id || "").trim() || null;
+}
+
+function isResultForJob(resultPayload, jobPayload) {
+  const resultId = executionIdFromPayload(resultPayload);
+  const jobId = executionIdFromPayload(jobPayload);
+  return Boolean(resultId && jobId && resultId === jobId);
 }
 
 function coerceJsonObject(value) {
@@ -216,11 +225,7 @@ async function loadCompaniesForExecution(supabase, executionRequest, robotRow) {
   const companyIds = Array.isArray(executionRequest.company_ids) ? executionRequest.company_ids : [];
   if (companyIds.length === 0) return [];
   const requestSettings = coerceJsonObject(executionRequest.job_payload);
-  const requestedCityName = String(
-    requestSettings.city_name ??
-    coerceJsonObject(requestSettings.execution_defaults).city_name ??
-    "",
-  ).trim().toLowerCase();
+  const requestedCityName = getRequestedCityNameFromJob(requestSettings, robotRow);
 
   const [{ data: companies, error: companiesError }, { data: configRows, error: configError }] =
     await Promise.all([
@@ -290,15 +295,15 @@ async function loadCompaniesForExecution(supabase, executionRequest, robotRow) {
         settings,
       };
     })
-    .filter((company) => {
-      if (!company.active) return false;
-      if (!company.enabled_for_robot) return false;
-      if (!requestedCityName) return true;
-      return String(company.city_name || "").trim().toLowerCase() === requestedCityName;
-    })
+  const filteredRows = filterEligibleCompaniesForRobot({
+    robotRow,
+    companies: rows,
+    configByCompanyId,
+    cityName: requestedCityName,
+  })
     .sort((left, right) => (orderMap.get(left.company_id) ?? 0) - (orderMap.get(right.company_id) ?? 0));
 
-  return rows;
+  return filteredRows;
 }
 
 function buildJobPayload({ officeId, officeServerId, basePath, robotsRootPath, robotRow, executionRequest, companies }) {
@@ -317,7 +322,7 @@ function buildJobPayload({ officeId, officeServerId, basePath, robotsRootPath, r
     notes_mode: executionRequest.notes_mode ?? robotRow.notes_mode ?? null,
     requested_at: executionRequest.created_at,
     created_at: executionRequest.created_at,
-    company_ids: Array.isArray(executionRequest.company_ids) ? executionRequest.company_ids : [],
+    company_ids: companies.map((company) => company.company_id || company.id),
     companies_total: companies.length,
     settings: coerceJsonObject(executionRequest.job_payload),
     connector: {
@@ -532,11 +537,19 @@ function resultEventId(resultPayload) {
 async function ingestResultFile(supabase, officeId, robotRow, runtimePaths, logger) {
   const resultPayload = safeReadJson(runtimePaths.resultFilePath);
   if (!resultPayload) return false;
+  if (resultPayload._ingested_at) return false;
+  if (!executionIdFromPayload(resultPayload) && !resultEventId(resultPayload)) {
+    return false;
+  }
 
   const eventId = resultEventId(resultPayload);
   if (!eventId) {
     logger?.warn?.(`[robot-json-runtime] ${robotRow.technical_id}: result.json sem event_id/execution_request_id.`);
-    archiveJsonFile(runtimePaths.resultFilePath, resultPayload, "invalid");
+    writeProcessedJson(runtimePaths.resultFilePath, resultPayload, {
+      _ingested_at: new Date().toISOString(),
+      _ingested_status: "invalid",
+      _ingest_error: "missing_event_id",
+    });
     return true;
   }
 
@@ -552,8 +565,10 @@ async function ingestResultFile(supabase, officeId, robotRow, runtimePaths, logg
     .maybeSingle();
   if (existingEventError) throw existingEventError;
   if (existingEvent?.id) {
-    archiveJsonFile(runtimePaths.resultFilePath, resultPayload, "duplicate");
-    removeFileIfExists(runtimePaths.jobFilePath);
+    writeProcessedJson(runtimePaths.resultFilePath, resultPayload, {
+      _ingested_at: new Date().toISOString(),
+      _ingested_status: "duplicate",
+    });
     return true;
   }
 
@@ -591,19 +606,21 @@ async function ingestResultFile(supabase, officeId, robotRow, runtimePaths, logg
     office_id: officeId,
     office_server_id: runtimePaths.officeServerId,
     robot_technical_id: robotRow.technical_id,
-    status: status === "completed" ? "active" : "inactive",
+    status: "active",
     last_heartbeat_at: new Date().toISOString(),
     current_execution_request_id: null,
     current_job_id: null,
     heartbeat_payload: {
       source: "result_ingestor",
-      status: status === "completed" ? "active" : "inactive",
+      status: "active",
       last_result_event_id: eventId,
     },
   });
 
-  archiveJsonFile(runtimePaths.resultFilePath, resultPayload, "processed");
-  removeFileIfExists(runtimePaths.jobFilePath);
+  writeProcessedJson(runtimePaths.resultFilePath, resultPayload, {
+    _ingested_at: new Date().toISOString(),
+    _ingested_status: "processed",
+  });
   return true;
 }
 
@@ -612,11 +629,15 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
   const staleJobPayload = fs.existsSync(runtimePaths.jobFilePath)
     ? safeReadJson(runtimePaths.jobFilePath)
     : null;
+  const existingResultPayload = fs.existsSync(runtimePaths.resultFilePath)
+    ? safeReadJson(runtimePaths.resultFilePath)
+    : null;
   const now = Date.now();
   const heartbeatUpdatedAt = heartbeat?.updated_at ? Date.parse(heartbeat.updated_at) : Number.NaN;
   const isFresh = Number.isFinite(heartbeatUpdatedAt) && now - heartbeatUpdatedAt <= 90_000;
+  const heartbeatStatus = String(heartbeat?.status || "active").trim().toLowerCase() || "active";
   const status = isFresh
-    ? String(heartbeat?.status || "active").trim() || "active"
+    ? heartbeatStatus
     : "inactive";
 
   await upsertOfficeRobotRuntime(supabase, {
@@ -640,6 +661,48 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
       "",
     ).trim() || null;
 
+  const hasUnprocessedJobFile =
+    fs.existsSync(runtimePaths.jobFilePath) &&
+    (!existingResultPayload || !isResultForJob(existingResultPayload, staleJobPayload));
+
+  if (isFresh && heartbeatStatus === "inactive" && staleExecutionRequestId && hasUnprocessedJobFile) {
+    const shutdownResult = {
+      event_id: staleExecutionRequestId,
+      job_id: executionIdFromPayload(staleJobPayload),
+      execution_request_id: staleExecutionRequestId,
+      robot_technical_id: robotRow.technical_id,
+      status: "failed",
+      started_at: staleJobPayload?.created_at ?? new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      error_message: "Robot encerrado manualmente antes de concluir o job",
+      summary: { aborted_by_shutdown: true },
+      company_results: [],
+      payload: {},
+      _generated_by_connector: true,
+    };
+    writeProcessedJson(runtimePaths.resultFilePath, shutdownResult);
+    removeFileIfExists(runtimePaths.jobFilePath);
+    await upsertOfficeRobotRuntime(supabase, {
+      office_id: officeId,
+      office_server_id: officeServerId,
+      robot_technical_id: robotRow.technical_id,
+      status: "inactive",
+      last_heartbeat_at: Number.isFinite(heartbeatUpdatedAt) ? new Date(heartbeatUpdatedAt).toISOString() : null,
+      current_execution_request_id: null,
+      current_job_id: null,
+      runtime_version: heartbeat?.runtime_version ?? null,
+      host_name: heartbeat?.host_name ?? null,
+      heartbeat_payload: {
+        ...(heartbeat ?? {}),
+        status: "inactive",
+        message: "job_cleared_after_shutdown",
+        cleared_at: new Date().toISOString(),
+      },
+    });
+    logger?.warn?.(`[robot-json-runtime] ${robotRow.technical_id}: job.json removido após encerramento manual do robô.`);
+    return;
+  }
+
   if (!isFresh && staleExecutionRequestId) {
     try {
       await finalizeExecutionRequest(
@@ -654,13 +717,22 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
     }
   }
 
-  if (!isFresh && fs.existsSync(runtimePaths.jobFilePath) && !fs.existsSync(runtimePaths.resultFilePath)) {
-    const archivedJobPayload = staleJobPayload ?? {
-      reason: "stale_job_file",
+  if (!isFresh && fs.existsSync(runtimePaths.jobFilePath) && !isResultForJob(existingResultPayload, staleJobPayload)) {
+    const timeoutResult = {
+      event_id: staleExecutionRequestId ?? `${robotRow.technical_id}-timeout-${Date.now()}`,
+      job_id: executionIdFromPayload(staleJobPayload),
+      execution_request_id: staleExecutionRequestId,
       robot_technical_id: robotRow.technical_id,
-      detected_at: new Date().toISOString(),
+      status: "failed",
+      started_at: staleJobPayload?.created_at ?? new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      error_message: "Robot heartbeat timeout",
+      summary: { timeout: true },
+      company_results: [],
+      payload: {},
+      _generated_by_connector: true,
     };
-    archiveJsonFile(runtimePaths.jobFilePath, archivedJobPayload, "stale-job");
+    writeProcessedJson(runtimePaths.resultFilePath, timeoutResult);
     await upsertOfficeRobotRuntime(supabase, {
       office_id: officeId,
       office_server_id: officeServerId,
@@ -674,13 +746,13 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
       heartbeat_payload: {
         ...(heartbeat ?? {}),
         status: "inactive",
-        message: "stale_job_cleared",
+        message: "timeout_result_written",
         cleared_at: new Date().toISOString(),
       },
     });
     logger?.warn?.(`[robot-json-runtime] ${robotRow.technical_id}: job.json obsoleto limpo após timeout de heartbeat.`);
   }
-  const hasActiveFiles = fs.existsSync(runtimePaths.jobFilePath) || fs.existsSync(runtimePaths.resultFilePath);
+  const hasActiveFiles = hasUnprocessedJobFile;
   const heartbeatCurrentExecutionRequestId =
     String(heartbeat?.current_execution_request_id || "").trim() || null;
 
@@ -719,12 +791,17 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
 }
 
 async function dispatchPendingJob(supabase, context, robotRow, runtimePaths) {
-  if (fs.existsSync(runtimePaths.jobFilePath) || fs.existsSync(runtimePaths.resultFilePath)) {
-    return false;
-  }
   if (!fs.existsSync(runtimePaths.runtimeRoot) || !fs.existsSync(runtimePaths.entrypointPath)) {
     return false;
   }
+
+  const heartbeat = safeReadJson(runtimePaths.heartbeatFilePath);
+  const heartbeatUpdatedAt = heartbeat?.updated_at ? Date.parse(heartbeat.updated_at) : Number.NaN;
+  const robotBusy =
+    Number.isFinite(heartbeatUpdatedAt) &&
+    Date.now() - heartbeatUpdatedAt <= 90_000 &&
+    String(heartbeat?.status || "").trim().toLowerCase() === "processing";
+  if (robotBusy) return false;
 
   const executionRequest = await claimNextExecutionRequest(supabase, {
     officeId: context.officeId,
@@ -746,7 +823,10 @@ async function dispatchPendingJob(supabase, context, robotRow, runtimePaths) {
 
   await supabase
     .from("execution_requests")
-    .update({ job_payload: jobPayload })
+    .update({
+      job_payload: jobPayload,
+      company_ids: jobPayload.company_ids,
+    })
     .eq("id", executionRequest.id);
 
   writeJsonAtomic(runtimePaths.jobFilePath, jobPayload);
