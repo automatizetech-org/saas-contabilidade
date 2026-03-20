@@ -80,11 +80,42 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from supabase import create_client
-from json_runtime import JsonRobotRuntime
 
 # --------------------------------------------------------------------
 # Constantes e caminhos
 # --------------------------------------------------------------------
+
+RUNTIME_FOLDER_NAME = "nfs_padrao"
+
+
+def _resolve_runtime_base_dir() -> Path:
+    explicit = os.environ.get("ROBOT_SCRIPT_DIR", "").strip().rstrip(os.sep)
+    if explicit:
+        return Path(explicit).resolve()
+
+    current_dir = Path(__file__).resolve().parent
+    candidates: List[Path] = []
+    robots_root = (os.getenv("ROBOTS_ROOT_PATH") or "").strip()
+
+    if robots_root:
+        candidates.append(Path(robots_root) / RUNTIME_FOLDER_NAME)
+    candidates.append(Path.home() / "Documents" / "ROBOS" / RUNTIME_FOLDER_NAME)
+    candidates.append(current_dir)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if (resolved / "data" / "json").exists():
+            return resolved
+
+    return current_dir
 
 
 def resolve_base_dir() -> Path:
@@ -104,7 +135,139 @@ def resolve_base_dir() -> Path:
 
         return exe_dir
 
-    return Path(__file__).resolve().parent
+    return _resolve_runtime_base_dir()
+
+
+def _json_runtime_utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _json_runtime_ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _json_runtime_atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    _json_runtime_ensure_parent(path)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp_path.replace(path)
+
+
+class JsonRobotRuntime:
+    def __init__(self, technical_id: str, display_name: str, base_dir: Path) -> None:
+        self.technical_id = technical_id
+        self.display_name = display_name
+        self.base_dir = base_dir
+        self.last_status = "inactive"
+        self.json_dir = self.base_dir / "data" / "json"
+        self.job_path = self.json_dir / "job.json"
+        self.result_path = self.json_dir / "result.json"
+        self.heartbeat_path = self.json_dir / "heartbeat.json"
+
+    def register_robot(self) -> str:
+        self.write_heartbeat(status="active")
+        return self.technical_id
+
+    def load_job(self) -> Optional[dict[str, Any]]:
+        if self.result_path.exists() or not self.job_path.exists():
+            return None
+        try:
+            payload = json.loads(self.job_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if not payload.get("id"):
+            payload["id"] = payload.get("execution_request_id") or payload.get("job_id")
+        if not payload.get("job_id"):
+            payload["job_id"] = payload.get("id")
+        if not payload.get("execution_request_id"):
+            payload["execution_request_id"] = payload.get("id")
+        return payload
+
+    def load_job_companies(
+        self,
+        job: Optional[dict[str, Any]],
+        company_ids: Optional[List[str]] = None,
+    ) -> List[dict[str, Any]]:
+        if not isinstance(job, dict):
+            return []
+        companies = job.get("companies")
+        if not isinstance(companies, list):
+            return []
+        wanted = {str(company_id) for company_id in (company_ids or []) if str(company_id).strip()}
+        rows: List[dict[str, Any]] = []
+        for row in companies:
+            if not isinstance(row, dict):
+                continue
+            company_id = str(row.get("company_id") or row.get("id") or "").strip()
+            if wanted and company_id not in wanted:
+                continue
+            rows.append(row)
+        return rows
+
+    def write_heartbeat(
+        self,
+        *,
+        status: str,
+        current_job_id: Optional[str] = None,
+        current_execution_request_id: Optional[str] = None,
+        message: Optional[str] = None,
+        progress: Optional[dict[str, Any]] = None,
+        extra: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self.last_status = status
+        payload: dict[str, Any] = {
+            "robot_technical_id": self.technical_id,
+            "display_name": self.display_name,
+            "status": status,
+            "updated_at": _json_runtime_utc_now_iso(),
+            "current_job_id": current_job_id,
+            "current_execution_request_id": current_execution_request_id,
+            "message": message,
+            "progress": progress or {},
+        }
+        if extra:
+            payload.update(extra)
+        _json_runtime_atomic_write_json(self.heartbeat_path, payload)
+
+    def write_result(
+        self,
+        *,
+        job: Optional[dict[str, Any]],
+        success: bool,
+        error_message: Optional[str] = None,
+        summary: Optional[dict[str, Any]] = None,
+        payload: Optional[dict[str, Any]] = None,
+        company_results: Optional[List[dict[str, Any]]] = None,
+    ) -> None:
+        execution_request_id = None
+        job_id = None
+        if isinstance(job, dict):
+            execution_request_id = str(job.get("execution_request_id") or job.get("id") or "").strip() or None
+            job_id = str(job.get("job_id") or job.get("id") or "").strip() or execution_request_id
+
+        event_id = execution_request_id or str(uuid.uuid4())
+        result_payload: dict[str, Any] = {
+            "event_id": event_id,
+            "job_id": job_id or event_id,
+            "execution_request_id": execution_request_id,
+            "robot_technical_id": self.technical_id,
+            "status": "completed" if success else "failed",
+            "started_at": _json_runtime_utc_now_iso(),
+            "finished_at": _json_runtime_utc_now_iso(),
+            "error_message": error_message,
+            "summary": summary or {},
+            "company_results": company_results or [],
+            "payload": payload or {},
+        }
+        _json_runtime_atomic_write_json(self.result_path, result_payload)
+        self.write_heartbeat(
+            status="active",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message="result_ready",
+        )
 
 
 LOGIN_URL = "https://www.nfse.gov.br/EmissorNacional/Login?ReturnUrl=%2fEmissorNacional"
