@@ -5,7 +5,8 @@ import { Lock, Loader2, AlertCircle } from "lucide-react";
 import defaultLogoUrl from "@/assets/images/logo.png";
 import { supabase } from "@/services/supabaseClient";
 import { getProfile } from "@/services/profilesService";
-import { resetBrandingInDocument } from "@/contexts/BrandingContext";
+import { getBranding } from "@/services/brandingService";
+import { BRANDING_QUERY_KEY_PREFIX, getBrandingQueryKey, resetBrandingInDocument } from "@/contexts/BrandingContext";
 import { useSupabaseConnectionStatus } from "@/hooks/useSupabaseConnectionStatus";
 import { MaintenanceBanner } from "@/components/MaintenanceBanner";
 
@@ -57,6 +58,7 @@ export default function LoginPage() {
   }, [loginMessage]);
 
   useEffect(() => {
+    queryClient.removeQueries({ queryKey: BRANDING_QUERY_KEY_PREFIX });
     resetBrandingInDocument();
     const stored = localStorage.getItem("theme");
     const isDark = stored !== "light";
@@ -115,6 +117,17 @@ export default function LoginPage() {
           `O escritório "${profile.office_name ?? "deste usuário"}" está inativado. Entre em contato com o suporte.`,
         );
         return;
+      }
+
+      try {
+        const brandingQueryKey = getBrandingQueryKey(profile.office_id);
+        await queryClient.fetchQuery({
+          queryKey: brandingQueryKey,
+          queryFn: () => getBranding(profile.office_id),
+          staleTime: 5 * 60 * 1000,
+        });
+      } catch {
+        queryClient.removeQueries({ queryKey: BRANDING_QUERY_KEY_PREFIX });
       }
 
       navigate(getPostLoginRoute(profile.role), { replace: true });

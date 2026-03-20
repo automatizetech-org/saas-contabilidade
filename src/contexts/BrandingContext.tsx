@@ -11,9 +11,14 @@ import {
 } from "@/services/brandingService";
 import { deriveBrandTokens } from "@/lib/brandingTheme";
 import { supabase } from "@/services/supabaseClient";
+import { useProfile } from "@/hooks/useProfile";
 import defaultLogoUrl from "@/assets/images/logo.png";
 
-const BRANDING_QUERY_KEY = ["branding", "current-office"];
+export const BRANDING_QUERY_KEY_PREFIX = ["branding"] as const;
+
+export function getBrandingQueryKey(officeId?: string | null) {
+  return [...BRANDING_QUERY_KEY_PREFIX, officeId ?? "current-office"] as const;
+}
 
 /** Nome da marca (ex.: "Contabilidade"). Vazio = usa "Dashboard" / "Analytics" sem sufixo. */
 export function getBrandDisplayName(clientName: string | null | undefined): string {
@@ -169,6 +174,7 @@ export function resetBrandingInDocument(): void {
 export function BrandingProvider({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { officeId, profile } = useProfile();
   const [logoUrl, setLogoUrl] = useState<string>(defaultLogoUrl);
   const [faviconUrl, setFaviconUrl] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
@@ -189,7 +195,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
       if (session?.user?.id) {
         queryClient.invalidateQueries({ queryKey: ["profile", session.user.id] });
       } else {
-        queryClient.removeQueries({ queryKey: BRANDING_QUERY_KEY });
+        queryClient.removeQueries({ queryKey: BRANDING_QUERY_KEY_PREFIX });
         queryClient.removeQueries({ queryKey: ["profile"] });
         queryClient.removeQueries({ queryKey: ["admin"] });
       }
@@ -202,13 +208,36 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   const shouldUseOfficeBranding = hasSession && location.pathname !== "/login";
+  const brandingQueryKey = getBrandingQueryKey(officeId);
 
-  const { data: branding = null, isLoading, error, refetch } = useQuery({
-    queryKey: BRANDING_QUERY_KEY,
-    queryFn: () => getBranding(),
-    enabled: shouldUseOfficeBranding,
+  const { data: brandingData = null, isLoading, error, refetch } = useQuery({
+    queryKey: brandingQueryKey,
+    queryFn: () => getBranding(officeId),
+    enabled: shouldUseOfficeBranding && Boolean(officeId),
     staleTime: 5 * 60 * 1000,
   });
+
+  const branding = useMemo<ClientBrandingRow | null>(() => {
+    if (brandingData) return brandingData;
+    if (!shouldUseOfficeBranding || !officeId || !profile?.office_name) return null;
+    return {
+      id: `fallback-${officeId}`,
+      office_id: officeId,
+      client_name: profile.office_name,
+      primary_color: null,
+      secondary_color: null,
+      tertiary_color: null,
+      logo_path: null,
+      favicon_path: null,
+      logo_url: null,
+      favicon_url: null,
+      use_custom_palette: false,
+      use_custom_logo: false,
+      use_custom_favicon: false,
+      created_at: "",
+      updated_at: "",
+    };
+  }, [brandingData, shouldUseOfficeBranding, officeId, profile?.office_name]);
 
   const applyBranding = useCallback((row: ClientBrandingRow | null) => {
     if (!row) {
@@ -251,7 +280,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   const saveBranding = useCallback(
     async (input: ClientBrandingInput): Promise<ClientBrandingRow> => {
       const row = await upsertBranding(input);
-      queryClient.setQueryData(BRANDING_QUERY_KEY, row);
+      queryClient.setQueryData(getBrandingQueryKey(row.office_id), row);
       applyBranding(row);
       return row;
     },
@@ -261,7 +290,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   const uploadLogo = useCallback(
     async (file: File): Promise<string> => {
       const row = await uploadLogoAndFaviconService(file);
-      queryClient.setQueryData(BRANDING_QUERY_KEY, row);
+      queryClient.setQueryData(getBrandingQueryKey(row.office_id), row);
       applyBranding(row);
       return row.logo_url ?? "";
     },
@@ -270,7 +299,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
   const removeLogo = useCallback(async () => {
     const row = await removeLogoService();
-    queryClient.setQueryData(BRANDING_QUERY_KEY, row);
+    queryClient.setQueryData(getBrandingQueryKey(row.office_id), row);
     applyBranding(row);
   }, [queryClient, applyBranding]);
 

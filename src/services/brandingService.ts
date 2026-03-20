@@ -88,7 +88,8 @@ async function createSignedUrl(path: string | null): Promise<string | null> {
   return data?.signedUrl ?? null
 }
 
-async function getCurrentOfficeId(): Promise<string> {
+async function getCurrentOfficeId(providedOfficeId?: string | null): Promise<string> {
+  if (providedOfficeId) return providedOfficeId
   const context = await getCurrentOfficeContext()
   if (!context?.officeId) throw new Error("Nenhum escritório ativo encontrado para o usuário.")
   return context.officeId
@@ -140,9 +141,9 @@ async function deleteBrandAssets(paths: Array<string | null | undefined>): Promi
   if (error) throw error
 }
 
-export async function getBranding(): Promise<ClientBrandingRow | null> {
-  const officeId = await getCurrentOfficeId()
-  const data = await getBrandingRecord(officeId)
+export async function getBranding(officeId?: string | null): Promise<ClientBrandingRow | null> {
+  const resolvedOfficeId = await getCurrentOfficeId(officeId)
+  const data = await getBrandingRecord(resolvedOfficeId)
   if (!data) return null
 
   const [logoUrl, faviconUrl] = await Promise.all([
