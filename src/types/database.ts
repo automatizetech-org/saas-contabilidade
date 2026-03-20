@@ -74,6 +74,7 @@ export type Database = {
         office_id: string;
         public_base_url: string;
         base_path: string;
+        robots_root_path: string;
         status: OfficeServerStatus;
         is_active: boolean;
         connector_version: string | null;
@@ -163,6 +164,23 @@ export type Database = {
         auth_mode: "password" | "certificate";
         nfs_password: string | null;
         selected_login_cpf: string | null;
+        settings: Json;
+        created_at: string;
+        updated_at: string;
+      }>;
+      office_robot_configs: TableDef<{
+        office_id: string;
+        robot_technical_id: string;
+        display_name: string | null;
+        segment_path: string | null;
+        notes_mode: RobotNotesMode | null;
+        date_execution_mode: "competencia" | "interval" | null;
+        initial_period_start: string | null;
+        initial_period_end: string | null;
+        last_period_end: string | null;
+        global_logins: Json;
+        admin_settings: Json;
+        execution_defaults: Json;
         created_at: string;
         updated_at: string;
       }>;
@@ -183,6 +201,30 @@ export type Database = {
         is_fiscal_notes_robot: boolean;
         fiscal_notes_kind: FiscalNotesKind | null;
         global_logins: Json;
+        runtime_folder: string | null;
+        entrypoint_relpath: string;
+        job_file_relpath: string;
+        result_file_relpath: string;
+        heartbeat_file_relpath: string;
+        capabilities: Json;
+        runtime_defaults: Json;
+        admin_form_schema: Json;
+        company_form_schema: Json;
+        schedule_form_schema: Json;
+      }>;
+      office_robot_runtime: TableDef<{
+        office_id: string;
+        office_server_id: string;
+        robot_technical_id: string;
+        status: "active" | "inactive" | "processing";
+        last_heartbeat_at: string | null;
+        current_execution_request_id: string | null;
+        current_job_id: string | null;
+        runtime_version: string | null;
+        host_name: string | null;
+        heartbeat_payload: Json;
+        created_at: string;
+        updated_at: string;
       }>;
       folder_structure_nodes: TableDef<{
         id: string;
@@ -209,6 +251,7 @@ export type Database = {
         execution_mode: RobotExecutionMode | null;
         status: "active" | "paused" | "completed";
         last_run_at: string | null;
+        settings: Json;
         created_by: string | null;
         created_at: string;
         updated_at: string;
@@ -230,6 +273,11 @@ export type Database = {
         execution_mode: RobotExecutionMode | null;
         execution_group_id: string | null;
         execution_order: number | null;
+        job_payload: Json;
+        result_summary: Json;
+        source: string;
+        claimed_by_server_id: string | null;
+        started_at: string | null;
         created_at: string;
         created_by: string | null;
       }>;
@@ -426,6 +474,20 @@ export type Database = {
         idempotency_key: string | null;
         retries: number;
         created_at: string;
+      }>;
+      robot_result_events: TableDef<{
+        id: string;
+        event_id: string;
+        office_id: string;
+        execution_request_id: string | null;
+        robot_technical_id: string;
+        status: "completed" | "failed";
+        summary: Json;
+        company_results: Json;
+        payload: Json;
+        error_message: string | null;
+        created_at: string;
+        ingested_at: string;
       }>;
       tax_rule_versions: TableDef<{
         id: string;
@@ -639,6 +701,18 @@ export type Database = {
           is_fiscal_notes_robot: boolean;
           fiscal_notes_kind: FiscalNotesKind | null;
           global_logins: Json;
+          runtime_folder: string | null;
+          entrypoint_relpath: string;
+          job_file_relpath: string;
+          result_file_relpath: string;
+          heartbeat_file_relpath: string;
+          capabilities: Json;
+          runtime_defaults: Json;
+          admin_form_schema: Json;
+          company_form_schema: Json;
+          schedule_form_schema: Json;
+          admin_settings: Json;
+          execution_defaults: Json;
         }>;
       };
       get_authorized_file_paths: {

@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient"
-import type { RobotExecutionMode, RobotNotesMode, Tables } from "@/types/database"
+import type { Json, RobotExecutionMode, RobotNotesMode, Tables } from "@/types/database"
 
 export type ScheduleRule = Tables<"schedule_rules">
 
@@ -31,6 +31,7 @@ export async function createScheduleRule(params: {
   runAtTime: string
   runDaily: boolean
   executionMode?: RobotExecutionMode | null
+  settings?: Json | null
 }): Promise<ScheduleRule> {
   const { data: { user } } = await supabase.auth.getUser()
   const { data, error } = await supabase
@@ -45,6 +46,7 @@ export async function createScheduleRule(params: {
       run_at_time: params.runAtTime,
       run_daily: params.runDaily,
       execution_mode: params.executionMode ?? "sequential",
+      settings: params.settings ?? {},
       status: "active",
       created_by: user?.id ?? null,
     })
@@ -65,6 +67,7 @@ export async function updateScheduleRule(
     runDaily: boolean
     executionMode?: RobotExecutionMode | null
     lastRunAt?: string | null
+    settings?: Json | null
   }
 ): Promise<ScheduleRule> {
   const update: Record<string, unknown> = {
@@ -77,6 +80,7 @@ export async function updateScheduleRule(
     run_at_time: params.runAtTime,
     run_daily: params.runDaily,
     execution_mode: params.executionMode ?? "sequential",
+    settings: params.settings ?? {},
     status: "active",
   }
   if (params.lastRunAt !== undefined) {

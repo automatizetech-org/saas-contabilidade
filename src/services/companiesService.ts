@@ -1,7 +1,7 @@
 import { supabase } from "./supabaseClient"
 import { fetchAllPages } from "./supabasePagination"
 import type { Company } from "./profilesService"
-import type { Tables } from "@/types/database"
+import type { Json, Tables } from "@/types/database"
 import { isValidCnpj, isValidCpf, onlyDigits } from "@/lib/brazilDocuments"
 
 export const ROBOT_NFS_TECHNICAL_ID = "nfs_padrao"
@@ -17,6 +17,7 @@ export type RobotCompanyConfigInput = {
   auth_mode: "password" | "certificate"
   nfs_password?: string | null
   selected_login_cpf?: string | null
+  settings?: Json
 }
 
 function sanitizeCompanyLogins(logins: CompanySefazLogin[] | null | undefined): CompanySefazLogin[] {
@@ -148,6 +149,13 @@ export async function upsertCompanyRobotConfig(
     throw new Error("Informe um CPF válido para o login vinculado do robô.")
   }
 
+  const settings = {
+    ...(typeof config.settings === "object" && config.settings && !Array.isArray(config.settings) ? config.settings : {}),
+    auth_mode: config.auth_mode,
+    nfs_password: config.auth_mode === "password" ? (config.nfs_password ?? null) : null,
+    selected_login_cpf: selectedLoginCpf || null,
+  } satisfies Record<string, Json | undefined>
+
   const { data, error } = await supabase
     .from("company_robot_config")
     .upsert(
@@ -158,6 +166,7 @@ export async function upsertCompanyRobotConfig(
         auth_mode: config.auth_mode,
         nfs_password: config.auth_mode === "password" ? (config.nfs_password ?? null) : null,
         selected_login_cpf: selectedLoginCpf || null,
+        settings,
       },
       { onConflict: "company_id,robot_technical_id" }
     )

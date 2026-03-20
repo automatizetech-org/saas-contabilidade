@@ -111,6 +111,7 @@ from PySide6.QtGui import (
 # IMPORTS - Playwright (Automação Web)
 # =============================================================================
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from json_runtime import JsonRobotRuntime
 
 # =============================================================================
 # CONFIGURAÇÃO SUPABASE / ENV COMPARTILHADO
@@ -252,6 +253,53 @@ ROBOT_TECHNICAL_ID = os.getenv("ROBOT_TECHNICAL_ID", "sefaz_xml").strip() or "se
 ROBOT_DISPLAY_NAME_DEFAULT = os.getenv("ROBOT_DISPLAY_NAME", "Sefaz Xml").strip() or "Sefaz Xml"
 ROBOT_SEGMENT_PATH_DEFAULT = os.getenv("ROBOT_SEGMENT_PATH", "FISCAL/NFE-NFC").strip() or "FISCAL/NFE-NFC"
 _robot_api_config: Optional[Dict[str, Any]] = None
+JSON_RUNTIME = JsonRobotRuntime(
+    ROBOT_TECHNICAL_ID,
+    ROBOT_DISPLAY_NAME_DEFAULT,
+    pathlib.Path(__file__).resolve().parent,
+)
+ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
+PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
+
+
+def _current_json_job() -> Optional[Dict[str, Any]]:
+    return ACTIVE_JSON_JOB if isinstance(ACTIVE_JSON_JOB, dict) else None
+
+
+def _set_current_json_job(job: Optional[Dict[str, Any]]) -> None:
+    global ACTIVE_JSON_JOB
+    ACTIVE_JSON_JOB = job if isinstance(job, dict) else None
+
+
+def _clear_pending_result_operations() -> None:
+    PENDING_RESULT_OPERATIONS.clear()
+
+
+def _append_result_operation(operation: Dict[str, Any]) -> None:
+    if isinstance(operation, dict):
+        PENDING_RESULT_OPERATIONS.append(operation)
+
+
+def _consume_result_operations() -> List[Dict[str, Any]]:
+    operations = list(PENDING_RESULT_OPERATIONS)
+    PENDING_RESULT_OPERATIONS.clear()
+    return operations
+
+
+def _find_current_job_company(cnpj: str, company_name: str = "") -> Optional[Dict[str, Any]]:
+    job = _current_json_job()
+    if not isinstance(job, dict):
+        return None
+    target_cnpj = cnpj_somente_digitos(cnpj)
+    target_name = normalize_company_name(company_name)
+    for row in JSON_RUNTIME.load_job_companies(job):
+        row_cnpj = cnpj_somente_digitos(str(row.get("document") or row.get("cnpj") or ""))
+        row_name = normalize_company_name(str(row.get("name") or ""))
+        if target_cnpj and row_cnpj == target_cnpj:
+            return row
+        if target_name and row_name == target_name:
+            return row
+    return None
 
 
 def get_robot_supabase_credentials() -> Tuple[Optional[str], Optional[str]]:
@@ -447,99 +495,36 @@ def fetch_robot_row() -> Optional[Dict[str, Any]]:
 
 
 def register_robot() -> Optional[str]:
-    if not SUPABASE_AVAILABLE or not supabase_client:
-        return None
     try:
-        existing = fetch_robot_row()
-        if existing and existing.get("id"):
-            _supabase_retry_execute(
-                lambda: supabase_client.table("robots")
-                .update(
-                    {
-                        "status": "active",
-                        "last_heartbeat_at": datetime.utcnow().isoformat(),
-                        "segment_path": (existing.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT),
-                    }
-                )
-                .eq("id", existing["id"])
-                .execute()
-            )
-            return existing["id"]
-
-        payload = {
-            "technical_id": ROBOT_TECHNICAL_ID,
-            "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-            "status": "active",
-            "last_heartbeat_at": datetime.utcnow().isoformat(),
-            "segment_path": (get_robot_api_config() or {}).get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT,
-            "is_fiscal_notes_robot": True,
-            "fiscal_notes_kind": "nfe_nfc",
-            "notes_mode": "modelo_55",
-            "date_execution_mode": "interval",
-        }
-        payload_candidates = [
-            payload,
-            {k: v for k, v in payload.items() if k != "notes_mode"},
-            {
-                "technical_id": ROBOT_TECHNICAL_ID,
-                "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                "status": "active",
-                "last_heartbeat_at": datetime.utcnow().isoformat(),
-                "segment_path": (get_robot_api_config() or {}).get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT,
-                "date_execution_mode": "interval",
-            },
-        ]
-
-        last_error = None
-        inserted = False
-        for candidate in payload_candidates:
-            try:
-                _supabase_retry_execute(
-                    lambda candidate=candidate: supabase_client.table("robots").insert(candidate).execute()
-                )
-                inserted = True
-                break
-            except Exception as exc:
-                last_error = exc
-
-        if not inserted and last_error is not None:
-            raise last_error
-
-        created = fetch_robot_row()
-        return created.get("id") if created else None
+        return JSON_RUNTIME.register_robot()
     except Exception as exc:
-        print(f"[ROBÔ] Falha ao registrar no painel: {exc}")
+        print(f"[ROBO] Falha ao iniciar runtime JSON: {exc}")
         return None
 
 
 def update_robot_heartbeat(robot_id: Optional[str]) -> None:
-    if not robot_id or not SUPABASE_AVAILABLE or not supabase_client:
+    if not robot_id:
         return
     try:
-        _supabase_retry_execute(
-            lambda: supabase_client.table("robots")
-            .update({"last_heartbeat_at": datetime.utcnow().isoformat()})
-            .eq("id", robot_id)
-            .execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_heartbeat(
+            status="processing" if job else "active",
+            current_job_id=(job or {}).get("job_id"),
+            current_execution_request_id=(job or {}).get("execution_request_id"),
         )
     except Exception:
         pass
 
 
 def update_robot_status(robot_id: Optional[str], status: str) -> None:
-    if not robot_id or not SUPABASE_AVAILABLE or not supabase_client:
+    if not robot_id:
         return
     try:
-        _supabase_retry_execute(
-            lambda: supabase_client.table("robots")
-            .update(
-                {
-                    "status": status,
-                    "last_heartbeat_at": datetime.utcnow().isoformat(),
-                }
-            )
-            .eq("id", robot_id)
-            .execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_heartbeat(
+            status=status,
+            current_job_id=(job or {}).get("job_id"),
+            current_execution_request_id=(job or {}).get("execution_request_id"),
         )
     except Exception:
         pass
@@ -576,92 +561,18 @@ def claim_execution_request_for_queue(
     Respeita: regras ativas (schedule_rule_id) + execução sequencial (execution_group_id/execution_order).
     """
     try:
-        client = create_client(supabase_url.strip(), supabase_service_key.strip())
-        active_rule_ids = _get_active_schedule_rule_ids_for_queue(client)
-
-        # preferir RPC se existir (mesma usada pelos outros robôs)
-        try:
-            rpc_response = client.rpc(
-                "claim_next_execution_request",
-                {
-                    "p_robot_technical_id": ROBOT_TECHNICAL_ID,
-                    "p_robot_id": robot_id,
-                    "p_active_schedule_rule_ids": active_rule_ids,
-                },
-            ).execute()
-            rpc_rows = getattr(rpc_response, "data", None) or []
-            if rpc_rows:
-                return rpc_rows[0]
-        except Exception:
-            pass
-
-        r = (
-            client.table("execution_requests")
-            .select("*")
-            .eq("status", "pending")
-            .order("execution_order")
-            .order("created_at")
-            .limit(50)
-            .execute()
+        job = JSON_RUNTIME.load_job()
+        if not job:
+            return None
+        _set_current_json_job(job)
+        _clear_pending_result_operations()
+        JSON_RUNTIME.write_heartbeat(
+            status="processing",
+            current_job_id=job.get("job_id"),
+            current_execution_request_id=job.get("execution_request_id"),
+            message="job_loaded",
         )
-        rows = getattr(r, "data", None) or []
-        for row in rows:
-            schedule_rule_id = row.get("schedule_rule_id")
-            if schedule_rule_id is not None and active_rule_ids is not None and len(active_rule_ids) > 0:
-                if schedule_rule_id not in active_rule_ids:
-                    continue
-
-            execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
-            execution_group_id = row.get("execution_group_id")
-            if execution_mode == "sequential" and execution_group_id:
-                blockers = (
-                    client.table("execution_requests")
-                    .select("id, execution_order, created_at")
-                    .eq("execution_group_id", execution_group_id)
-                    .in_("status", ["pending", "running"])
-                    .order("execution_order")
-                    .order("created_at")
-                    .execute()
-                )
-                blocker_rows = getattr(blockers, "data", None) or []
-                if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
-                    continue
-
-            tech_ids = row.get("robot_technical_ids") or []
-            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
-                # de-dup: remove outros pendentes do mesmo robô
-                try:
-                    client.table("execution_requests").delete().eq("status", "pending").contains(
-                        "robot_technical_ids", [ROBOT_TECHNICAL_ID]
-                    ).neq("id", row["id"]).execute()
-                except Exception:
-                    pass
-
-                (
-                    client.table("execution_requests")
-                    .update(
-                        {
-                            "status": "running",
-                            "robot_id": robot_id,
-                            "claimed_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                    )
-                    .eq("id", row["id"])
-                    .eq("status", "pending")
-                    .execute()
-                )
-                claimed = (
-                    client.table("execution_requests")
-                    .select("*")
-                    .eq("id", row["id"])
-                    .eq("status", "running")
-                    .limit(1)
-                    .execute()
-                )
-                claimed_rows = getattr(claimed, "data", None) or []
-                if claimed_rows:
-                    return claimed_rows[0]
-        return None
+        return job
     except Exception as e:
         msg = f"[FILA] Erro ao buscar job do agendador: {e}"
         if callable(log_callback):
@@ -682,14 +593,15 @@ def complete_execution_request_for_queue(
     error_message: Optional[str] = None,
 ) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_service_key.strip())
-        client.table("execution_requests").update(
-            {
-                "status": "completed" if success else "failed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "error_message": error_message,
-            }
-        ).eq("id", request_id).execute()
+        job = _current_json_job()
+        operations = _consume_result_operations()
+        JSON_RUNTIME.write_result(
+            job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
+            success=success,
+            error_message=error_message,
+            payload={"operations": operations},
+        )
+        _set_current_json_job(None)
     except Exception:
         pass
 
@@ -6501,6 +6413,9 @@ def ensure_company_exists_supabase(cnpj: str, company_name: str) -> Optional[str
     Returns:
         UUID da empresa ou None se Supabase não disponível
     """
+    current_job_company = _find_current_job_company(cnpj, company_name)
+    if current_job_company:
+        return str(current_job_company.get("company_id") or current_job_company.get("id") or "").strip() or None
     if not SUPABASE_AVAILABLE or not supabase_client:
         return None
     
@@ -6823,8 +6738,12 @@ def sincronizar_fiscal_documents_nfe_nfc(
         "updated": 0,
         "errors": 0,
     }
+    pending_rows: List[Dict[str, Any]] = []
+    using_json_runtime = _current_json_job() is not None
 
-    if not SUPABASE_AVAILABLE or not supabase_client or not company_id:
+    if not company_id:
+        return result
+    if not using_json_runtime and (not SUPABASE_AVAILABLE or not supabase_client):
         return result
 
     if not get_resolved_output_base():
@@ -6890,6 +6809,10 @@ def sincronizar_fiscal_documents_nfe_nfc(
                             "file_path": relative_file_path,
                         }
 
+                        if using_json_runtime:
+                            pending_rows.append(payload)
+                            result["inserted"] += 1
+                            continue
                         # Sempre substituir o que já existe: UPDATE por (company_id, file_path); se nenhuma linha afetada, INSERT
                         upd = _supabase_retry_execute(
                             lambda p=payload, rfpath=relative_file_path, cid=company_id: supabase_client.table("fiscal_documents")
@@ -6930,6 +6853,16 @@ def sincronizar_fiscal_documents_nfe_nfc(
             result["errors"] += 1
             if log_fn:
                 log_fn(f"[WARN] ⚠️ Falha ao abrir ZIP para sincronizar fiscal_documents: {zip_error}")
+
+    if using_json_runtime and pending_rows:
+        _append_result_operation(
+            {
+                "kind": "upsert_rows",
+                "table": "fiscal_documents",
+                "on_conflict": "company_id,file_path",
+                "rows": pending_rows,
+            }
+        )
 
     return result
 
@@ -7180,9 +7113,12 @@ def enviar_dados_supabase_dashboard(
         True se sucesso, False caso contrário
     """
     if not SUPABASE_AVAILABLE or not supabase_client:
-        if log_fn:
+        if _current_json_job():
+            pass
+        elif log_fn:
             log_fn("[WARN] ⚠️ Supabase não configurado. Dados não serão enviados.")
-        return False
+        if not _current_json_job():
+            return False
     
     # Linha consolidada (uma linha por empresa)
     automation_id = 'xml-sefaz-dashboard'
@@ -7213,6 +7149,29 @@ def enviar_dados_supabase_dashboard(
             log_fn(f"[INFO] 📊 Totais: XML={dados_periodo.get('xml_count', 0)}, NF={dados_periodo.get('nf_count', 0)}, NFC={dados_periodo.get('nfc_count', 0)}")
             log_fn(f"[INFO] 📊 Financeiro: Faturamento={dados_periodo.get('faturamento', 0.0):.2f}, Despesa={dados_periodo.get('despesa', 0.0):.2f}, Resultado={dados_periodo.get('resultado', 0.0):.2f}")
         
+        if _current_json_job():
+            _append_result_operation(
+                {
+                    "kind": "replace_rows",
+                    "table": "automation_data",
+                    "filters": {
+                        "company_id": company_id,
+                        "automation_id": automation_id,
+                    },
+                    "rows": [
+                        {
+                            "company_id": company_id,
+                            "automation_id": automation_id,
+                            "date": data_final.isoformat(),
+                            "metadata": metadata_consolidado,
+                        }
+                    ],
+                }
+            )
+            if log_fn:
+                log_fn("[OK] ✅ Dados consolidados enfileirados para ingestão pelo connector.")
+            return True
+
         # Verifica se já existe registro para esta empresa (UMA LINHA POR EMPRESA)
         existing_data = _supabase_retry_execute(
             lambda: supabase_client.table('automation_data')
@@ -7342,9 +7301,12 @@ def enviar_dados_evolucao_supabase(
         True se sucesso, False caso contrário
     """
     if not SUPABASE_AVAILABLE or not supabase_client:
-        if log_fn:
+        if _current_json_job():
+            pass
+        elif log_fn:
             log_fn("[WARN] ⚠️ Supabase não configurado. Dados de evolução não serão enviados.")
-        return False
+        if not _current_json_job():
+            return False
     
     # Evolução diária consolidada (uma linha por empresa)
     automation_id = 'xml-sefaz-evolucao'
@@ -7422,6 +7384,29 @@ def enviar_dados_evolucao_supabase(
                 log_fn(f"[WARN] ⚠️ Nenhum dado de evolução para enviar")
             return False
         
+        if _current_json_job():
+            _append_result_operation(
+                {
+                    "kind": "replace_rows",
+                    "table": "automation_data",
+                    "filters": {
+                        "company_id": company_id,
+                        "automation_id": automation_id,
+                    },
+                    "rows": [
+                        {
+                            "company_id": company_id,
+                            "automation_id": automation_id,
+                            "date": data_final.isoformat(),
+                            "metadata": metadata_consolidado,
+                        }
+                    ],
+                }
+            )
+            if log_fn:
+                log_fn("[OK] ✅ Dados de evolução enfileirados para ingestão pelo connector.")
+            return True
+
         # Verifica se já existe registro para esta empresa (UMA LINHA POR EMPRESA)
         existing_data = supabase_client.table('automation_data')\
             .select('id, metadata')\
@@ -12683,12 +12668,12 @@ class MyCompactUI(QMainWindow):
         # habilita poll da fila apenas se houver credenciais service role
         try:
             url, key = get_robot_supabase_credentials()
-            self._queue_supabase_url, self._queue_supabase_key = url, key
-            if self.robot_id and url and key:
+            self._queue_supabase_url, self._queue_supabase_key = url or "", key or ""
+            if self.robot_id:
                 self.queue_poll_timer.start(6_000)
-                self.update_log("[FILA] Poll do agendador habilitado (execution_requests).")
+                self.update_log("[FILA] Poll do agendador habilitado (job.json).")
             else:
-                self.update_log("[FILA] Poll do agendador desabilitado (SUPABASE_URL/Service Role Key ausentes).")
+                self.update_log("[FILA] Poll do agendador desabilitado.")
         except Exception:
             pass
 
@@ -12798,9 +12783,7 @@ class MyCompactUI(QMainWindow):
         Consome a fila `execution_requests` criada pelo agendador do site.
         Quando encontrar um job para este robô, seleciona as empresas correspondentes e inicia a automação.
         """
-        if not SUPABASE_AVAILABLE:
-            return
-        if not self.robot_id or not self._queue_supabase_url or not self._queue_supabase_key:
+        if not self.robot_id:
             return
         if self.automation_running or (self.worker_thread and self.worker_thread.isRunning()):
             return
@@ -12836,9 +12819,28 @@ class MyCompactUI(QMainWindow):
         company_ids = job.get("company_ids") or []
         period_start = str(job.get("period_start") or "").strip()[:10]
         period_end = str(job.get("period_end") or "").strip()[:10]
+        job_companies = JSON_RUNTIME.load_job_companies(job, company_ids)
 
         # garante estado sincronizado (empresas + paths)
         self._sync_dashboard_runtime_state(log_changes=False)
+        if job_companies:
+            self.empresas = self._build_dashboard_empresas_map(
+                [
+                    {
+                        "id": row.get("company_id") or row.get("id"),
+                        "name": row.get("name"),
+                        "document": row.get("document") or row.get("cnpj"),
+                        "state_registration": row.get("state_registration"),
+                        "contador_cpf": row.get("contador_cpf"),
+                        "selected_login_cpf": row.get("selected_login_cpf"),
+                        "global_logins": (job.get("robot") or {}).get("global_logins") or [],
+                        "legacy_company_logins": row.get("sefaz_go_logins") or [],
+                    }
+                    for row in job_companies
+                ]
+            )
+            self.produtos = list(self.empresas.keys())
+            self._recarregar_lista_empresas()
 
         # aplica datas do período (job usa yyyy-mm-dd; UI usa dd/mm/yyyy)
         def _iso_to_br(s: str) -> str:

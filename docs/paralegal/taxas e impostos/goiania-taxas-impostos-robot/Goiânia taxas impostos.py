@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 import requests
 from supabase import Client, create_client
+from json_runtime import JsonRobotRuntime
 
 
 # Diretório base: quando iniciado pelo agendador, defina ROBOT_SCRIPT_DIR com a pasta do robô
@@ -192,6 +193,11 @@ URLEMISSAO_DUAM = "http://www11.goiania.go.gov.br/sistemas/scarr/asp/scarr32010s
 HEARTBEAT_INTERVAL_MS = 30000
 JOB_POLL_INTERVAL_MS = 10000
 DISPLAY_CONFIG_INTERVAL_MS = 10000
+JSON_RUNTIME = JsonRobotRuntime(
+    ROBOT_TECHNICAL_ID,
+    ROBOT_DISPLAY_NAME_DEFAULT,
+    BASE_DIR,
+)
 
 
 def utc_now_iso() -> str:
@@ -445,9 +451,9 @@ class RecaptchaTimeoutError(RuntimeError):
 
 class RobotBackend:
     def __init__(self) -> None:
-        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        if False and (not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY):
             raise RuntimeError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar definidos no .env do robô.")
-        self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        self.supabase: Client | None = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY else None
         self.playwright = None
         self.browser = None
         self.context: BrowserContext | None = None
@@ -463,6 +469,40 @@ class RobotBackend:
         self._mitmdump_proc: subprocess.Popen | None = None
         self._mitmdump_port: int | None = None
         self._use_proxy_rotation: bool = True
+        self.current_json_job: dict[str, Any] | None = None
+        self.pending_result_operations: list[dict[str, Any]] = []
+        self.pending_run_rows: dict[str, dict[str, Any]] = {}
+        self.pending_company_debts: dict[str, list[dict[str, Any]]] = {}
+
+    def _reset_pending_result_payload(self) -> None:
+        self.pending_result_operations.clear()
+        self.pending_run_rows.clear()
+        self.pending_company_debts.clear()
+
+    def _is_json_runtime_job(self) -> bool:
+        return isinstance(self.current_json_job, dict)
+
+    def _build_result_payload(self) -> dict[str, Any]:
+        operations = list(self.pending_result_operations)
+        for company_id, rows in self.pending_company_debts.items():
+            operations.append(
+                {
+                    "kind": "replace_company_rows",
+                    "table": "municipal_tax_debts",
+                    "company_id": company_id,
+                    "rows": rows,
+                }
+            )
+        if self.pending_run_rows:
+            operations.append(
+                {
+                    "kind": "upsert_rows",
+                    "table": "municipal_tax_collection_runs",
+                    "on_conflict": "id",
+                    "rows": list(self.pending_run_rows.values()),
+                }
+            )
+        return {"operations": operations}
 
     def set_use_proxy_rotation(self, value: bool) -> None:
         """Ativa ou desativa o uso de rotação de proxy (lista + mitmdump)."""
@@ -503,11 +543,16 @@ class RobotBackend:
             self._log_cb(message)
 
     def _client(self) -> Client:
-        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        if self.supabase is None:
             raise RuntimeError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar definidos no .env do robô.")
-        return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        return self.supabase
 
     def fetch_robot_row(self) -> dict[str, Any] | None:
+        if self.current_json_job:
+            robot_job = self.current_json_job.get("robot")
+            if isinstance(robot_job, dict):
+                self.robot_row = robot_job
+                return robot_job
         try:
             response = (
                 self._client()
@@ -569,6 +614,8 @@ class RobotBackend:
         )
 
     def _fetch_company_config_rows(self, company_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        if self.supabase is None:
+            return []
         query = (
             self._client()
             .table("company_robot_config")
@@ -582,6 +629,8 @@ class RobotBackend:
         return response.data or []
 
     def _load_companies_by_ids(self, company_ids: list[str] | None = None) -> list[CompanyItem]:
+        if self.supabase is None:
+            return []
         config_rows = self._fetch_company_config_rows(company_ids)
         config_by_company = {
             row.get("company_id"): row
@@ -641,9 +690,39 @@ class RobotBackend:
         return self._load_companies_by_ids()
 
     def fetch_companies_by_ids(self, company_ids: list[str]) -> list[CompanyItem]:
+        snapshot_rows = JSON_RUNTIME.load_job_companies(self.current_json_job, company_ids)
+        if snapshot_rows:
+            items: list[CompanyItem] = []
+            for row in snapshot_rows:
+                company_id = str(row.get("company_id") or row.get("id") or "").strip()
+                if not company_id:
+                    continue
+                items.append(
+                    CompanyItem(
+                        id=company_id,
+                        name=str(row.get("name") or "").strip(),
+                        document=digits(str(row.get("document") or "")),
+                        inscricao=str(row.get("state_registration") or ""),
+                        cai=str((row.get("settings") or {}).get("portal_cai") or ""),
+                        active=bool(row.get("active", True)),
+                        selected=False,
+                    )
+                )
+            return items
         return self._load_companies_by_ids(company_ids)
 
     def create_run(self, company: CompanyItem) -> str:
+        if self._is_json_runtime_job():
+            run_id = str(uuid.uuid4())
+            self.pending_run_rows[run_id] = {
+                "id": run_id,
+                "robot_technical_id": ROBOT_TECHNICAL_ID,
+                "company_id": company.id,
+                "company_name": company.name,
+                "status": "running",
+                "started_at": utc_now_iso(),
+            }
+            return run_id
         try:
             response = self.supabase.table("municipal_tax_collection_runs").insert(
                 {
@@ -662,38 +741,9 @@ class RobotBackend:
 
     def register_robot(self) -> str | None:
         try:
-            client = self._client()
-            api_cfg = get_robot_api_config() or {}
-            segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
-            response = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
-            rows = response.data or []
-            payload = {
-                "technical_id": ROBOT_TECHNICAL_ID,
-                "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                "segment_path": segment_path,
-                "status": "active",
-                "last_heartbeat_at": utc_now_iso(),
-            }
-            if rows:
-                robot_id = rows[0]["id"]
-                client.table("robots").update(
-                    {
-                        "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                        "segment_path": segment_path,
-                        "status": "active",
-                        "last_heartbeat_at": utc_now_iso(),
-                    }
-                ).eq("id", robot_id).execute()
-                self.fetch_robot_row()
-                return robot_id
-
-            client.table("robots").insert(payload).execute()
-            reread = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
-            reread_rows = reread.data or []
-            self.fetch_robot_row()
-            return reread_rows[0]["id"] if reread_rows else None
+            return JSON_RUNTIME.register_robot()
         except Exception as exc:
-            self._log(f"[Robo] Falha ao registrar na tabela robots: {exc}")
+            self._log(f"[Robo] Falha ao iniciar runtime JSON: {exc}")
             return None
 
     def ensure_robot_registration(self) -> str | None:
@@ -706,14 +756,12 @@ class RobotBackend:
         if not self.ensure_robot_registration():
             return
         try:
-            client = self._client()
-            client.table("robots").update(
-                {
-                    "status": status,
-                    "last_heartbeat_at": utc_now_iso(),
-                }
-            ).eq("id", self.robot_id).execute()
-            self.fetch_robot_row()
+            job = self.current_json_job
+            JSON_RUNTIME.write_heartbeat(
+                status=status,
+                current_job_id=(job or {}).get("job_id"),
+                current_execution_request_id=(job or {}).get("execution_request_id"),
+            )
         except Exception as exc:
             self._log(f"[Robo] Falha ao atualizar status '{status}' em robots: {exc}")
 
@@ -721,13 +769,29 @@ class RobotBackend:
         if not self.ensure_robot_registration():
             return
         try:
-            client = self._client()
-            client.table("robots").update({"last_heartbeat_at": utc_now_iso()}).eq("id", self.robot_id).execute()
+            job = self.current_json_job
+            JSON_RUNTIME.write_heartbeat(
+                status="processing" if job else "active",
+                current_job_id=(job or {}).get("job_id"),
+                current_execution_request_id=(job or {}).get("execution_request_id"),
+            )
         except Exception as exc:
             self._log(f"[Robo] Falha ao atualizar heartbeat em robots: {exc}")
 
     def finish_run(self, run_id: str, status: str, debts_found: int = 0, error_message: str | None = None) -> None:
         if not run_id:
+            return
+        if self._is_json_runtime_job():
+            row = self.pending_run_rows.get(run_id)
+            if row is not None:
+                row.update(
+                    {
+                        "status": status,
+                        "debts_found": debts_found,
+                        "error_message": error_message,
+                        "finished_at": utc_now_iso(),
+                    }
+                )
             return
         try:
             self.supabase.table("municipal_tax_collection_runs").update(
@@ -745,6 +809,12 @@ class RobotBackend:
     def _get_skip_iss_config(self) -> bool:
         """Lê admin_settings.robot_goiania_skip_iss (dashboard: Não capturar débitos de ISS)."""
         try:
+            if self.current_json_job:
+                admin_settings = ((self.current_json_job.get("robot") or {}).get("admin_settings") or {})
+                if isinstance(admin_settings, dict):
+                    return bool(admin_settings.get("skip_iss"))
+            if self.supabase is None:
+                return False
             r = self.supabase.table("admin_settings").select("value").eq("key", "robot_goiania_skip_iss").limit(1).execute()
             row = (r.data or [None])[0]
             val = str((row or {}).get("value") or "").strip().lower() == "true"
@@ -756,6 +826,9 @@ class RobotBackend:
             return False
 
     def _clear_company_debts(self, company_id: str) -> None:
+        if self._is_json_runtime_job():
+            self.pending_company_debts[company_id] = []
+            return
         try:
             self.supabase.table("municipal_tax_debts").delete().eq("company_id", company_id).execute()
         except Exception:
@@ -784,6 +857,9 @@ class RobotBackend:
             seen[_key(d)] = d
         deduped = list(seen.values())
         payload = [self._debt_to_json_item(d) for d in deduped]
+        if self._is_json_runtime_job():
+            self.pending_company_debts[company_id] = payload
+            return len(payload)
         result = self.supabase.rpc(
             "replace_company_municipal_tax_debts",
             {"p_company_id": company_id, "p_debts": payload},
@@ -805,9 +881,31 @@ class RobotBackend:
             "detalhes": debt.detalhes,
             "fetched_at": utc_now_iso(),
         }
+        if self._is_json_runtime_job():
+            self.pending_company_debts.setdefault(company_id, []).append(payload)
+            return
         self.supabase.table("municipal_tax_debts").insert(payload).execute()
 
     def sync_company_debts(self, company: CompanyItem, debts: list[DebtRow]) -> int:
+        if self._is_json_runtime_job():
+            payload = [
+                {
+                    "company_id": company.id,
+                    "ano": debt.ano,
+                    "tributo": debt.tributo,
+                    "numero_documento": debt.numero_documento,
+                    "data_vencimento": debt.data_vencimento,
+                    "valor": debt.valor,
+                    "situacao": debt.situacao,
+                    "portal_inscricao": debt.portal_inscricao,
+                    "portal_cai": debt.portal_cai,
+                    "detalhes": debt.detalhes,
+                    "fetched_at": utc_now_iso(),
+                }
+                for debt in debts
+            ]
+            self.pending_company_debts[company.id] = payload
+            return len(payload)
         try:
             self.supabase.table("municipal_tax_debts").delete().eq("company_id", company.id).execute()
         except Exception:
@@ -853,6 +951,32 @@ class RobotBackend:
         ano: int | None = None,
     ) -> bool:
         """Atualiza o caminho do PDF da guia; se o match exato falhar, tenta por ano/parcela/vencimento."""
+        if self._is_json_runtime_job():
+            candidate_rows = self.pending_company_debts.get(company_id, [])
+            parcela_norm = str(parcela or "").strip()
+            ano_norm = str(ano or "").strip()
+            venc_norm = str(data_vencimento or "").strip()
+            numero_norm = " ".join((numero_documento or "").upper().split())
+            for row in candidate_rows:
+                row_parcela = str(((row.get("detalhes") or {}).get("parcela")) or "").strip()
+                row_ano = str(row.get("ano") or "").strip()
+                row_venc = str(row.get("data_vencimento") or "").strip()
+                row_numero = " ".join((str(row.get("numero_documento") or "")).upper().split())
+                row_tributo = str(row.get("tributo") or "")
+                if tributo and row_tributo != tributo:
+                    continue
+                if parcela_norm and row_parcela != parcela_norm:
+                    continue
+                if ano_norm and row_ano != ano_norm:
+                    continue
+                if venc_norm and row_venc != venc_norm:
+                    continue
+                if numero_norm and row_numero and row_numero != numero_norm and not row_numero.endswith(parcela_norm):
+                    continue
+                row["guia_pdf_path"] = guia_pdf_path
+                row["updated_at"] = utc_now_iso()
+                return True
+            return False
         q = (
             self.supabase.table("municipal_tax_debts")
             .update({"guia_pdf_path": guia_pdf_path, "updated_at": utc_now_iso()})
@@ -912,70 +1036,21 @@ class RobotBackend:
         if not self.ensure_robot_registration():
             return None
         try:
-            client = self._client()
-            try:
-                rpc_response = client.rpc(
-                    "claim_next_execution_request",
-                    {
-                        "p_robot_technical_id": ROBOT_TECHNICAL_ID,
-                        "p_robot_id": self.robot_id,
-                        "p_active_schedule_rule_ids": None,
-                    },
-                ).execute()
-                rpc_rows = getattr(rpc_response, "data", None) or []
-                if rpc_rows:
-                    return rpc_rows[0]
-            except Exception:
-                pass
-
-            response = (
-                client.table("execution_requests")
-                .select("*")
-                .eq("status", "pending")
-                .order("execution_order")
-                .order("created_at")
-                .limit(50)
-                .execute()
+            job = JSON_RUNTIME.load_job()
+            if not job:
+                return None
+            self.current_json_job = job
+            robot_row = job.get("robot")
+            if isinstance(robot_row, dict):
+                self.robot_row = robot_row
+            self._reset_pending_result_payload()
+            JSON_RUNTIME.write_heartbeat(
+                status="processing",
+                current_job_id=job.get("job_id"),
+                current_execution_request_id=job.get("execution_request_id"),
+                message="job_loaded",
             )
-            rows = response.data or []
-            for row in rows:
-                execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
-                execution_group_id = row.get("execution_group_id")
-                if execution_mode == "sequential" and execution_group_id:
-                    blockers = (
-                        client.table("execution_requests")
-                        .select("id, execution_order, created_at")
-                        .eq("execution_group_id", execution_group_id)
-                        .in_("status", ["pending", "running"])
-                        .order("execution_order")
-                        .order("created_at")
-                        .execute()
-                    )
-                    blocker_rows = blockers.data or []
-                    if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
-                        continue
-                tech_ids = row.get("robot_technical_ids") or []
-                if "all" not in tech_ids and ROBOT_TECHNICAL_ID not in tech_ids:
-                    continue
-                client.table("execution_requests").update(
-                    {
-                        "status": "running",
-                        "robot_id": self.robot_id,
-                        "claimed_at": utc_now_iso(),
-                    }
-                ).eq("id", row["id"]).eq("status", "pending").execute()
-                claimed = (
-                    client.table("execution_requests")
-                    .select("*")
-                    .eq("id", row["id"])
-                    .eq("status", "running")
-                    .limit(1)
-                    .execute()
-                )
-                claimed_rows = claimed.data or []
-                if claimed_rows:
-                    return claimed_rows[0]
-            return None
+            return job
         except Exception as exc:
             if log_callback:
                 log_callback(f"[Robô] Erro ao buscar job da fila: {exc}")
@@ -988,13 +1063,15 @@ class RobotBackend:
         error_message: str | None = None,
     ) -> None:
         try:
-            self._client().table("execution_requests").update(
-                {
-                    "status": "completed" if success else "failed",
-                    "completed_at": utc_now_iso(),
-                    "error_message": error_message,
-                }
-            ).eq("id", request_id).execute()
+            job = self.current_json_job
+            JSON_RUNTIME.write_result(
+                job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
+                success=success,
+                error_message=error_message,
+                payload=self._build_result_payload(),
+            )
+            self.current_json_job = None
+            self._reset_pending_result_payload()
         except Exception:
             pass
 

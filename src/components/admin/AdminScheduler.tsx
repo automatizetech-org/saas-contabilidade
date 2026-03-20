@@ -32,9 +32,18 @@ import { ptBR } from "date-fns/locale"
 import type { Robot } from "@/services/robotsService"
 import type { ScheduleRule } from "@/services/scheduleRulesService"
 import { getCommonRobotNotesMode, getRobotNotesMode } from "@/lib/robotNotes"
-import type { RobotExecutionMode } from "@/types/database"
+import type { Json, RobotExecutionMode } from "@/types/database"
+import { buildRobotExecutionSnapshot, getRobotExecutionCity } from "@/lib/robotConfigSchemas"
 
 const DEBOUNCE_MS = 800
+
+function normalizeCityName(value: string | null | undefined) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase()
+}
 
 /** Retorna o próximo horário de execução (em Date) com base na regra ativa e no horário de Brasília. */
 function getNextRunAt(rule: ScheduleRule | null): Date | null {
@@ -137,6 +146,48 @@ function computeManualPeriodForRobot(robot: Robot, today: Date): { periodStart: 
     if (storedInterval) return storedInterval
   }
   return computePeriodForRobot(robot, today)
+}
+
+function getEligibleCompanyIdsForRobot(
+  robot: Robot,
+  selectedCompanyIds: string[],
+  companies: Awaited<ReturnType<typeof getCompaniesForUser>>
+): string[] {
+  const cityFilter = getRobotExecutionCity(robot)
+  if (!cityFilter) return selectedCompanyIds
+
+  const normalizedCity = normalizeCityName(cityFilter)
+  const companyById = new Map(companies.map((company) => [company.id, company]))
+
+  return selectedCompanyIds.filter((companyId) => {
+    const company = companyById.get(companyId)
+    return normalizeCityName(company?.city_name) === normalizedCity
+  })
+}
+
+function buildJobPayloadForRobot(
+  robot: Robot,
+  companyIds: string[],
+  periodStart: string,
+  periodEnd: string
+): Record<string, Json> {
+  return {
+    ...buildRobotExecutionSnapshot(robot),
+    company_ids: companyIds,
+    period_start: periodStart,
+    period_end: periodEnd,
+  }
+}
+
+function buildScheduleSettings(robots: Robot[]): Record<string, Json> {
+  return {
+    robot_snapshots: Object.fromEntries(
+      robots.map((robot) => [
+        robot.technical_id,
+        buildRobotExecutionSnapshot(robot),
+      ])
+    ),
+  }
 }
 
 export function AdminScheduler({
@@ -293,6 +344,8 @@ export function AdminScheduler({
 
   const persistScheduleRule = useCallback(() => {
     if (!activeRule?.id || !runDaily || companyIds.size === 0 || (robotIdsOrdered.length === 0 && !allRobots)) return
+    const robotsForSnapshot =
+      (allRobots ? robots : robotIdsOrdered.map((id) => robots.find((robot) => robot.technical_id === id)).filter((robot): robot is Robot => Boolean(robot)))
     const payload = {
       companyIds: Array.from(companyIds),
       robotTechnicalIds: allRobots ? robots.map((r) => r.technical_id) : robotIdsOrdered,
@@ -301,6 +354,7 @@ export function AdminScheduler({
       runAtTime: runAtTime.slice(0, 5),
       runDaily: true,
       executionMode,
+      settings: buildScheduleSettings(robotsForSnapshot),
     }
     updateScheduleRule(activeRule.id, payload)
       .then(() => {
@@ -403,17 +457,21 @@ export function AdminScheduler({
     }
     setSubmitting(true)
     try {
+      const selectedCompanyIds = Array.from(companyIds)
       if (runDaily) {
         const executionGroupId = crypto.randomUUID()
         const modeToUse = executionModeRef.current ?? executionMode
+        const robotsForSnapshot =
+          (allRobots ? robots : robotIdsOrdered.map((id) => robots.find((robot) => robot.technical_id === id)).filter((robot): robot is Robot => Boolean(robot)))
         const payload = {
-          companyIds: Array.from(companyIds),
+          companyIds: selectedCompanyIds,
           robotTechnicalIds: robotIdsOrdered.length > 0 ? robotIdsOrdered : ["all"],
           notesMode: commonSelectedRobotNotesMode ?? undefined,
           runAtDate,
           runAtTime: runAtTime.slice(0, 5),
           runDaily: true,
           executionMode: modeToUse,
+          settings: buildScheduleSettings(robotsForSnapshot),
         }
         let ruleId: string
         if (scheduleRules.length > 0) {
@@ -443,10 +501,13 @@ export function AdminScheduler({
             .map((id) => robots.find((r) => r.technical_id === id))
             .filter((r): r is Robot => !!r)
           const today = new Date()
+          let createdJobs = 0
           for (const [index, robot] of list.entries()) {
             const { periodStart, periodEnd } = computeScheduledPeriodForRobot(robot, today)
+            const eligibleCompanyIds = getEligibleCompanyIdsForRobot(robot, selectedCompanyIds, companies)
+            if (eligibleCompanyIds.length === 0) continue
             await createExecutionRequest({
-              companyIds: Array.from(companyIds),
+              companyIds: eligibleCompanyIds,
               robotTechnicalIds: [robot.technical_id],
               periodStart,
               periodEnd,
@@ -455,7 +516,13 @@ export function AdminScheduler({
               executionMode: modeToUse,
               executionGroupId,
               executionOrder: index,
+              jobPayload: buildJobPayloadForRobot(robot, eligibleCompanyIds, periodStart, periodEnd),
+              source: "scheduler",
             })
+            createdJobs += 1
+          }
+          if (createdJobs === 0) {
+            throw new Error("Nenhuma empresa elegivel restou para os robos selecionados. Verifique filtros por cidade e vinculacao dos robos.")
           }
           await updateScheduleRule(ruleId, {
             ...payload,
@@ -486,10 +553,13 @@ export function AdminScheduler({
           .map((id) => robots.find((r) => r.technical_id === id))
           .filter((r): r is Robot => !!r)
         const today = new Date()
+        let createdJobs = 0
         for (const [index, robot] of list.entries()) {
           const { periodStart, periodEnd } = computeManualPeriodForRobot(robot, today)
+          const eligibleCompanyIds = getEligibleCompanyIdsForRobot(robot, selectedCompanyIds, companies)
+          if (eligibleCompanyIds.length === 0) continue
           await createExecutionRequest({
-            companyIds: Array.from(companyIds),
+            companyIds: eligibleCompanyIds,
             robotTechnicalIds: [robot.technical_id],
             periodStart,
             periodEnd,
@@ -497,7 +567,13 @@ export function AdminScheduler({
             executionMode: modeToUse,
             executionGroupId,
             executionOrder: index,
+            jobPayload: buildJobPayloadForRobot(robot, eligibleCompanyIds, periodStart, periodEnd),
+            source: "manual",
           })
+          createdJobs += 1
+        }
+        if (createdJobs === 0) {
+          throw new Error("Nenhuma empresa elegivel restou para os robos selecionados. Verifique filtros por cidade e vinculacao dos robos.")
         }
         if (companyIds.size > 0) {
           await Promise.all(

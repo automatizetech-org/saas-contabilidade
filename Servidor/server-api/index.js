@@ -23,6 +23,7 @@ import os from "os";
 import archiver from "archiver";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { createClient } from "@supabase/supabase-js";
+import { startRobotJsonRuntimeWorker } from "./robot-json-runtime.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -34,6 +35,8 @@ app.set("trust proxy", 1);
 // Base path: .env tem prioridade; Supabase só sobrescreve se BASE_PATH não veio do .env
 const ENV_BASE_PATH = (process.env.BASE_PATH || "").trim();
 let BASE_PATH = ENV_BASE_PATH || "C:\\Users\\ROBO\\Documents";
+const ENV_ROBOTS_ROOT_PATH = (process.env.ROBOTS_ROOT_PATH || "").trim();
+let ROBOTS_ROOT_PATH = ENV_ROBOTS_ROOT_PATH || "C:\\Users\\ROBO\\Documents\\ROBOS";
 let OFFICE_SERVER_ID = null;
 let OFFICE_ID = null;
 let OFFICE_NAME = null;
@@ -74,7 +77,7 @@ async function loadBasePathFromSupabase() {
       }
       const { data: officeServer, error: osError } = await supabase
         .from("office_servers")
-        .select("id, office_id, base_path")
+        .select("id, office_id, base_path, robots_root_path")
         .eq("id", credential.office_server_id)
         .maybeSingle();
       if (osError) {
@@ -99,6 +102,13 @@ async function loadBasePathFromSupabase() {
           String(officeServer.base_path).trim()
         ) {
           BASE_PATH = String(officeServer.base_path).trim();
+        }
+        if (
+          !ENV_ROBOTS_ROOT_PATH &&
+          officeServer?.robots_root_path &&
+          String(officeServer.robots_root_path).trim()
+        ) {
+          ROBOTS_ROOT_PATH = String(officeServer.robots_root_path).trim();
         }
         return;
       }
@@ -135,6 +145,30 @@ function createSupabaseReadClient() {
       detectSessionInUrl: false,
     },
   });
+}
+
+function createSupabaseServiceClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    return null;
+  }
+  return createClient(supabaseUrl, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+function getRobotRuntimeContext() {
+  return {
+    officeId: OFFICE_ID,
+    officeServerId: OFFICE_SERVER_ID,
+    basePath: BASE_PATH,
+    robotsRootPath: ROBOTS_ROOT_PATH,
+  };
 }
 
 function getBaseResolved() {
@@ -1699,9 +1733,11 @@ function startOfficeRefreshWorker() {
 
 loadBasePathFromSupabase().then(() => {
   app.listen(PORT, () => {
+    const robotRuntimeSupabase = createSupabaseServiceClient();
     console.log(`API unificada em http://localhost:${PORT}`);
     console.log(`[fiscal-watcher] ${FISCAL_SYNC_VERSION}`);
     console.log(`BASE_PATH: ${BASE_PATH}`);
+    console.log(`ROBOTS_ROOT_PATH: ${ROBOTS_ROOT_PATH}`);
     console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
     console.log(
       `CONNECTOR_SECRET: ${CONNECTOR_SECRET_HASH ? "configurado" : "ausente"}`,
@@ -1719,5 +1755,19 @@ loadBasePathFromSupabase().then(() => {
     }
     startOfficeRefreshWorker();
     startFiscalWatcher();
+    if (robotRuntimeSupabase) {
+      startRobotJsonRuntimeWorker({
+        supabase: robotRuntimeSupabase,
+        getContext: getRobotRuntimeContext,
+        logger: console,
+        dispatchIntervalMs: Number(process.env.ROBOT_JSON_DISPATCH_INTERVAL_MS || 5000),
+        heartbeatIntervalMs: Number(process.env.ROBOT_JSON_HEARTBEAT_INTERVAL_MS || 10000),
+        resultIntervalMs: Number(process.env.ROBOT_JSON_RESULT_INTERVAL_MS || 5000),
+      });
+    } else {
+      console.warn(
+        "[robot-json-runtime] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente; worker desligado.",
+      );
+    }
   });
 });

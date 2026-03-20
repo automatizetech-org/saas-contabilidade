@@ -1,88 +1,43 @@
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { RobotConfigFieldGroup } from "@/components/robots/RobotConfigFieldGroup";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { canEnableRobotForCompany, getRobotEnableRequirementMessage } from "@/lib/companyRobotRequirements"
-import { isValidCpf } from "@/lib/brazilDocuments"
-import type { Accountant } from "@/services/accountantsService"
-import type { Robot } from "@/services/robotsService"
-import type { CompanySefazLogin, RobotCompanyConfigInput } from "@/services/companiesService"
-import { cn } from "@/utils"
+} from "@/components/ui/select";
+import type { Accountant } from "@/services/accountantsService";
+import type { RobotCompanyConfigInput } from "@/services/companiesService";
+import type { Robot } from "@/services/robotsService";
+import type { Json } from "@/types/database";
+import {
+  getRobotCapabilities,
+  getRobotCompanyFormSchema,
+  getRobotConfigRecord,
+  getRobotGlobalLogins,
+} from "@/lib/robotConfigSchemas";
+import { canEnableRobotForCompany, getRobotEnableRequirementMessage } from "@/lib/companyRobotRequirements";
+import { cn } from "@/utils";
 
 function onlyDigits(value: string) {
-  return value.replace(/\D/g, "")
+  return value.replace(/\D/g, "");
 }
 
 function formatCpf(value: string) {
-  const digits = onlyDigits(value)
-  if (digits.length !== 11) return value
-  return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
-}
-
-function normalizeRobotLogins(value: unknown): CompanySefazLogin[] {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null
-      const row = item as { cpf?: string; password?: string; senha?: string; is_default?: boolean }
-      const cpf = onlyDigits(row.cpf ?? "")
-      const password = String(row.password ?? row.senha ?? "").trim()
-      if (!isValidCpf(cpf) || !password) return null
-      return { cpf, password, is_default: Boolean(row.is_default) }
-    })
-    .filter((item): item is CompanySefazLogin => Boolean(item))
+  const digits = onlyDigits(value);
+  if (digits.length !== 11) return value;
+  return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 }
 
 function getDefaultLoginCpf(robot: Robot, contadorCpf: string, fallbackSelected?: string | null) {
-  const logins = normalizeRobotLogins(robot.global_logins)
-  const contador = onlyDigits(contadorCpf)
-  const selected = onlyDigits(fallbackSelected ?? "")
-  if (selected && logins.some((login) => login.cpf === selected)) return selected
-  if (contador && logins.some((login) => login.cpf === contador)) return contador
-  const explicitDefault = logins.find((login) => login.is_default)
-  return explicitDefault?.cpf ?? logins[0]?.cpf ?? ""
-}
-
-function getRobotCapabilities(robot: Robot) {
-  if (robot.technical_id === "nfs_padrao") {
-    return {
-      authBehavior: "choice" as const,
-      usesLoginBinding: false,
-      showsPasswordField: true,
-      helperText: "Este robô permite escolher entre login no portal e certificado digital.",
-    }
-  }
-
-  if (robot.technical_id === "sefaz_xml") {
-    return {
-      authBehavior: "login_only" as const,
-      usesLoginBinding: true,
-      showsPasswordField: false,
-      helperText: "Este robô usa login global por CPF, vinculado empresa por empresa.",
-    }
-  }
-
-  if (robot.technical_id === "certidoes_fiscal") {
-    return {
-      authBehavior: "cnpj_only" as const,
-      usesLoginBinding: false,
-      showsPasswordField: false,
-      helperText: "Este robô usa apenas o CNPJ e os dados da empresa para consultar.",
-    }
-  }
-
-  return {
-    authBehavior: "cnpj_only" as const,
-    usesLoginBinding: false,
-    showsPasswordField: false,
-    helperText: "Este robô só exibe as opções necessárias para o modo de execução dele.",
-  }
+  const logins = getRobotGlobalLogins(robot.global_logins);
+  const contador = onlyDigits(contadorCpf);
+  const selected = onlyDigits(fallbackSelected ?? "");
+  if (selected && logins.some((login) => login.cpf === selected)) return selected;
+  if (contador && logins.some((login) => login.cpf === contador)) return contador;
+  const explicitDefault = logins.find((login) => login.is_default);
+  return explicitDefault?.cpf ?? logins[0]?.cpf ?? "";
 }
 
 export function CompanyRobotsEditor({
@@ -94,25 +49,27 @@ export function CompanyRobotsEditor({
   onConfigChange,
   contadorCpf,
   stateRegistration,
+  availableCities = [],
   disabled = false,
 }: {
-  robots: Robot[]
-  accountants: Accountant[]
-  selectedRobotTechnicalId: string
-  onSelectedRobotTechnicalIdChange: (value: string) => void
-  configsByRobot: Record<string, RobotCompanyConfigInput>
-  onConfigChange: (robotTechnicalId: string, next: RobotCompanyConfigInput) => void
-  contadorCpf: string
-  stateRegistration?: string | null
-  disabled?: boolean
+  robots: Robot[];
+  accountants: Accountant[];
+  selectedRobotTechnicalId: string;
+  onSelectedRobotTechnicalIdChange: (value: string) => void;
+  configsByRobot: Record<string, RobotCompanyConfigInput>;
+  onConfigChange: (robotTechnicalId: string, next: RobotCompanyConfigInput) => void;
+  contadorCpf: string;
+  stateRegistration?: string | null;
+  availableCities?: Array<string | null | undefined>;
+  disabled?: boolean;
 }) {
   const selectedRobot =
     robots.find((robot) => robot.technical_id === selectedRobotTechnicalId) ??
     robots[0] ??
-    null
+    null;
 
   if (!selectedRobot) {
-    return <p className="text-sm text-muted-foreground">Nenhum robô vinculado encontrado.</p>
+    return <p className="text-sm text-muted-foreground">Nenhum robo vinculado encontrado.</p>;
   }
 
   const config =
@@ -122,21 +79,62 @@ export function CompanyRobotsEditor({
       auth_mode: "password" as const,
       nfs_password: null,
       selected_login_cpf: getDefaultLoginCpf(selectedRobot, contadorCpf, null),
-    }
+      settings: {},
+    };
 
-  const robotLogins = normalizeRobotLogins(selectedRobot.global_logins)
-  const resolvedSelectedLogin = getDefaultLoginCpf(selectedRobot, contadorCpf, config.selected_login_cpf)
-  const capabilities = getRobotCapabilities(selectedRobot)
-  const canEnableSelectedRobot = canEnableRobotForCompany(selectedRobot.technical_id, stateRegistration)
-  const enableRequirementMessage = getRobotEnableRequirementMessage(selectedRobot.technical_id)
+  const robotLogins = getRobotGlobalLogins(selectedRobot.global_logins);
+  const resolvedSelectedLogin = getDefaultLoginCpf(selectedRobot, contadorCpf, config.selected_login_cpf);
+  const companySettings = {
+    ...getRobotConfigRecord(config.settings),
+    auth_mode: config.auth_mode ?? "password",
+    nfs_password: config.nfs_password ?? null,
+    selected_login_cpf: config.selected_login_cpf ?? resolvedSelectedLogin ?? null,
+  } satisfies Record<string, Json>;
+  const fields = getRobotCompanyFormSchema(selectedRobot);
+  const capabilities = getRobotCapabilities(selectedRobot);
+  const canEnableSelectedRobot = canEnableRobotForCompany(selectedRobot.technical_id, stateRegistration);
+  const enableRequirementMessage = getRobotEnableRequirementMessage(selectedRobot.technical_id);
   const accountantNameByCpf = new Map(
-    accountants.map((accountant) => [onlyDigits(accountant.cpf), accountant.name])
-  )
+    accountants.map((accountant) => [onlyDigits(accountant.cpf), accountant.name]),
+  );
+
+  const handleCompanyFieldChange = (key: string, value: Json) => {
+    const nextSettings = {
+      ...getRobotConfigRecord(config.settings),
+      [key]: value,
+    } satisfies Record<string, Json>;
+
+    const authMode =
+      key === "auth_mode"
+        ? (String(value || "password") as "password" | "certificate")
+        : config.auth_mode;
+    const selectedLoginCpf =
+      key === "selected_login_cpf"
+        ? (value ? String(value) : null)
+        : config.selected_login_cpf;
+    const password =
+      key === "nfs_password"
+        ? (value ? String(value) : "")
+        : (config.nfs_password ?? "");
+
+    onConfigChange(selectedRobot.technical_id, {
+      ...config,
+      auth_mode: authMode,
+      nfs_password: authMode === "password" ? password : null,
+      selected_login_cpf: selectedLoginCpf,
+      settings: {
+        ...nextSettings,
+        auth_mode: authMode,
+        nfs_password: authMode === "password" ? password : null,
+        selected_login_cpf: selectedLoginCpf,
+      },
+    });
+  };
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label>Robô</Label>
+        <Label>Robo</Label>
         <Select value={selectedRobot.technical_id} onValueChange={onSelectedRobotTechnicalIdChange} disabled={disabled}>
           <SelectTrigger>
             <SelectValue />
@@ -150,15 +148,15 @@ export function CompanyRobotsEditor({
           </SelectContent>
         </Select>
         <p className="text-[10px] text-muted-foreground">
-          Selecione o robô vinculado para configurar como esta empresa roda nele.
+          Selecione o robo vinculado para configurar como esta empresa roda nele.
         </p>
       </div>
 
-      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+      <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-medium">{selectedRobot.display_name}</p>
-            <p className="text-[10px] text-muted-foreground font-mono">{selectedRobot.technical_id}</p>
+            <p className="font-mono text-[10px] text-muted-foreground">{selectedRobot.technical_id}</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground">Desligado</span>
@@ -167,20 +165,20 @@ export function CompanyRobotsEditor({
               role="switch"
               aria-checked={config.enabled}
               onClick={() => {
-                if (!config.enabled && !canEnableSelectedRobot) return
-                onConfigChange(selectedRobot.technical_id, { ...config, enabled: !config.enabled })
+                if (!config.enabled && !canEnableSelectedRobot) return;
+                onConfigChange(selectedRobot.technical_id, { ...config, enabled: !config.enabled });
               }}
               disabled={disabled || (!config.enabled && !canEnableSelectedRobot)}
               className={cn(
                 "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50",
-                config.enabled ? "bg-primary" : "bg-muted"
+                config.enabled ? "bg-primary" : "bg-muted",
               )}
               title={!config.enabled && !canEnableSelectedRobot ? enableRequirementMessage ?? undefined : undefined}
             >
               <span
                 className={cn(
                   "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition",
-                  config.enabled ? "translate-x-5" : "translate-x-1"
+                  config.enabled ? "translate-x-5" : "translate-x-1",
                 )}
               />
             </button>
@@ -188,116 +186,47 @@ export function CompanyRobotsEditor({
           </div>
         </div>
 
-        {config.enabled && (
-          <>
-            {capabilities.authBehavior === "choice" && (
-              <div className="space-y-3">
-                <p className="text-sm font-medium">Modo de autenticação da empresa</p>
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name={`auth-mode-${selectedRobot.technical_id}`}
-                      checked={config.auth_mode === "password"}
-                      onChange={() => onConfigChange(selectedRobot.technical_id, { ...config, auth_mode: "password" })}
-                      disabled={disabled}
-                      className="rounded-full border-input"
-                    />
-                    <span className="text-sm">Login</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name={`auth-mode-${selectedRobot.technical_id}`}
-                      checked={config.auth_mode === "certificate"}
-                      onChange={() => onConfigChange(selectedRobot.technical_id, { ...config, auth_mode: "certificate" })}
-                      disabled={disabled}
-                      className="rounded-full border-input"
-                    />
-                    <span className="text-sm">Certificado</span>
-                  </label>
-                </div>
-                <p className="text-[10px] text-muted-foreground">{capabilities.helperText}</p>
-              </div>
-            )}
-
-            {capabilities.authBehavior === "login_only" && (
-              <div className="space-y-1 rounded-md border border-border bg-background/60 p-3">
-                <p className="text-sm font-medium">Autenticação do robô</p>
-                <p className="text-[10px] text-muted-foreground">{capabilities.helperText}</p>
-              </div>
-            )}
-
-            {capabilities.authBehavior === "cnpj_only" && (
-              <div className="space-y-1 rounded-md border border-border bg-background/60 p-3">
-                <p className="text-sm font-medium">Execução automática</p>
-                <p className="text-[10px] text-muted-foreground">{capabilities.helperText}</p>
-              </div>
-            )}
-
-            {capabilities.showsPasswordField && config.auth_mode === "password" && (
-                <div className="space-y-1">
-                  <Label>Senha do portal</Label>
-                  <Input
-                    type="password"
-                    value={config.nfs_password ?? ""}
-                    onChange={(e) => onConfigChange(selectedRobot.technical_id, { ...config, nfs_password: e.target.value })}
-                    placeholder="Senha de acesso ao portal"
-                    disabled={disabled}
-                    autoComplete="off"
-                  />
-                </div>
-            )}
-
-            {capabilities.usesLoginBinding && (
-              <div className="space-y-2 rounded-md border border-border bg-background/60 p-3">
-                <Label>Login vinculado a esta empresa</Label>
-                <Select
-                  value={resolvedSelectedLogin || "__none__"}
-                  onValueChange={(value) =>
-                    onConfigChange(selectedRobot.technical_id, {
-                      ...config,
-                      selected_login_cpf: value === "__none__" ? null : value,
-                    })
-                  }
-                  disabled={disabled || robotLogins.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={robotLogins.length === 0 ? "Cadastre logins no editar robô" : "Selecione o login"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {robotLogins.length === 0 ? (
-                      <SelectItem value="__none__">Nenhum login global cadastrado</SelectItem>
-                    ) : (
-                      robotLogins.map((login) => (
-                        <SelectItem key={login.cpf} value={login.cpf}>
-                          {formatCpf(login.cpf)}
-                          {accountantNameByCpf.get(login.cpf) ? ` • ${accountantNameByCpf.get(login.cpf)}` : ""}
-                          {login.is_default ? " • padrão" : ""}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                <p className="text-[10px] text-muted-foreground">
-                  Se não escolher manualmente, o sistema prioriza o login do contador da empresa e depois o login padrão do robô.
-                </p>
-              </div>
-            )}
-          </>
-        )}
-
-        {!config.enabled && (
+        {config.enabled ? (
+          fields.length > 0 ? (
+            <RobotConfigFieldGroup
+              fields={fields}
+              valuesByTarget={{ company_settings: companySettings }}
+              onChangeField={(target, key, value) => {
+                if (target !== "company_settings") return;
+                handleCompanyFieldChange(key, value);
+              }}
+              globalLogins={robotLogins}
+              cityNames={availableCities}
+              disabled={disabled}
+              loginLabelByCpf={accountantNameByCpf}
+            />
+          ) : (
+            <div className="space-y-1 rounded-md border border-border bg-background/60 p-3">
+              <p className="text-sm font-medium">Execucao automatica</p>
+              <p className="text-[10px] text-muted-foreground">
+                {capabilities.helperText || "Este robo nao precisa de configuracoes extras por empresa."}
+              </p>
+            </div>
+          )
+        ) : (
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">
-              Este robô ficará ignorado para esta empresa até ser ligado.
+              Este robo ficara ignorado para esta empresa ate ser ligado.
             </p>
-            {!canEnableSelectedRobot && enableRequirementMessage && (
+            {!canEnableSelectedRobot && enableRequirementMessage ? (
               <p className="text-xs text-amber-600">{enableRequirementMessage}</p>
-            )}
+            ) : null}
           </div>
         )}
+
+        {config.enabled && robotLogins.length > 0 ? (
+          <div className="rounded-md border border-border bg-background/60 p-3">
+            <p className="text-[10px] text-muted-foreground">
+              Logins disponiveis: {robotLogins.map((login) => formatCpf(login.cpf)).join(", ")}
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
-  )
+  );
 }

@@ -106,11 +106,11 @@ as $$
 
     union
 
-    select distinct nullif(btrim(coalesce(se.payload ->> 'arquivo_pdf', '')), '') as file_path
+    select distinct nullif(btrim(coalesce(public.try_parse_jsonb(se.payload) ->> 'arquivo_pdf', '')), '') as file_path
     from public.sync_events se
     join params p on p.office_id = se.office_id
     where se.tipo = 'certidao_resultado'
-      and nullif(btrim(coalesce(se.payload ->> 'arquivo_pdf', '')), '') = any (p.requested_paths)
+      and nullif(btrim(coalesce(public.try_parse_jsonb(se.payload) ->> 'arquivo_pdf', '')), '') = any (p.requested_paths)
   )
   select ap.file_path
   from allowed_paths ap

@@ -428,6 +428,7 @@ export default function EmpresasPage() {
             auth_mode: config.auth_mode ?? "password",
             nfs_password: config.nfs_password ?? null,
             selected_login_cpf: config.selected_login_cpf ?? null,
+            settings: config.settings ?? {},
           } satisfies RobotCompanyConfigInput,
         ])
       )
@@ -530,6 +531,7 @@ export default function EmpresasPage() {
             auth_mode: config.auth_mode,
             nfs_password: config.auth_mode === "password" ? config.nfs_password ?? null : null,
             selected_login_cpf: config.selected_login_cpf ?? null,
+            settings: config.settings ?? {},
           })
         })
       )
@@ -932,6 +934,7 @@ export default function EmpresasPage() {
                   }
                   contadorCpf={editContadorCpf}
                   stateRegistration={editStateRegistration}
+                  availableCities={companies.map((company) => company.city_name)}
                   disabled={editSaving}
                 />
               </TabsContent>

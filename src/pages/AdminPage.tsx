@@ -1251,7 +1251,7 @@ export default function AdminPage() {
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <AdminRobotsList isSuperAdmin={isSuperAdmin} />
+            <AdminRobotsList isSuperAdmin={canManageOffice} />
             <AdminScheduler isSuperAdmin={canManageOffice} />
           </section>
         </>

@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient"
-import type { RobotExecutionMode, RobotNotesMode, Tables } from "@/types/database"
+import type { Json, RobotExecutionMode, RobotNotesMode, Tables } from "@/types/database"
 
 export type ExecutionRequest = Tables<"execution_requests">
 
@@ -13,6 +13,8 @@ export async function createExecutionRequest(params: {
   executionMode?: RobotExecutionMode | null
   executionGroupId?: string | null
   executionOrder?: number | null
+  jobPayload?: Json | null
+  source?: string | null
 }): Promise<ExecutionRequest> {
   const { data: { user } } = await supabase.auth.getUser()
   for (const technicalId of params.robotTechnicalIds) {
@@ -35,6 +37,8 @@ export async function createExecutionRequest(params: {
     execution_mode: params.executionMode ?? "sequential",
     execution_group_id: params.executionGroupId ?? null,
     execution_order: params.executionOrder ?? null,
+    job_payload: params.jobPayload ?? {},
+    source: params.source ?? "manual",
     status: "pending",
     created_by: user?.id ?? null,
   }

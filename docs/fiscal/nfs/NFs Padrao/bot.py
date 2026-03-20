@@ -80,6 +80,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from supabase import create_client
+from json_runtime import JsonRobotRuntime
 
 # --------------------------------------------------------------------
 # Constantes e caminhos
@@ -172,6 +173,42 @@ AUTH_CERTIFICATE = "certificate"
 
 DATE_MODE_PREVIOUS_MONTH = "previous_month"
 DATE_MODE_PREVIOUS_DAY = "previous_day"
+
+
+def _current_json_job() -> Optional[Dict[str, Any]]:
+    return ACTIVE_JSON_JOB if isinstance(ACTIVE_JSON_JOB, dict) else None
+
+
+def _set_current_json_job(job: Optional[Dict[str, Any]]) -> None:
+    global ACTIVE_JSON_JOB
+    ACTIVE_JSON_JOB = job if isinstance(job, dict) else None
+
+
+def _set_last_json_result_summary(summary: Optional[Dict[str, Any]]) -> None:
+    global LAST_JSON_RESULT_SUMMARY
+    LAST_JSON_RESULT_SUMMARY = summary if isinstance(summary, dict) else None
+
+
+def _consume_last_json_result_summary() -> Optional[Dict[str, Any]]:
+    global LAST_JSON_RESULT_SUMMARY
+    summary = LAST_JSON_RESULT_SUMMARY if isinstance(LAST_JSON_RESULT_SUMMARY, dict) else None
+    LAST_JSON_RESULT_SUMMARY = None
+    return summary
+
+
+def _clear_pending_result_operations() -> None:
+    PENDING_RESULT_OPERATIONS.clear()
+
+
+def _append_result_operation(operation: Dict[str, Any]) -> None:
+    if isinstance(operation, dict):
+        PENDING_RESULT_OPERATIONS.append(operation)
+
+
+def _consume_result_operations() -> List[Dict[str, Any]]:
+    operations = list(PENDING_RESULT_OPERATIONS)
+    PENDING_RESULT_OPERATIONS.clear()
+    return operations
 
 
 def ensure_openssl_legacy_provider() -> None:
@@ -393,6 +430,14 @@ UPDATER_JSON_FILES_TO_PRESERVE = [
 # Integração com painel admin (agendador + status)
 ROBOT_TECHNICAL_ID = "nfs_padrao"
 ROBOT_DISPLAY_NAME_DEFAULT = "NFS Padrão"
+JSON_RUNTIME = JsonRobotRuntime(
+    ROBOT_TECHNICAL_ID,
+    ROBOT_DISPLAY_NAME_DEFAULT,
+    Path(__file__).resolve().parent,
+)
+ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
+LAST_JSON_RESULT_SUMMARY: Optional[Dict[str, Any]] = None
+PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
 
 # --------------------------------------------------------------------
 # Helpers de documento (CPF/CNPJ) e persistencia
@@ -1135,6 +1180,27 @@ def load_companies_from_supabase_by_ids(
     Carrega empresas do Supabase pelos IDs (para execução via agendador).
     Usa company_robot_config quando existir; senão usa auth_mode/cert da própria empresa (companies).
     """
+    if company_ids:
+        snapshot_rows = JSON_RUNTIME.load_job_companies(_current_json_job(), company_ids)
+        if snapshot_rows:
+            normalized_rows: List[Dict[str, str]] = []
+            for row in snapshot_rows:
+                auth_mode = str(row.get("auth_mode") or AUTH_PASSWORD).strip().lower()
+                if auth_mode not in (AUTH_PASSWORD, AUTH_CERTIFICATE):
+                    auth_mode = AUTH_PASSWORD
+                normalized_rows.append(
+                    {
+                        "id": str(row.get("company_id") or row.get("id") or ""),
+                        "name": str(row.get("name") or "").strip(),
+                        "doc": only_digits(row.get("document") or row.get("doc") or ""),
+                        "password": str(row.get("password") or row.get("nfs_password") or "").strip(),
+                        "auth_mode": auth_mode,
+                        "cert_path": "",
+                        "cert_password": str(row.get("cert_password") or "").strip(),
+                        "cert_blob_b64": str(row.get("cert_blob_b64") or ""),
+                    }
+                )
+            return normalized_rows
     if not (supabase_url and supabase_anon_key and company_ids):
         return []
     try:
@@ -1437,42 +1503,21 @@ def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Di
 
 
 def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
-    """Autocadastra o robô na tabela robots; não sobrescreve display_name nem segment_path se já existir."""
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        segment_from_api = (get_robot_api_config() or {}).get("segment_path") or ""
-        segment_from_env = os.environ.get("ROBOT_SEGMENT_PATH", "FISCAL/NFS").strip()
-        segment_path = (segment_from_api or segment_from_env or "FISCAL/NFS").strip()
-        r = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
-        rows = getattr(r, "data", None) or []
-        if rows:
-            client.table("robots").update({
-                "status": "active",
-                "last_heartbeat_at": datetime.now().isoformat(),
-            }).eq("id", rows[0]["id"]).execute()
-            return rows[0]["id"]
-        payload: Dict[str, Any] = {
-            "technical_id": ROBOT_TECHNICAL_ID,
-            "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-            "status": "active",
-            "last_heartbeat_at": datetime.now().isoformat(),
-        }
-        if segment_path:
-            payload["segment_path"] = segment_path
-        ins = client.table("robots").insert(payload).select("id").execute()
-        new_rows = getattr(ins, "data", None) or []
-        return new_rows[0].get("id") if new_rows else None
+        return JSON_RUNTIME.register_robot()
     except Exception as e:
-        print(f"[Robô] Falha ao registrar no painel: {e}", file=sys.stderr)
+        print(f"[Robô] Falha ao iniciar runtime JSON: {e}", file=sys.stderr)
         return None
 
 
 def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: str) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        client.table("robots").update({
-            "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", robot_id).execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_heartbeat(
+            status="processing" if job else "active",
+            current_job_id=(job or {}).get("job_id"),
+            current_execution_request_id=(job or {}).get("execution_request_id"),
+        )
     except Exception:
         pass
 
@@ -1481,11 +1526,12 @@ def update_robot_status(
     supabase_url: str, supabase_anon_key: str, robot_id: str, status: str
 ) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        client.table("robots").update({
-            "status": status,
-            "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", robot_id).execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_heartbeat(
+            status=status,
+            current_job_id=(job or {}).get("job_id"),
+            current_execution_request_id=(job or {}).get("execution_request_id"),
+        )
     except Exception:
         pass
 
@@ -1493,17 +1539,7 @@ def update_robot_status(
 def update_robot_last_period_end(
     supabase_url: str, supabase_anon_key: str, robot_id: str, period_end: Optional[str]
 ) -> None:
-    period_end_s = (str(period_end or "").strip().split("T")[0].split(" ")[0]) if period_end else ""
-    if not period_end_s:
-        return
-    try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        client.table("robots").update({
-            "last_period_end": period_end_s,
-            "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", robot_id).execute()
-    except Exception:
-        pass
+    return
 
 
 def _get_active_schedule_rule_ids(
@@ -1530,85 +1566,19 @@ def claim_execution_request(
     robot_id: str,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Busca um pending compatível com este robô e marca como running; retorna o job ou None.
-    Considera jobs de regras ativas (schedule_rule_id na lista de regras active) ou manuais (schedule_rule_id null).
-    Se não conseguir ler as regras ativas (ex.: RLS retorna vazio), ainda assim permite pegar jobs agendados
-    para o robô não ficar parado."""
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        active_rule_ids = _get_active_schedule_rule_ids(client)
-        try:
-            rpc_response = client.rpc(
-                "claim_next_execution_request",
-                {
-                    "p_robot_technical_id": ROBOT_TECHNICAL_ID,
-                    "p_robot_id": robot_id,
-                    "p_active_schedule_rule_ids": active_rule_ids,
-                },
-            ).execute()
-            rpc_rows = getattr(rpc_response, "data", None) or []
-            if rpc_rows:
-                return rpc_rows[0]
-        except Exception:
-            pass
-        r = (
-            client.table("execution_requests")
-            .select("*")
-            .eq("status", "pending")
-            .order("execution_order")
-            .order("created_at")
-            .limit(50)
-            .execute()
+        job = JSON_RUNTIME.load_job()
+        if not job:
+            return None
+        _set_current_json_job(job)
+        _clear_pending_result_operations()
+        JSON_RUNTIME.write_heartbeat(
+            status="processing",
+            current_job_id=job.get("job_id"),
+            current_execution_request_id=job.get("execution_request_id"),
+            message="job_loaded",
         )
-        rows = getattr(r, "data", None) or []
-        for row in rows:
-            schedule_rule_id = row.get("schedule_rule_id")
-            if schedule_rule_id is not None and active_rule_ids is not None and len(active_rule_ids) > 0:
-                if schedule_rule_id not in active_rule_ids:
-                    continue
-            execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
-            execution_group_id = row.get("execution_group_id")
-            if execution_mode == "sequential" and execution_group_id:
-                blockers = (
-                    client.table("execution_requests")
-                    .select("id, execution_order, created_at")
-                    .eq("execution_group_id", execution_group_id)
-                    .in_("status", ["pending", "running"])
-                    .order("execution_order")
-                    .order("created_at")
-                    .execute()
-                )
-                blocker_rows = getattr(blockers, "data", None) or []
-                if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
-                    continue
-            tech_ids = row.get("robot_technical_ids") or []
-            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
-                client.table("execution_requests").delete().eq("status", "pending").contains(
-                    "robot_technical_ids", [ROBOT_TECHNICAL_ID]
-                ).neq("id", row["id"]).execute()
-                (
-                    client.table("execution_requests")
-                    .update({
-                        "status": "running",
-                        "robot_id": robot_id,
-                        "claimed_at": datetime.now(timezone.utc).isoformat(),
-                    })
-                    .eq("id", row["id"])
-                    .eq("status", "pending")
-                    .execute()
-                )
-                claimed = (
-                    client.table("execution_requests")
-                    .select("*")
-                    .eq("id", row["id"])
-                    .eq("status", "running")
-                    .limit(1)
-                    .execute()
-                )
-                claimed_rows = getattr(claimed, "data", None) or []
-                if claimed_rows:
-                    return claimed_rows[0]
-        return None
+        return job
     except Exception as e:
         msg = f"[Robô] Erro ao buscar job da fila (agendador): {e}"
         if log_callback:
@@ -1621,59 +1591,17 @@ def complete_execution_request(
     supabase_url: str, supabase_anon_key: str, request_id: str, success: bool, error_message: Optional[str] = None
 ) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        request_row = None
-        if not success:
-            try:
-                request_res = (
-                    client.table("execution_requests")
-                    .select("id, execution_mode, execution_group_id, execution_order")
-                    .eq("id", request_id)
-                    .limit(1)
-                    .execute()
-                )
-                request_rows = getattr(request_res, "data", None) or []
-                request_row = request_rows[0] if request_rows else None
-            except Exception:
-                request_row = None
-        client.table("execution_requests").update({
-            "status": "completed" if success else "failed",
-            "completed_at": datetime.now().isoformat(),
-            "error_message": error_message,
-        }).eq("id", request_id).execute()
-        if not success and request_row:
-            execution_mode = str(request_row.get("execution_mode") or "sequential").strip().lower()
-            execution_group_id = request_row.get("execution_group_id")
-            execution_order = request_row.get("execution_order")
-            if execution_mode == "sequential" and execution_group_id:
-                next_jobs = (
-                    client.table("execution_requests")
-                    .select("id, execution_order")
-                    .eq("execution_group_id", execution_group_id)
-                    .eq("status", "pending")
-                    .order("execution_order")
-                    .order("created_at")
-                    .execute()
-                )
-                next_rows = getattr(next_jobs, "data", None) or []
-                cancel_message = "Cancelado porque um robô anterior da fila falhou."
-                if error_message:
-                    cancel_message = f"{cancel_message} {error_message}"
-                for pending_row in next_rows:
-                    pending_order = pending_row.get("execution_order")
-                    if execution_order is not None and pending_order is not None and pending_order <= execution_order:
-                        continue
-                    (
-                        client.table("execution_requests")
-                        .update({
-                            "status": "failed",
-                            "completed_at": datetime.now().isoformat(),
-                            "error_message": cancel_message,
-                        })
-                        .eq("id", pending_row["id"])
-                        .eq("status", "pending")
-                        .execute()
-                    )
+        job = _current_json_job()
+        summary = _consume_last_json_result_summary()
+        operations = _consume_result_operations()
+        JSON_RUNTIME.write_result(
+            job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
+            success=success,
+            error_message=error_message,
+            summary=summary,
+            payload={"operations": operations},
+        )
+        _set_current_json_job(None)
     except Exception:
         pass
 
@@ -1769,6 +1697,15 @@ def upsert_nfs_stats(
             "service_codes_recebidas": service_codes_recebidas,
         })
     if not rows:
+        return
+    if _current_json_job():
+        _append_result_operation(
+            {
+                "kind": "rpc",
+                "fn": "nfs_stats_upsert_batch",
+                "args": {"rows": rows},
+            }
+        )
         return
     client.rpc("nfs_stats_upsert_batch", {"rows": rows}).execute()
 
@@ -4684,9 +4621,9 @@ class MainWindow(QMainWindow):
         self.report_path: Optional[Path] = None
         self._default_notes_mode: Optional[str] = None
         url, key = get_robot_supabase()
+        self._robot_id = register_robot(url or "", key or "")
         if url and key:
             self.companies = load_companies_from_supabase(url, key)
-            self._robot_id = register_robot(url, key)
             if self._robot_id:
                 # Preferir notes_mode da API (dashboard); senão buscar do Supabase
                 if api_cfg and api_cfg.get("notes_mode") in ("recebidas", "emitidas", "both"):
@@ -4702,7 +4639,7 @@ class MainWindow(QMainWindow):
                 seg_slug = (self._segment_path or "FISCAL/NFS").replace("/", os.sep)
                 self.report_path = self.output_base / seg_slug
         else:
-            self._robot_id = None
+            self._robot_id = self._robot_id or None
         self.preferences: Dict[str, Any] = load_path_preferences()
         default_mode = self.preferences.get("default_date_mode", DATE_MODE_PREVIOUS_MONTH)
         if default_mode not in {DATE_MODE_PREVIOUS_MONTH, DATE_MODE_PREVIOUS_DAY}:
@@ -4724,13 +4661,14 @@ class MainWindow(QMainWindow):
         self._heartbeat_timer.timeout.connect(self._on_robot_heartbeat)
         self._poll_timer.timeout.connect(self._on_robot_poll_job)
         self._display_config_timer.timeout.connect(self._on_display_config_poll)
-        if url and key and self._robot_id:
-            self._robot_supabase_url = url
-            self._robot_supabase_key = key
+        if self._robot_id:
+            self._robot_supabase_url = url or None
+            self._robot_supabase_key = key or None
             self._heartbeat_timer.start(30000)
             self._poll_timer.start(5000)
-            self._display_config_timer.start(2000)
-            QTimer.singleShot(500, self._on_display_config_poll)
+            if url and key:
+                self._display_config_timer.start(2000)
+                QTimer.singleShot(500, self._on_display_config_poll)
             QTimer.singleShot(2000, self._on_robot_poll_job)
             print("[Robô] Conectado ao painel. Status: ativo.", file=sys.stderr)
 
@@ -5504,12 +5442,14 @@ class MainWindow(QMainWindow):
                 w.wait(2000)
         if self.last_summary is None and hasattr(w, "summary_data"):
             self.last_summary = getattr(w, "summary_data", None)
+            _set_last_json_result_summary(self.last_summary)
         if not self._finish_logged:
             self._on_finished()
         self._log("Processo interrompido.")
 
     def _on_summary_ready(self, summary: Dict[str, Any]) -> None:
         self.last_summary = summary
+        _set_last_json_result_summary(summary)
 
     def _ensure_report_in_vm_base(self, pdf_path: Path) -> Path:
         if not self.output_base:
@@ -5540,6 +5480,8 @@ class MainWindow(QMainWindow):
         summary = self.last_summary
         job_id = self._current_job_id
         job = self._current_job
+        if summary:
+            _set_last_json_result_summary(summary)
         self._current_job_id = None
         self._current_job = None
         self.worker = None
@@ -5596,7 +5538,7 @@ class MainWindow(QMainWindow):
                 self._log(f"Falha ao gerar relatorio: {exc}")
 
     def _on_robot_heartbeat(self) -> None:
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+        if self._robot_id:
             update_robot_heartbeat(self._robot_supabase_url, self._robot_supabase_key, self._robot_id)
 
     def _on_display_config_poll(self) -> None:
@@ -5649,7 +5591,7 @@ class MainWindow(QMainWindow):
                 self.mode_combo.setCurrentIndex(0)
 
     def _on_robot_poll_job(self) -> None:
-        if not self._robot_id or not self._robot_supabase_url or not self._robot_supabase_key:
+        if not self._robot_id:
             return
         if self.worker and self.worker.isRunning():
             return
@@ -5687,13 +5629,8 @@ class MainWindow(QMainWindow):
         except Exception:
             start_dt = datetime.now() - timedelta(days=1)
             end_dt = start_dt
-        url = self._robot_supabase_url or self.preferences.get("supabase_url")
-        key = self._robot_supabase_key or self.preferences.get("supabase_anon_key")
-        if not url or not key:
-            complete_execution_request(
-                self._robot_supabase_url, self._robot_supabase_key, job["id"], False, "Supabase nao configurado"
-            )
-            return
+        url = self._robot_supabase_url or self.preferences.get("supabase_url") or ""
+        key = self._robot_supabase_key or self.preferences.get("supabase_anon_key") or ""
         records = load_companies_from_supabase_by_ids(url, key, company_ids)
         if not records:
             complete_execution_request(
@@ -5815,7 +5752,7 @@ class MainWindow(QMainWindow):
                 return
             self._current_job_id = job["id"]
             self._current_job = job
-            if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            if self._robot_id:
                 update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "processing")
             self._finish_logged = False
             self.last_summary = None
@@ -5853,7 +5790,7 @@ class MainWindow(QMainWindow):
             self._current_job_id = None
             self._current_job = None
             self.worker = None
-            if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+            if self._robot_id:
                 update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
 
     def closeEvent(self, event) -> None:
@@ -5874,7 +5811,7 @@ class MainWindow(QMainWindow):
             if not self.worker.wait(5000):
                 self.worker.terminate()
                 self.worker.wait(1000)
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+        if self._robot_id:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
         self._heartbeat_timer.stop()
         self._poll_timer.stop()

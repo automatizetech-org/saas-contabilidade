@@ -65,6 +65,7 @@ from PIL import Image, ImageQt, ImageDraw, ImageFont, ImageFilter, ImageChops
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import PyPDF2
 import requests
+from json_runtime import JsonRobotRuntime
 
 # =============================================================================
 # Local paths
@@ -196,6 +197,21 @@ ROBOT_SEGMENT_PATH_DEFAULT = "FISCAL/CERTIDOES"
 AUTH_PASSWORD = "password"
 AUTH_CERTIFICATE = "certificate"
 CERTIDOES_DIRNAME = "Certidoes"
+JSON_RUNTIME = JsonRobotRuntime(
+    ROBOT_TECHNICAL_ID,
+    ROBOT_DISPLAY_NAME_DEFAULT,
+    Path(__file__).resolve().parent,
+)
+ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
+
+
+def _current_json_job() -> Optional[Dict[str, Any]]:
+    return ACTIVE_JSON_JOB if isinstance(ACTIVE_JSON_JOB, dict) else None
+
+
+def _set_current_json_job(job: Optional[Dict[str, Any]]) -> None:
+    global ACTIVE_JSON_JOB
+    ACTIVE_JSON_JOB = job if isinstance(job, dict) else None
 
 # ICO fallback
 ICO_PATH = ""
@@ -790,6 +806,27 @@ def load_companies_from_supabase(supabase_url: str, supabase_anon_key: str) -> L
 def load_companies_from_supabase_by_ids(
     supabase_url: str, supabase_anon_key: str, company_ids: List[str]
 ) -> List[Dict[str, str]]:
+    snapshot_rows = JSON_RUNTIME.load_job_companies(_current_json_job(), company_ids)
+    if snapshot_rows:
+        companies: List[Dict[str, str]] = []
+        for row in snapshot_rows:
+            company_id = row.get("company_id") or row.get("id")
+            if not company_id:
+                continue
+            companies.append(
+                {
+                    "id": str(company_id),
+                    "name": str(row.get("name") or "").strip(),
+                    "doc": only_digits(row.get("document") or row.get("doc") or ""),
+                    "cnpj": only_digits(row.get("document") or row.get("cnpj") or ""),
+                    "auth_mode": str(row.get("auth_mode") or AUTH_PASSWORD).strip().lower(),
+                    "cert_blob_b64": row.get("cert_blob_b64") or "",
+                    "cert_password": row.get("cert_password") or "",
+                }
+            )
+        order_map = {company_id: idx for idx, company_id in enumerate(company_ids)}
+        companies.sort(key=lambda item: order_map.get(item.get("id"), 10**9))
+        return companies
     if not (supabase_url and supabase_anon_key and company_ids):
         return []
     try:
@@ -843,92 +880,14 @@ def fetch_robot_display_config(supabase_url: str, supabase_anon_key: str) -> Opt
 
 def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        api_cfg = get_robot_api_config() or {}
-        segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
-        res = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
-        rows = getattr(res, "data", None) or []
-        if rows:
-            robot_id = rows[0]["id"]
-            upd = client.table("robots").update(
-                {
-                    "status": "active",
-                    "segment_path": segment_path,
-                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", robot_id).execute()
-            upd_rows = getattr(upd, "data", None)
-            if upd_rows is None:
-                _robot_log("[Robô] Aviso: update em robots não retornou linhas. Verifique RLS/permissões.")
-            return robot_id
-        ins = (
-            client.table("robots")
-            .insert(
-                {
-                    "technical_id": ROBOT_TECHNICAL_ID,
-                    "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                    "status": "active",
-                    "segment_path": segment_path,
-                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-            .select("id")
-            .execute()
-        )
-        data = getattr(ins, "data", None) or []
-        if data:
-            return data[0].get("id")
-        _robot_log("[Robô] Insert em robots retornou vazio. Verifique RLS/permissões na tabela robots para a anon key.")
-        return None
+        return JSON_RUNTIME.register_robot()
     except Exception as exc:
-        _robot_log(f"[Robô] Falha ao registrar no dashboard (robots): {exc}")
+        _robot_log(f"[Robô] Falha ao iniciar runtime JSON: {exc}")
         return None
 
 
 def register_robot_compat(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
-    try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        api_cfg = get_robot_api_config() or {}
-        segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
-        res = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
-        rows = getattr(res, "data", None) or []
-        if rows:
-            robot_id = rows[0]["id"]
-            upd = client.table("robots").update(
-                {
-                    "status": "active",
-                    "segment_path": segment_path,
-                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", robot_id).execute()
-            upd_rows = getattr(upd, "data", None)
-            if upd_rows is None:
-                _robot_log("[Robô] Aviso: update em robots não retornou linhas. Verifique RLS/permissões.")
-            return robot_id
-
-        ins = client.table("robots").insert(
-            {
-                "technical_id": ROBOT_TECHNICAL_ID,
-                "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
-                "status": "active",
-                "segment_path": segment_path,
-                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).execute()
-        ins_data = getattr(ins, "data", None)
-        if ins_data is None:
-            _robot_log("[Robô] Insert em robots não retornou data. Vou tentar reler pelo technical_id.")
-
-        reread = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
-        reread_rows = getattr(reread, "data", None) or []
-        if reread_rows:
-            return reread_rows[0].get("id")
-
-        _robot_log("[Robô] Insert em robots não ficou visível. Verifique RLS/permissões na tabela robots para a anon key.")
-        return None
-    except Exception as exc:
-        _robot_log(f"[Robô] Falha ao registrar no dashboard (robots): {exc}")
-        return None
+    return register_robot(supabase_url, supabase_anon_key)
 
 
 def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
@@ -951,12 +910,12 @@ def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Di
 
 def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: str) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        client.table("robots").update(
-            {
-                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).eq("id", robot_id).execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_heartbeat(
+            status="processing" if job else "active",
+            current_job_id=(job or {}).get("job_id"),
+            current_execution_request_id=(job or {}).get("execution_request_id"),
+        )
     except Exception as exc:
         _robot_log(f"[Robô] Falha ao atualizar heartbeat: {exc}")
         pass
@@ -964,13 +923,12 @@ def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: 
 
 def update_robot_status(supabase_url: str, supabase_anon_key: str, robot_id: str, status: str) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        client.table("robots").update(
-            {
-                "status": status,
-                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).eq("id", robot_id).execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_heartbeat(
+            status=status,
+            current_job_id=(job or {}).get("job_id"),
+            current_execution_request_id=(job or {}).get("execution_request_id"),
+        )
     except Exception as exc:
         _robot_log(f"[Robô] Falha ao atualizar status '{status}': {exc}")
         pass
@@ -998,79 +956,17 @@ def claim_execution_request(
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        active_rule_ids = _get_active_schedule_rule_ids(client)
-        try:
-            rpc_response = client.rpc(
-                "claim_next_execution_request",
-                {
-                    "p_robot_technical_id": ROBOT_TECHNICAL_ID,
-                    "p_robot_id": robot_id,
-                    "p_active_schedule_rule_ids": active_rule_ids,
-                },
-            ).execute()
-            rpc_rows = getattr(rpc_response, "data", None) or []
-            if rpc_rows:
-                return rpc_rows[0]
-        except Exception:
-            pass
-        res = (
-            client.table("execution_requests")
-            .select("*")
-            .eq("status", "pending")
-            .order("execution_order")
-            .order("created_at")
-            .limit(10)
-            .execute()
+        job = JSON_RUNTIME.load_job()
+        if not job:
+            return None
+        _set_current_json_job(job)
+        JSON_RUNTIME.write_heartbeat(
+            status="processing",
+            current_job_id=job.get("job_id"),
+            current_execution_request_id=job.get("execution_request_id"),
+            message="job_loaded",
         )
-        rows = getattr(res, "data", None) or []
-        for row in rows:
-            schedule_rule_id = row.get("schedule_rule_id")
-            if schedule_rule_id is not None and active_rule_ids:
-                if schedule_rule_id not in active_rule_ids:
-                    continue
-            execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
-            execution_group_id = row.get("execution_group_id")
-            if execution_mode == "sequential" and execution_group_id:
-                blockers = (
-                    client.table("execution_requests")
-                    .select("id, execution_order, created_at")
-                    .eq("execution_group_id", execution_group_id)
-                    .in_("status", ["pending", "running"])
-                    .order("execution_order")
-                    .order("created_at")
-                    .execute()
-                )
-                blocker_rows = getattr(blockers, "data", None) or []
-                if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
-                    continue
-            tech_ids = row.get("robot_technical_ids") or []
-            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
-                (
-                    client.table("execution_requests")
-                    .update(
-                        {
-                            "status": "running",
-                            "robot_id": robot_id,
-                            "claimed_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                    )
-                    .eq("id", row["id"])
-                    .eq("status", "pending")
-                    .execute()
-                )
-                claimed = (
-                    client.table("execution_requests")
-                    .select("*")
-                    .eq("id", row["id"])
-                    .eq("status", "running")
-                    .limit(1)
-                    .execute()
-                )
-                claimed_rows = getattr(claimed, "data", None) or []
-                if claimed_rows:
-                    return claimed_rows[0]
-        return None
+        return job
     except Exception as exc:
         if log_callback:
             log_callback(f"[Robô] Erro ao buscar job da fila: {exc}")
@@ -1085,14 +981,13 @@ def complete_execution_request(
     error_message: Optional[str] = None,
 ) -> None:
     try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        client.table("execution_requests").update(
-            {
-                "status": "completed" if success else "failed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "error_message": error_message,
-            }
-        ).eq("id", request_id).execute()
+        job = _current_json_job()
+        JSON_RUNTIME.write_result(
+            job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
+            success=success,
+            error_message=error_message,
+        )
+        _set_current_json_job(None)
     except Exception:
         pass
 
@@ -3204,32 +3099,37 @@ class MainWindow(QMainWindow):
 
     def _init_robot_integration(self):
         url, key = get_robot_supabase()
-        self._robot_supabase_url = url
-        self._robot_supabase_key = key
+        self._robot_supabase_url = url or None
+        self._robot_supabase_key = key or None
         if self.output_base:
             self.config["_resolved_output_base"] = str(self.output_base)
         self.config["_segment_path"] = self._segment_path
         self.config["_date_rule"] = self._date_rule
+        self._robot_id = register_robot_compat(url or "", key or "")
         if url and key:
             self.companies = load_companies_from_supabase(url, key)
             self._sort_companies()
-            self._robot_id = register_robot_compat(url, key)
             if not (get_robot_api_config() or {}).get("segment_path"):
                 robot_cfg = fetch_robot_config(url, key)
                 if robot_cfg and robot_cfg.get("segment_path"):
                     self._segment_path = robot_cfg["segment_path"]
                     self.config["_segment_path"] = self._segment_path
             if self._robot_id:
-                self.heartbeat_timer.start(60000)
-                self.display_config_timer.start(10000)
-                self.job_poll_timer.start(10000)
-                QTimer.singleShot(500, self._on_display_config_poll)
-                QTimer.singleShot(1500, self._on_robot_poll_job)
+                self._log("[Robo] Dashboard sincronizado.")
                 self._log("[Robô] Conectado ao dashboard. Status: ativo.")
             else:
                 self._log("[Robô] Supabase encontrado, mas falhou ao registrar em robots.")
         else:
             self._log("[Robô] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não definidos.")
+        if self._robot_id:
+            if not self.heartbeat_timer.isActive():
+                self.heartbeat_timer.start(60000)
+            if not self.job_poll_timer.isActive():
+                self.job_poll_timer.start(10000)
+            if url and key and not self.display_config_timer.isActive():
+                self.display_config_timer.start(10000)
+                QTimer.singleShot(500, self._on_display_config_poll)
+            QTimer.singleShot(1500, self._on_robot_poll_job)
         self._reload_company_list()
 
     def _refresh_companies_from_supabase(self):
@@ -3242,7 +3142,7 @@ class MainWindow(QMainWindow):
         self._reload_company_list()
 
     def _on_robot_heartbeat(self):
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+        if self._robot_id:
             update_robot_heartbeat(self._robot_supabase_url, self._robot_supabase_key, self._robot_id)
 
     def _on_display_config_poll(self):
@@ -3268,7 +3168,7 @@ class MainWindow(QMainWindow):
         self._reload_company_list()
 
     def _on_robot_poll_job(self):
-        if not self._robot_id or not self._robot_supabase_url or not self._robot_supabase_key:
+        if not self._robot_id:
             return
         if self.thread and self.thread.isRunning():
             return
@@ -3339,7 +3239,7 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+        if self._robot_id:
             current_status = "processing" if self.thread and self.thread.isRunning() else "active"
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, current_status)
         if not self.heartbeat_timer.isActive():
@@ -3364,7 +3264,7 @@ class MainWindow(QMainWindow):
             if self.thread.isRunning():
                 self.thread.terminate()
                 self.thread.wait(2000)
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+        if self._robot_id:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
         self.heartbeat_timer.stop()
         self.display_config_timer.stop()
@@ -4146,7 +4046,7 @@ class MainWindow(QMainWindow):
             if self.thread.isRunning():
                 self.thread.terminate()
                 self.thread.wait(2000)
-        if stopped_job and self._robot_supabase_url and self._robot_supabase_key:
+        if stopped_job:
             complete_execution_request(
                 self._robot_supabase_url,
                 self._robot_supabase_key,
@@ -4183,9 +4083,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.log_message(f"⚠️ Não consegui gerar o relatório PDF: {e}")
         # Sincronizar status e atualização no Monday.com
-        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
+        if self._robot_id:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
-        if self._active_job and self._robot_supabase_url and self._robot_supabase_key:
+        if self._active_job:
             complete_execution_request(
                 self._robot_supabase_url,
                 self._robot_supabase_key,
