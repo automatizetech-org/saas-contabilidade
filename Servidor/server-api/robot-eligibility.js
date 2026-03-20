@@ -91,6 +91,10 @@ function getEligibilityPolicy(robotRow) {
     requireStateRegistration: getCapabilityBoolean(robotRow, "require_state_registration") ?? false,
     requireCae: getCapabilityBoolean(robotRow, "require_cae") ?? false,
     requireAnyLoginSource: getCapabilityBoolean(robotRow, "require_any_login_source") ?? false,
+    loginRouting:
+      String(capabilities.login_routing ?? "").trim().toLowerCase() === "any_available"
+        ? "any_available"
+        : "match_selected_or_accountant",
     authBehavior:
       authBehaviorRaw === "choice" || authBehaviorRaw === "login_only" || authBehaviorRaw === "cnpj_only"
         ? authBehaviorRaw
@@ -115,6 +119,7 @@ function getEligibilityPolicy(robotRow) {
     policy.requireEnabledConfig = false;
     policy.requireCae = true;
     policy.requireAnyLoginSource = true;
+    policy.loginRouting = "any_available";
   } else if (robotRow?.technical_id === "certidoes" || robotRow?.technical_id === "certidoes_fiscal") {
     policy.requireEnabledConfig = false;
     policy.requireDocument = true;
@@ -123,7 +128,7 @@ function getEligibilityPolicy(robotRow) {
   return policy;
 }
 
-function hasEligiblePortalLogin(robotRow, company, configRow) {
+function hasEligiblePortalLogin(robotRow, company, configRow, routing = "match_selected_or_accountant") {
   const settings = getCompanySettings(configRow);
   const selectedLoginCpf = onlyDigits(settings.selected_login_cpf);
   const contadorCpf = onlyDigits(company?.contador_cpf);
@@ -133,6 +138,7 @@ function hasEligiblePortalLogin(robotRow, company, configRow) {
   ];
 
   if (availableLogins.length === 0) return false;
+  if (routing === "any_available") return true;
   const hasCpf = (cpf) => availableLogins.some((item) => item.cpf === cpf);
   if (selectedLoginCpf) return hasCpf(selectedLoginCpf);
   if (contadorCpf) return hasCpf(contadorCpf);
@@ -158,7 +164,7 @@ export function filterEligibleCompaniesForRobot({
     if (policy.requireDocument && !onlyDigits(company.document).trim()) return false;
     if (policy.requireStateRegistration && !onlyDigits(company.state_registration).trim()) return false;
     if (policy.requireCae && !String(company.cae ?? "").trim()) return false;
-    if (policy.requireAnyLoginSource && !hasEligiblePortalLogin(robotRow, company, config)) return false;
+    if (policy.requireAnyLoginSource && !hasEligiblePortalLogin(robotRow, company, config, policy.loginRouting)) return false;
 
     if (policy.authBehavior === "choice") {
       const authMode = String(settings.auth_mode ?? config?.auth_mode ?? company.auth_mode ?? "password").trim().toLowerCase();

@@ -479,7 +479,9 @@ function mapFiscalDetailRpcRow(row: any): FiscalListRow {
 export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilters): Promise<{ items: FiscalListRow[]; nextCursor: CursorPageToken | null; hasMore: boolean; refreshAt: string | null }> {
   const detailKind = filters.kind === "nfe-nfc" ? "NFE_NFC" : filters.kind.toUpperCase()
   try {
-    if (!canUseFiscalDetailCursorRpc) throw new Error("Fiscal detail cursor RPC disabled for this session")
+    if (filters.kind === "certidoes" || !canUseFiscalDetailCursorRpc) {
+      throw new Error("Fiscal detail cursor RPC disabled for this session")
+    }
 
     const { data, error } = await supabase.rpc("get_fiscal_detail_documents_cursor", {
       detail_kind: detailKind,
@@ -500,7 +502,9 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
 
     return parseCursorPayload(data, mapFiscalDetailRpcRow)
   } catch {
-    canUseFiscalDetailCursorRpc = false
+    if (filters.kind !== "certidoes") {
+      canUseFiscalDetailCursorRpc = false
+    }
     const baseRows = filters.kind === "certidoes"
       ? (await getCertidoesDocuments(filters.companyIds?.length ? filters.companyIds : null)).map((row) => ({
           id: row.id,

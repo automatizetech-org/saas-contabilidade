@@ -5,6 +5,7 @@ import type { Json } from "@/types/database"
 
 type CompanyLike = {
   id: string
+  name?: string | null
   active?: boolean | null
   document?: string | null
   auth_mode?: string | null
@@ -93,6 +94,7 @@ function hasEligiblePortalLogin(
   robot: Robot,
   company: CompanyLike,
   config: CompanyRobotConfig | null | undefined,
+  routing: "match_selected_or_accountant" | "any_available" = "match_selected_or_accountant",
 ): boolean {
   const settings = getCompanySettings(config)
   const selectedLoginCpf = onlyDigits(String(settings.selected_login_cpf ?? ""))
@@ -103,6 +105,7 @@ function hasEligiblePortalLogin(
   ]
 
   if (availableLogins.length === 0) return false
+  if (routing === "any_available") return true
   const hasCpf = (cpf: string) => availableLogins.some((item) => item.cpf === cpf)
   if (selectedLoginCpf) return hasCpf(selectedLoginCpf)
   if (contadorCpf) return hasCpf(contadorCpf)
@@ -128,7 +131,14 @@ type EligibilityPolicy = {
   requireStateRegistration: boolean
   requireCae: boolean
   requireAnyLoginSource: boolean
+  loginRouting: "match_selected_or_accountant" | "any_available"
   authBehavior: "choice" | "login_only" | "cnpj_only"
+}
+
+export type RobotEligibilityIssue = {
+  companyId: string
+  companyName: string
+  reason: string
 }
 
 function getEligibilityPolicy(robot: Robot): EligibilityPolicy {
@@ -147,6 +157,10 @@ function getEligibilityPolicy(robot: Robot): EligibilityPolicy {
     requireStateRegistration: getCapabilityBoolean(robot, "require_state_registration") ?? false,
     requireCae: getCapabilityBoolean(robot, "require_cae") ?? false,
     requireAnyLoginSource: getCapabilityBoolean(robot, "require_any_login_source") ?? false,
+    loginRouting:
+      String(capabilities.login_routing ?? "").trim().toLowerCase() === "any_available"
+        ? "any_available"
+        : "match_selected_or_accountant",
     authBehavior:
       authBehaviorRaw === "choice" || authBehaviorRaw === "login_only" || authBehaviorRaw === "cnpj_only"
         ? authBehaviorRaw
@@ -171,6 +185,7 @@ function getEligibilityPolicy(robot: Robot): EligibilityPolicy {
     policy.requireEnabledConfig = false
     policy.requireCae = true
     policy.requireAnyLoginSource = true
+    policy.loginRouting = "any_available"
   } else if (robot.technical_id === "certidoes" || robot.technical_id === "certidoes_fiscal") {
     policy.requireEnabledConfig = false
     policy.requireDocument = true
@@ -195,6 +210,15 @@ export function getEligibleCompanyIdsForRobot(params: {
   companies: CompanyLike[]
   companyConfigsByRobot?: Map<string, Map<string, CompanyRobotConfig>>
 }): string[] {
+  return getRobotEligibilityReport(params).eligibleCompanyIds
+}
+
+export function getRobotEligibilityReport(params: {
+  robot: Robot
+  selectedCompanyIds: string[]
+  companies: CompanyLike[]
+  companyConfigsByRobot?: Map<string, Map<string, CompanyRobotConfig>>
+}): { eligibleCompanyIds: string[]; skipped: RobotEligibilityIssue[] } {
   const { robot, selectedCompanyIds, companies, companyConfigsByRobot } = params
   const policy = getEligibilityPolicy(robot)
   const cityFilter = normalizeCityName(
@@ -202,27 +226,64 @@ export function getEligibleCompanyIdsForRobot(params: {
   )
   const companyById = new Map(companies.map((company) => [company.id, company]))
   const configByCompanyId = companyConfigsByRobot?.get(robot.technical_id) ?? new Map<string, CompanyRobotConfig>()
+  const eligibleCompanyIds: string[] = []
+  const skipped: RobotEligibilityIssue[] = []
 
-  return selectedCompanyIds.filter((companyId) => {
+  for (const companyId of selectedCompanyIds) {
     const company = companyById.get(companyId)
-    if (!company?.active) return false
+    const companyName = String(company?.name ?? companyId)
+    if (!company?.active) {
+      skipped.push({ companyId, companyName, reason: "empresa inativa" })
+      continue
+    }
 
     const config = configByCompanyId.get(companyId) ?? null
     const settings = getCompanySettings(config)
 
-    if (policy.requireEnabledConfig && !config?.enabled) return false
-    if (cityFilter && normalizeCityName(company.city_name) !== cityFilter) return false
-    if (policy.requireDocument && !onlyDigits(company.document).trim()) return false
-    if (policy.requireStateRegistration && !onlyDigits(company.state_registration).trim()) return false
-    if (policy.requireCae && !String(company.cae ?? "").trim()) return false
-    if (policy.requireAnyLoginSource && !hasEligiblePortalLogin(robot, company, config)) return false
+    if (policy.requireEnabledConfig && !config?.enabled) {
+      skipped.push({ companyId, companyName, reason: "robô não habilitado para a empresa" })
+      continue
+    }
+    if (cityFilter && normalizeCityName(company.city_name) !== cityFilter) {
+      skipped.push({
+        companyId,
+        companyName,
+        reason: `cidade diferente de ${String(asObject(robot.execution_defaults).city_name ?? "").trim() || "cidade configurada"}`,
+      })
+      continue
+    }
+    if (policy.requireDocument && !onlyDigits(company.document).trim()) {
+      skipped.push({ companyId, companyName, reason: "CNPJ não preenchido" })
+      continue
+    }
+    if (policy.requireStateRegistration && !onlyDigits(company.state_registration).trim()) {
+      skipped.push({ companyId, companyName, reason: "IE não preenchida" })
+      continue
+    }
+    if (policy.requireCae && !String(company.cae ?? "").trim()) {
+      skipped.push({ companyId, companyName, reason: "CAE não preenchido" })
+      continue
+    }
+    if (policy.requireAnyLoginSource && !hasEligiblePortalLogin(robot, company, config, policy.loginRouting)) {
+      skipped.push({ companyId, companyName, reason: "sem login disponível para o robô" })
+      continue
+    }
 
     if (policy.authBehavior === "choice") {
       const authMode = String(settings.auth_mode ?? config?.auth_mode ?? "password").trim().toLowerCase()
-      if (authMode === "certificate") return hasActiveCertificate(company)
-      return Boolean(String(settings.nfs_password ?? config?.nfs_password ?? "").trim())
+      if (authMode === "certificate") {
+        if (!hasActiveCertificate(company)) {
+          skipped.push({ companyId, companyName, reason: "certificado digital ausente ou vencido" })
+          continue
+        }
+      } else if (!String(settings.nfs_password ?? config?.nfs_password ?? "").trim()) {
+        skipped.push({ companyId, companyName, reason: "senha do portal não preenchida" })
+        continue
+      }
     }
 
-    return true
-  })
+    eligibleCompanyIds.push(companyId)
+  }
+
+  return { eligibleCompanyIds, skipped }
 }

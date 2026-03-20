@@ -3153,19 +3153,6 @@ Get-CimInstance Win32_Process | Where-Object {{
         except Exception:
             print_deadzone = None
 
-        try:
-            cdp_session = pdf_page.context.new_cdp_session(pdf_page)
-            pdf_data = cdp_session.send("Page.printToPDF", {"printBackground": True})
-            raw_pdf = base64.b64decode(pdf_data.get("data", ""))
-            if raw_pdf.startswith(b"%PDF"):
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                dest_path.write_bytes(raw_pdf)
-                self.log.emit(f"✅ {label} salvo via CDP/PDF viewer em: {dest_path}")
-                self._minimize_browser_window(pdf_page.context, pdf_page, log_once=True)
-                return True
-        except Exception:
-            pass
-
         download_btns = pdf_page.locator("button[aria-label*='Download' i], button[aria-label*='Baixar' i]")
         try:
             dl_count = download_btns.count()
@@ -3231,6 +3218,20 @@ Get-CimInstance Win32_Process | Where-Object {{
                     pdf_page.wait_for_timeout(60)
                 except Exception:
                     pass
+
+        if not download:
+            try:
+                cdp_session = pdf_page.context.new_cdp_session(pdf_page)
+                pdf_data = cdp_session.send("Page.printToPDF", {"printBackground": True})
+                raw_pdf = base64.b64decode(pdf_data.get("data", ""))
+                if raw_pdf.startswith(b"%PDF"):
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    dest_path.write_bytes(raw_pdf)
+                    self.log.emit(f"✅ {label} salvo via CDP/PDF viewer em: {dest_path}")
+                    self._minimize_browser_window(pdf_page.context, pdf_page, log_once=True)
+                    return True
+            except Exception:
+                pass
 
         if not download:
             self.log.emit(f"❌ Não consegui disparar download do {label} pelo visualizador. Último erro: {last_error}")
@@ -3330,9 +3331,12 @@ Get-CimInstance Win32_Process | Where-Object {{
 
         # se veio PDF do popup, prioriza ele
         if pop_pdf:
-            dest_path.write_bytes(pop_pdf[-1])
-            self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
-            return dest_path
+            raw_popup_pdf = pop_pdf[-1]
+            if raw_popup_pdf.startswith(b"%PDF"):
+                dest_path.write_bytes(raw_popup_pdf)
+                self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
+                return dest_path
+            self.log.emit("⚠️ A resposta capturada da SEFAZ GO não era um PDF válido. Vou tentar o download pelo visualizador.")
 
         try:
             downloaded = self._download_pdf_viewer(pop, dest_path, label="certidão estadual")
@@ -3343,9 +3347,12 @@ Get-CimInstance Win32_Process | Where-Object {{
 
         # se não vier o PDF, salva o container inteiro (HTML) como fallback
         if pdf_bytes:
-            dest_path.write_bytes(pdf_bytes[-1])
-            self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
-            return dest_path
+            raw_pdf = pdf_bytes[-1]
+            if raw_pdf.startswith(b"%PDF"):
+                dest_path.write_bytes(raw_pdf)
+                self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
+                return dest_path
+            self.log.emit("⚠️ O fallback de rede da SEFAZ GO não retornou um PDF válido.")
         try:
             container_html = pop.locator("#container").evaluate("el => el.outerHTML")
             fallback = out_dir / "estadual_go_container.html"

@@ -34,7 +34,11 @@ import type { ScheduleRule } from "@/services/scheduleRulesService"
 import { getCommonRobotNotesMode, getRobotNotesMode } from "@/lib/robotNotes"
 import type { Json, RobotExecutionMode } from "@/types/database"
 import { buildRobotExecutionSnapshot } from "@/lib/robotConfigSchemas"
-import { getEligibleCompanyIdsForRobot, indexCompanyRobotConfigs } from "@/lib/robotEligibility"
+import {
+  getEligibleCompanyIdsForRobot,
+  getRobotEligibilityReport,
+  indexCompanyRobotConfigs,
+} from "@/lib/robotEligibility"
 
 const DEBOUNCE_MS = 800
 
@@ -292,6 +296,45 @@ export function AdminScheduler({
     () => getCommonRobotNotesMode(selectedRobots),
     [selectedRobots]
   )
+  const selectedCompanyIds = useMemo(() => Array.from(companyIds), [companyIds])
+  const selectedRobotTechnicalIds = useMemo(
+    () => selectedRobots.map((robot) => robot.technical_id),
+    [selectedRobots]
+  )
+  const { data: selectedCompanyRobotConfigs = [] } = useQuery({
+    queryKey: [
+      "admin-scheduler-company-robot-configs",
+      [...selectedCompanyIds].sort().join(","),
+      [...selectedRobotTechnicalIds].sort().join(","),
+    ],
+    queryFn: () =>
+      getCompanyRobotConfigsForSelection({
+        companyIds: selectedCompanyIds,
+        robotTechnicalIds: selectedRobotTechnicalIds,
+      }),
+    enabled: selectedCompanyIds.length > 0 && selectedRobotTechnicalIds.length > 0,
+    staleTime: 5_000,
+  })
+  const selectedCompanyConfigsByRobot = useMemo(
+    () => indexCompanyRobotConfigs(selectedCompanyRobotConfigs),
+    [selectedCompanyRobotConfigs]
+  )
+  const eligibilityPreviewByRobot = useMemo(() => {
+    const preview = new Map<string, ReturnType<typeof getRobotEligibilityReport>>()
+    if (selectedCompanyIds.length === 0) return preview
+    for (const robot of selectedRobots) {
+      preview.set(
+        robot.technical_id,
+        getRobotEligibilityReport({
+          robot,
+          selectedCompanyIds,
+          companies,
+          companyConfigsByRobot: selectedCompanyConfigsByRobot,
+        })
+      )
+    }
+    return preview
+  }, [companies, selectedCompanyConfigsByRobot, selectedCompanyIds, selectedRobots])
   const filteredCompanies = useMemo(() => {
     const q = companySearch.trim().toLowerCase()
     if (!q) return companies
@@ -734,6 +777,7 @@ export function AdminScheduler({
                 {robotIdsOrdered.map((technicalId, index) => {
                   const r = robots.find((x) => x.technical_id === technicalId)
                   if (!r) return null
+                  const eligibility = eligibilityPreviewByRobot.get(r.technical_id)
                   return (
                     <div
                       key={r.id}
@@ -750,7 +794,24 @@ export function AdminScheduler({
                         onCheckedChange={() => toggleRobot(technicalId)}
                         className="shrink-0"
                       />
-                      <span className="text-xs truncate flex-1">{r.display_name}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs truncate block">{r.display_name}</span>
+                        {selectedCompanyIds.length > 0 && eligibility ? (
+                          <div className="mt-0.5 text-[10px] text-muted-foreground">
+                            <p>
+                              {eligibility.eligibleCompanyIds.length}/{selectedCompanyIds.length} empresas elegíveis
+                            </p>
+                            {eligibility.skipped.slice(0, 2).map((issue) => (
+                              <p key={`${technicalId}-${issue.companyId}`}>
+                                {issue.companyName}: {issue.reason}
+                              </p>
+                            ))}
+                            {eligibility.skipped.length > 2 ? (
+                              <p>+{eligibility.skipped.length - 2} empresa(s) ocultas</p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   )
                 })}

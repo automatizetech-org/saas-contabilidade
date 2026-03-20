@@ -222,9 +222,16 @@ async function claimNextExecutionRequest(supabase, { officeId, officeServerId, r
 }
 
 async function loadCompaniesForExecution(supabase, executionRequest, robotRow) {
-  const companyIds = Array.isArray(executionRequest.company_ids) ? executionRequest.company_ids : [];
-  if (companyIds.length === 0) return [];
   const requestSettings = coerceJsonObject(executionRequest.job_payload);
+  const explicitCompanyIdsFromJob = Array.isArray(requestSettings.company_ids)
+    ? requestSettings.company_ids.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const companyIds = (
+    explicitCompanyIdsFromJob.length > 0
+      ? explicitCompanyIdsFromJob
+      : (Array.isArray(executionRequest.company_ids) ? executionRequest.company_ids : [])
+  ).map((value) => String(value || "").trim()).filter(Boolean);
+  if (companyIds.length === 0) return [];
   const requestedCityName = getRequestedCityNameFromJob(requestSettings, robotRow);
 
   const [{ data: companies, error: companiesError }, { data: configRows, error: configError }] =
@@ -295,15 +302,19 @@ async function loadCompaniesForExecution(supabase, executionRequest, robotRow) {
         settings,
       };
     })
-  const filteredRows = filterEligibleCompaniesForRobot({
-    robotRow,
-    companies: rows,
-    configByCompanyId,
-    cityName: requestedCityName,
-  })
+  const orderedRows = rows
     .sort((left, right) => (orderMap.get(left.company_id) ?? 0) - (orderMap.get(right.company_id) ?? 0));
 
-  return filteredRows;
+  if (explicitCompanyIdsFromJob.length > 0) {
+    return orderedRows;
+  }
+
+  return filterEligibleCompaniesForRobot({
+    robotRow,
+    companies: orderedRows,
+    configByCompanyId,
+    cityName: requestedCityName,
+  });
 }
 
 function buildJobPayload({ officeId, officeServerId, basePath, robotsRootPath, robotRow, executionRequest, companies }) {
