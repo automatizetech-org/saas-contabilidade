@@ -105,6 +105,7 @@ const emptyOfficeForm = (): PrimeiroEscritorioInput => ({
   admin_username: "",
   public_base_url: "",
   base_path: "",
+  robots_root_path: "",
   connector_version: "",
   min_supported_connector_version: "",
 });
@@ -359,6 +360,7 @@ export default function AdminPage() {
   const [serverForm, setServerForm] = useState({
     public_base_url: "",
     base_path: "",
+    robots_root_path: "",
     connector_version: "",
     min_supported_connector_version: "",
     status: "pending",
@@ -428,6 +430,7 @@ export default function AdminPage() {
     setServerForm({
       public_base_url: officeServer.public_base_url ?? "",
       base_path: officeServer.base_path ?? "",
+      robots_root_path: officeServer.robots_root_path ?? "",
       connector_version: officeServer.connector_version ?? "",
       min_supported_connector_version:
         officeServer.min_supported_connector_version ?? "",
@@ -440,8 +443,25 @@ export default function AdminPage() {
     return `${officeUsers.length} usuário(s)`;
   }, [officeUsers.length, usersLoading]);
 
+  const resolvedOfficeContext = officeContext ?? (
+    profile?.office_id
+      ? {
+          officeId: profile.office_id,
+          officeName: profile.office_name ?? "",
+          officeSlug: profile.office_slug ?? "",
+          officeStatus: profile.office_status ?? "draft",
+          membershipId: profile.office_membership_id ?? "",
+          membershipRole: (profile.office_role ?? "viewer") as
+            | "owner"
+            | "admin"
+            | "viewer",
+          panelAccess: profile.panel_access ?? {},
+        }
+      : null
+  );
+
   const isBootstrappingAdmin =
-    canAccessAdmin && !!officeId && (officeLoading || !officeContext);
+    canAccessAdmin && !!officeId && officeLoading && !resolvedOfficeContext;
 
   const openCreateUserDialog = () => {
     setEditingUser(null);
@@ -543,6 +563,7 @@ export default function AdminPage() {
       await updateCurrentOfficeServer({
         public_base_url: serverForm.public_base_url.trim(),
         base_path: serverForm.base_path.trim(),
+        robots_root_path: serverForm.robots_root_path.trim() || null,
         connector_version: serverForm.connector_version.trim() || null,
         min_supported_connector_version:
           serverForm.min_supported_connector_version.trim() || null,
@@ -655,20 +676,20 @@ export default function AdminPage() {
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Carregando escritório...
               </div>
-            ) : officeContext ? (
+            ) : resolvedOfficeContext ? (
               <>
                 <div>
                   <p className="text-lg font-semibold">
-                    {officeContext.officeName}
+                    {resolvedOfficeContext.officeName}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {officeContext.officeSlug}
+                    {resolvedOfficeContext.officeSlug}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <StatusBadge value={officeContext.officeStatus} />
+                  <StatusBadge value={resolvedOfficeContext.officeStatus} />
                   <Badge variant="outline">
-                    {getOfficeRoleLabel(officeContext.membershipRole)}
+                    {getOfficeRoleLabel(resolvedOfficeContext.membershipRole)}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -793,6 +814,20 @@ export default function AdminPage() {
                       }))
                     }
                     placeholder="C:\\Users\\ROBO\\Documents"
+                    disabled={creatingOffice}
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Robots root path</Label>
+                  <Input
+                    value={officeForm.robots_root_path ?? ""}
+                    onChange={(event) =>
+                      setOfficeForm((current) => ({
+                        ...current,
+                        robots_root_path: event.target.value,
+                      }))
+                    }
+                    placeholder="C:\\Users\\ROBO\\Documents\\ROBOS"
                     disabled={creatingOffice}
                   />
                 </div>
@@ -1010,7 +1045,7 @@ export default function AdminPage() {
             Carregando administração do escritório...
           </div>
         </GlassCard>
-      ) : officeContext && canManageOffice ? (
+      ) : resolvedOfficeContext && canManageOffice ? (
         <>
           <section className="grid gap-4 xl:grid-cols-3">
             <GlassCard className="p-5 xl:col-span-2">
@@ -1088,17 +1123,17 @@ export default function AdminPage() {
               <div className="space-y-3 text-sm">
                 <div>
                   <p className="text-muted-foreground">Escritório</p>
-                  <p className="font-medium">{officeContext.officeName}</p>
+                  <p className="font-medium">{resolvedOfficeContext.officeName}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Slug</p>
                   <p className="font-mono text-xs">
-                    {officeContext.officeSlug}
+                    {resolvedOfficeContext.officeSlug}
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Status</p>
-                  <StatusBadge value={officeContext.officeStatus} />
+                  <StatusBadge value={resolvedOfficeContext.officeStatus} />
                 </div>
                 <div>
                   <p className="text-muted-foreground">Empresas</p>
@@ -1144,8 +1179,32 @@ export default function AdminPage() {
                           base_path: event.target.value,
                         }))
                       }
+                      placeholder="C:\\Users\\…\\Documents\\EMPRESAS"
                       disabled={savingServer}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Raiz no disco da VM onde ficam as pastas das empresas e arquivos fiscais; a
+                      árvore abaixo de cada empresa segue a Estrutura de pastas do painel.
+                    </p>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Robots root path</Label>
+                    <Input
+                      value={serverForm.robots_root_path}
+                      onChange={(event) =>
+                        setServerForm((current) => ({
+                          ...current,
+                          robots_root_path: event.target.value,
+                        }))
+                      }
+                      placeholder="C:\\Users\\…\\Documents\\ROBOS"
+                      disabled={savingServer}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Pasta única que contém uma subpasta por robô (ex.: nfs_padrao, certidoes)
+                      com <span className="font-mono">bot.py</span> e{" "}
+                      <span className="font-mono">data/json</span> consumidos pelo servidor.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label>Versão do conector</Label>

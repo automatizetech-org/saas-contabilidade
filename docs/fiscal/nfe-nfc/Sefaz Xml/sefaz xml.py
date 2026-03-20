@@ -63,6 +63,14 @@ import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
 
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # =============================================================================
 # IMPORTS - Third Party Libraries
 # =============================================================================
@@ -120,7 +128,38 @@ _base_dir = os.path.dirname(os.path.abspath(__file__))
 _env_data_path = os.path.join(_base_dir, "data", ".env")
 _env_local_path = os.path.join(_base_dir, ".env")
 _env_root_path = os.path.abspath(os.path.join(_base_dir, "..", "..", ".env"))
-_robots_base_env_dir = pathlib.Path(r"C:\Users\ROBO\Documents\ROBOS")
+def _resolve_robots_base_env_dir() -> pathlib.Path:
+    candidates: list[pathlib.Path] = []
+    env_root = (os.getenv("ROBOTS_ROOT_PATH") or "").strip()
+    robot_script_dir = (os.getenv("ROBOT_SCRIPT_DIR") or "").strip()
+
+    if env_root:
+        candidates.append(pathlib.Path(env_root))
+    if robot_script_dir:
+        candidates.append(pathlib.Path(robot_script_dir).resolve().parent)
+    candidates.append(pathlib.Path(_base_dir).resolve().parent)
+    if getattr(sys, "frozen", False):
+        exe_dir = pathlib.Path(sys.executable).resolve().parent
+        candidates.append(exe_dir.parent)
+        candidates.append(exe_dir)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if (resolved / ".env").exists() or (resolved / ".env.example").exists():
+            return resolved
+
+    return pathlib.Path(env_root).resolve() if env_root else pathlib.Path(_base_dir).resolve().parent
+
+
+_robots_base_env_dir = _resolve_robots_base_env_dir()
 _robots_env_path = _robots_base_env_dir / ".env"
 _robots_env_example_path = _robots_base_env_dir / ".env.example"
 
@@ -595,10 +634,49 @@ def complete_execution_request_for_queue(
     try:
         job = _current_json_job()
         operations = _consume_result_operations()
+        job_companies = JSON_RUNTIME.load_job_companies(job)
+        rows_total = 0
+        touched_company_ids: Set[str] = set()
+        for operation in operations:
+            rows = operation.get("rows") if isinstance(operation, dict) else None
+            if isinstance(rows, list):
+                rows_total += len(rows)
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    company_id = str(row.get("company_id") or "").strip()
+                    if company_id:
+                        touched_company_ids.add(company_id)
+            company_id = str((operation or {}).get("company_id") or "").strip()
+            if company_id:
+                touched_company_ids.add(company_id)
+        company_results = [
+            {
+                "company_id": str(company.get("company_id") or company.get("id") or "").strip() or None,
+                "company_name": company.get("name"),
+                "document": company.get("document") or company.get("cnpj") or company.get("doc"),
+                "status": (
+                    "success"
+                    if str(company.get("company_id") or company.get("id") or "").strip() in touched_company_ids
+                    else "no_data"
+                ),
+            }
+            for company in job_companies
+            if isinstance(company, dict)
+        ]
+        summary = {
+            "companies_total": len(company_results),
+            "companies_with_data": len([row for row in company_results if row.get("status") == "success"]),
+            "companies_without_data": len([row for row in company_results if row.get("status") == "no_data"]),
+            "operations_total": len(operations),
+            "rows_total": rows_total,
+        }
         JSON_RUNTIME.write_result(
             job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
             success=success,
             error_message=error_message,
+            summary=summary,
+            company_results=company_results,
             payload={"operations": operations},
         )
         _set_current_json_job(None)
@@ -839,6 +917,13 @@ CDP_PORT = _pick_cdp_port()
 # Proxy opcional (ex.: http://127.0.0.1:8889 para mitmproxy)
 SEFAZ_PROXY = os.getenv("SEFAZ_PROXY", "").strip()
 DEFAULT_TIMEOUT_MS = 30_000  # 30s
+try:
+    DOWNLOAD_HISTORY_TIMEOUT_SECONDS = max(
+        120,
+        int((os.getenv("SEFAZ_DOWNLOAD_HISTORY_TIMEOUT_SECONDS") or "300").strip() or "300"),
+    )
+except Exception:
+    DOWNLOAD_HISTORY_TIMEOUT_SECONDS = 300
 MAX_TENTATIVAS_EMPRESA = 5   # tentativas por IE/intervalo em erro geral
 DEFAULT_VIEWPORT = {"width": 1366, "height": 768}
 
@@ -959,6 +1044,17 @@ def _tail_file(path: str, max_lines: int = 40) -> str:
 BASE_DIR = get_base_dir()          # onde fica o .py / .exe
 INTERNAL_DIR = get_internal_dir()  # onde ficam arquivos empacotados (_MEIPASS)
 DATA_DIR = get_data_dir()          # onde ficam Chrome, json, ico, proxy, etc.
+LOGS_DIR = os.path.join(DATA_DIR, "logs")
+RUNTIME_LOG_PATH = os.path.join(LOGS_DIR, "runtime.log")
+
+
+def append_runtime_log(message: str) -> None:
+    try:
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        with open(RUNTIME_LOG_PATH, "a", encoding="utf-8") as handle:
+            handle.write(str(message).rstrip() + "\n")
+    except Exception:
+        pass
 
 CHROME_EXE = os.path.join(DATA_DIR, "Chrome", "chrome.exe")
 RUNTIME_DIR = get_runtime_dir()
@@ -1908,6 +2004,16 @@ def ensure_license_valid(parent_app: QApplication) -> bool:
         if confirm.choice == "primary":
             return False
         # se escolher voltar, reabre o diálogo de licença
+
+def is_scheduler_mode_enabled() -> bool:
+    return str(os.environ.get("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
+
 
 class ConfirmDialog(QDialog):
     """Confirmação estilizada (mesmo visual da LicenseDialog)."""
@@ -6029,7 +6135,7 @@ def aguardar_e_baixar_arquivos(
     page,
     caminho_destino: str,
     quantidade: int,
-    timeout_total: int = 10000000,
+    timeout_total: int = DOWNLOAD_HISTORY_TIMEOUT_SECONDS,
     should_stop=None,
     log_fn: Optional[Callable[[str], None]] = None,
     ie: Optional[str] = None,
@@ -9178,6 +9284,7 @@ class AutomationWorker(QThread):
                     "INTERRUPCAO_USUARIO",
                 }
                 rodada_retry = 0
+                max_rodadas_retry = 2
                 while True:
                     if self.stop_requested:
                         break
@@ -9187,6 +9294,13 @@ class AutomationWorker(QThread):
                         if (not r.success) and ((r.alert_class or "") not in NAO_REPETIR_CLASSES)
                     ]
                     if not pendentes:
+                        break
+
+                    if rodada_retry >= max_rodadas_retry:
+                        self._log(
+                            f"[WARN] 🔁 Limite de {max_rodadas_retry} rodada(s) de retentativa atingido. "
+                            "As pendências restantes serão mantidas como falha."
+                        )
                         break
 
                     rodada_retry += 1
@@ -11975,6 +12089,7 @@ class MyCompactUI(QMainWindow):
             return
 
         msg = str(message)
+        append_runtime_log(msg)
 
         # =====================================================================
         # 1) CABEÇALHO ESPECIAL POR EMPRESA
@@ -17030,6 +17145,7 @@ class SafeApplication(QApplication):
 # ENTRY POINT - Ponto de entrada da aplicação
 # =============================================================================
 if __name__ == "__main__":
+    scheduler_mode = is_scheduler_mode_enabled()
     app = SafeApplication(sys.argv)
     sys.excepthook = _report_unhandled_exception
     try:
@@ -17042,7 +17158,7 @@ if __name__ == "__main__":
         pass
 
     # === NOVO: validar licença antes de abrir a UI ===
-    if not ensure_license_valid(app):
+    if not scheduler_mode and not ensure_license_valid(app):
 
         # usuário saiu ou licença inválida
         sys.exit(0)
@@ -17190,5 +17306,8 @@ if __name__ == "__main__":
     # INICIALIZAÇÃO DA APLICAÇÃO
     # =============================================================================
     window = MyCompactUI()
-    window.show()
+    if scheduler_mode:
+        window.hide()
+    else:
+        window.show()
     sys.exit(app.exec())

@@ -653,7 +653,8 @@ export function AdminScheduler({
             )}
             {!isExecutingNow && (
               <div className="rounded-md bg-muted/50 border border-border px-3 py-2 text-xs text-muted-foreground">
-                Aguardando — rotina ativa. Execução na data/hora configurada e depois a cada 24h.
+                Aguardando — rotina ativa. A repetição diária (horário de Brasília) é enfileirada pelo
+                servidor local com o conector; mantenha a VM rodando nesse horário.
               </div>
             )}
             <div className="rounded-md bg-primary/10 border border-primary-icon/30 px-3 py-2 text-xs text-primary-icon">

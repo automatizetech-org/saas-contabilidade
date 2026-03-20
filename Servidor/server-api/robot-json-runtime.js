@@ -95,7 +95,8 @@ function buildRuntimePaths(robotsRootPath, robotRow) {
   };
 }
 
-async function listRobotRuntimeRows(supabase, officeId, officeServerId) {
+/** Lista robôs mesclados com office_robot_configs + office_robot_runtime (usado pelo dispatcher e pelo agendador). */
+export async function listRobotRuntimeRows(supabase, officeId, officeServerId) {
   const [{ data: robots, error: robotsError }, { data: configs, error: configsError }, { data: runtimeRows, error: runtimeError }] =
     await Promise.all([
       supabase
@@ -290,6 +291,8 @@ async function loadCompaniesForExecution(supabase, executionRequest, robotRow) {
       };
     })
     .filter((company) => {
+      if (!company.active) return false;
+      if (!company.enabled_for_robot) return false;
       if (!requestedCityName) return true;
       return String(company.city_name || "").trim().toLowerCase() === requestedCityName;
     })
@@ -606,6 +609,9 @@ async function ingestResultFile(supabase, officeId, robotRow, runtimePaths, logg
 
 async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotRow, runtimePaths, logger }) {
   const heartbeat = safeReadJson(runtimePaths.heartbeatFilePath);
+  const staleJobPayload = fs.existsSync(runtimePaths.jobFilePath)
+    ? safeReadJson(runtimePaths.jobFilePath)
+    : null;
   const now = Date.now();
   const heartbeatUpdatedAt = heartbeat?.updated_at ? Date.parse(heartbeat.updated_at) : Number.NaN;
   const isFresh = Number.isFinite(heartbeatUpdatedAt) && now - heartbeatUpdatedAt <= 90_000;
@@ -626,17 +632,88 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
     heartbeat_payload: heartbeat ?? {},
   });
 
-  if (!isFresh && heartbeat?.current_execution_request_id) {
+  const staleExecutionRequestId =
+    String(
+      heartbeat?.current_execution_request_id ??
+      staleJobPayload?.execution_request_id ??
+      staleJobPayload?.job_id ??
+      "",
+    ).trim() || null;
+
+  if (!isFresh && staleExecutionRequestId) {
     try {
       await finalizeExecutionRequest(
         supabase,
-        heartbeat.current_execution_request_id,
+        staleExecutionRequestId,
         false,
         "Robot heartbeat timeout",
         { timeout: true },
       );
     } catch (error) {
       logger?.warn?.(`[robot-json-runtime] Timeout finalize falhou para ${robotRow.technical_id}: ${error?.message || error}`);
+    }
+  }
+
+  if (!isFresh && fs.existsSync(runtimePaths.jobFilePath) && !fs.existsSync(runtimePaths.resultFilePath)) {
+    const archivedJobPayload = staleJobPayload ?? {
+      reason: "stale_job_file",
+      robot_technical_id: robotRow.technical_id,
+      detected_at: new Date().toISOString(),
+    };
+    archiveJsonFile(runtimePaths.jobFilePath, archivedJobPayload, "stale-job");
+    await upsertOfficeRobotRuntime(supabase, {
+      office_id: officeId,
+      office_server_id: officeServerId,
+      robot_technical_id: robotRow.technical_id,
+      status: "inactive",
+      last_heartbeat_at: Number.isFinite(heartbeatUpdatedAt) ? new Date(heartbeatUpdatedAt).toISOString() : null,
+      current_execution_request_id: null,
+      current_job_id: null,
+      runtime_version: heartbeat?.runtime_version ?? null,
+      host_name: heartbeat?.host_name ?? null,
+      heartbeat_payload: {
+        ...(heartbeat ?? {}),
+        status: "inactive",
+        message: "stale_job_cleared",
+        cleared_at: new Date().toISOString(),
+      },
+    });
+    logger?.warn?.(`[robot-json-runtime] ${robotRow.technical_id}: job.json obsoleto limpo após timeout de heartbeat.`);
+  }
+  const hasActiveFiles = fs.existsSync(runtimePaths.jobFilePath) || fs.existsSync(runtimePaths.resultFilePath);
+  const heartbeatCurrentExecutionRequestId =
+    String(heartbeat?.current_execution_request_id || "").trim() || null;
+
+  if (isFresh && !hasActiveFiles && !heartbeatCurrentExecutionRequestId) {
+    const staleBeforeIso = new Date(now - 120_000).toISOString();
+    const { data: orphanRunningRows, error: orphanRunningError } = await supabase
+      .from("execution_requests")
+      .select("id,started_at,claimed_at")
+      .eq("office_id", officeId)
+      .eq("robot_id", robotRow.id)
+      .eq("claimed_by_server_id", officeServerId)
+      .eq("status", "running")
+      .lt("started_at", staleBeforeIso)
+      .order("started_at", { ascending: true });
+    if (orphanRunningError) throw orphanRunningError;
+
+    for (const orphanRow of orphanRunningRows ?? []) {
+      try {
+        await finalizeExecutionRequest(
+          supabase,
+          orphanRow.id,
+          false,
+          "Robot execution lost without active job/result file",
+          { orphaned: true },
+        );
+        logger?.warn?.(
+          `[robot-json-runtime] ${robotRow.technical_id}: execution_request ${orphanRow.id} finalizado como orfao.`,
+        );
+      } catch (error) {
+        logger?.warn?.(
+          `[robot-json-runtime] ${robotRow.technical_id}: falha ao finalizar orfao ${orphanRow.id}: ${error?.message || error}`,
+        );
+      }
     }
   }
 }

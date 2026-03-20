@@ -24,6 +24,7 @@ import archiver from "archiver";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { createClient } from "@supabase/supabase-js";
 import { startRobotJsonRuntimeWorker } from "./robot-json-runtime.js";
+import { startScheduleRulesWorker } from "./schedule-rules-worker.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1755,6 +1756,18 @@ loadBasePathFromSupabase().then(() => {
     }
     startOfficeRefreshWorker();
     startFiscalWatcher();
+    if (robotRuntimeSupabase && OFFICE_ID && OFFICE_SERVER_ID) {
+      startScheduleRulesWorker({
+        supabase: robotRuntimeSupabase,
+        officeId: OFFICE_ID,
+        officeServerId: OFFICE_SERVER_ID,
+        logger: console,
+      });
+    } else if (robotRuntimeSupabase && (!OFFICE_ID || !OFFICE_SERVER_ID)) {
+      console.warn(
+        "[schedule-rules-worker] OFFICE_ID ou OFFICE_SERVER_ID ausente; agendador diário desligado até vincular o conector.",
+      );
+    }
     if (robotRuntimeSupabase) {
       startRobotJsonRuntimeWorker({
         supabase: robotRuntimeSupabase,

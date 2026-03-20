@@ -115,7 +115,38 @@ RECEBIDAS_URL = "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
 BASE_DIR = resolve_base_dir()
 
 # Pasta base dos robôs na VM: .env compartilhado (SERVER_API_URL, SUPABASE_*, etc.)
-ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
+def resolve_robots_base_env_dir() -> Path:
+    candidates: List[Path] = []
+    env_root = (os.environ.get("ROBOTS_ROOT_PATH") or "").strip()
+    robot_script_dir = (os.environ.get("ROBOT_SCRIPT_DIR") or "").strip()
+
+    if env_root:
+        candidates.append(Path(env_root))
+    if robot_script_dir:
+        candidates.append(Path(robot_script_dir).resolve().parent)
+    candidates.append(BASE_DIR.parent)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir.parent)
+        candidates.append(exe_dir)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if (resolved / ".env").exists() or (resolved / ".env.example").exists():
+            return resolved
+
+    return Path(env_root).resolve() if env_root else BASE_DIR.parent.resolve()
+
+
+ROBOTS_BASE_ENV_DIR = resolve_robots_base_env_dir()
 
 # Carrega .env: primeiro da base dos robôs (VM), depois da pasta do script/.exe (override local)
 try:
@@ -1661,10 +1692,6 @@ def upsert_nfs_stats(
     period = period_start[:7]
     if not re.match(r"^\d{4}-\d{2}$", period):
         return
-    try:
-        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-    except Exception:
-        raise
     rows: List[Dict[str, Any]] = []
     for comp in companies_summary:
         company_id = str(comp.get("company_id") or "").strip()
@@ -1701,12 +1728,17 @@ def upsert_nfs_stats(
     if _current_json_job():
         _append_result_operation(
             {
-                "kind": "rpc",
-                "fn": "nfs_stats_upsert_batch",
-                "args": {"rows": rows},
+                "kind": "upsert_rows",
+                "table": "nfs_stats",
+                "on_conflict": "office_id,company_id,period",
+                "rows": rows,
             }
         )
         return
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+    except Exception:
+        raise
     client.rpc("nfs_stats_upsert_batch", {"rows": rows}).execute()
 
 
@@ -2673,6 +2705,16 @@ def ensure_license_valid(parent_app: QApplication) -> bool:
         if confirm.choice == "primary":
             return False
 # --------------------------------------------------------------------
+
+
+def is_scheduler_mode_enabled() -> bool:
+    return str(os.environ.get("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
 
 class LogFrame(QFrame):
     """
@@ -5494,10 +5536,6 @@ class MainWindow(QMainWindow):
                 self._robot_id,
                 job.get("period_end") or job.get("period_start"),
             )
-        if job_id and self._robot_supabase_url and self._robot_supabase_key:
-            complete_execution_request(
-                self._robot_supabase_url, self._robot_supabase_key, job_id, True, None
-            )
         if summary and job and self._robot_supabase_url and self._robot_supabase_key:
             try:
                 upsert_nfs_stats(
@@ -5523,6 +5561,10 @@ class MainWindow(QMainWindow):
                     self._log("[NFS] Totais e ranking enviados para o painel (execução manual).")
                 except Exception as exc:  # noqa: BLE001
                     self._log(f"[NFS] Falha ao enviar totais para o painel: {exc}")
+        if job_id and self._robot_supabase_url and self._robot_supabase_key:
+            complete_execution_request(
+                self._robot_supabase_url, self._robot_supabase_key, job_id, True, None
+            )
         self._log("Processo concluido.")
         if summary:
             try:
@@ -6669,10 +6711,11 @@ def main():
     except Exception:
         pass
 
+    scheduler_mode = is_scheduler_mode_enabled()
     app = QApplication(sys.argv)
     if LOGO_ICON.exists():
         app.setWindowIcon(QIcon(str(LOGO_ICON)))
-    if not ensure_license_valid(app):
+    if not scheduler_mode and not ensure_license_valid(app):
         sys.exit(0)
     app.setStyleSheet(
         """
@@ -6683,7 +6726,10 @@ def main():
         """
     )
     win = MainWindow()
-    win.show()
+    if scheduler_mode:
+        win.hide()
+    else:
+        win.show()
     sys.exit(app.exec())
 
 

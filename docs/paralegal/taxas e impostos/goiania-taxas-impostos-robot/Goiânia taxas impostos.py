@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import hashlib
+import io
 import os
 import re
 import shutil
@@ -10,6 +11,8 @@ import socket
 import time
 import subprocess
 import sys
+import uuid
+import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,7 +60,38 @@ os.chdir(BASE_DIR)
 def _get_chrome_profile_dir() -> Path:
     return (BASE_DIR / "data" / "chrome_cdp_profile").resolve()
 
-ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
+def _resolve_robots_base_env_dir() -> Path:
+    candidates: list[Path] = []
+    env_root = (os.getenv("ROBOTS_ROOT_PATH") or "").strip()
+    robot_script_dir = (os.getenv("ROBOT_SCRIPT_DIR") or "").strip()
+
+    if env_root:
+        candidates.append(Path(env_root))
+    if robot_script_dir:
+        candidates.append(Path(robot_script_dir).resolve().parent)
+    candidates.append(BASE_DIR.parent)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir.parent)
+        candidates.append(exe_dir)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if (resolved / ".env").exists() or (resolved / ".env.example").exists():
+            return resolved
+
+    return Path(env_root).resolve() if env_root else BASE_DIR.parent.resolve()
+
+
+ROBOTS_BASE_ENV_DIR = _resolve_robots_base_env_dir()
 ENV_CANDIDATES = [
     ROBOTS_BASE_ENV_DIR / ".env",
     ROBOTS_BASE_ENV_DIR / ".env.example",
@@ -74,6 +108,8 @@ PNG_DIR = DATA_DIR / "image"
 ICO_DIR = DATA_DIR / "ico"
 PLAYWRIGHT_DIR = DATA_DIR / "ms-playwright"
 EXTENSIONS_DIR = DATA_DIR / "extensions"
+LOGS_DIR = DATA_DIR / "logs"
+RUNTIME_LOG_PATH = LOGS_DIR / "runtime.log"
 CDP_PORT = int(os.getenv("GOIANIA_CDP_PORT", "9223"))
 
 
@@ -93,6 +129,14 @@ CHROME_EXE = (DATA_DIR / "Chrome" / "chrome.exe").resolve()
 CHROME_PROFILE_DIR = _get_chrome_profile_dir()
 CHROME_PROFILE_BACKUP_DIR = (DATA_DIR / "chrome_cdp_profile_backup").resolve()
 CHROME_LOG_PATH = (DATA_DIR / "chrome_start.log").resolve()
+SKILL_UP_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
+SKILL_UP_EXTENSION_UPDATE_URL = (
+    "https://clients2.google.com/service/update2/crx"
+    "?response=redirect"
+    "&prodversion=144.0.7559.110"
+    "&acceptformat=crx2,crx3"
+    f"&x=id%3D{SKILL_UP_EXTENSION_ID}%26uc"
+)
 
 
 def _load_proxy_list() -> list[str]:
@@ -202,6 +246,73 @@ JSON_RUNTIME = JsonRobotRuntime(
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def is_scheduler_mode_enabled() -> bool:
+    return str(os.getenv("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
+
+
+def append_runtime_log(message: str) -> None:
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        with RUNTIME_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(message.rstrip() + "\n")
+    except Exception:
+        pass
+
+
+def _extract_crx_payload(crx_bytes: bytes) -> bytes:
+    if crx_bytes[:4] != b"Cr24":
+        raise ValueError("Arquivo CRX invÃ¡lido.")
+    version = int.from_bytes(crx_bytes[4:8], "little")
+    if version == 2:
+        pubkey_len = int.from_bytes(crx_bytes[8:12], "little")
+        sig_len = int.from_bytes(crx_bytes[12:16], "little")
+        offset = 16 + pubkey_len + sig_len
+    elif version == 3:
+        header_len = int.from_bytes(crx_bytes[8:12], "little")
+        offset = 12 + header_len
+    else:
+        raise ValueError(f"VersÃ£o de CRX nÃ£o suportada: {version}")
+    return crx_bytes[offset:]
+
+
+def ensure_skill_up_extension_dir() -> Path | None:
+    extension_dir = EXTENSIONS_DIR / SKILL_UP_EXTENSION_ID
+    if (extension_dir / "manifest.json").exists():
+        return extension_dir
+
+    EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_dir = EXTENSIONS_DIR / f".{SKILL_UP_EXTENSION_ID}.tmp"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        req = urllib.request.Request(
+            SKILL_UP_EXTENSION_UPDATE_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            zip_payload = _extract_crx_payload(resp.read())
+        with zipfile.ZipFile(io.BytesIO(zip_payload)) as zip_ref:
+            zip_ref.extractall(tmp_dir)
+        if not (tmp_dir / "manifest.json").exists():
+            raise RuntimeError("Manifest da extensÃ£o nÃ£o encontrado apÃ³s extraÃ§Ã£o.")
+        shutil.rmtree(extension_dir, ignore_errors=True)
+        tmp_dir.replace(extension_dir)
+        return extension_dir
+    except Exception as exc:
+        try:
+            print(f"[Goiania] Falha ao preparar extensÃ£o captcha: {exc}", file=sys.stderr)
+        except Exception:
+            pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None
 
 
 def digits(value: str | None) -> str:
@@ -504,6 +615,35 @@ class RobotBackend:
             )
         return {"operations": operations}
 
+    def _build_result_summary(self) -> dict[str, Any]:
+        company_ids = set(self.pending_company_debts.keys()) | set(self.pending_run_rows.keys())
+        debts_total = sum(len(rows) for rows in self.pending_company_debts.values())
+        successful_runs = sum(1 for row in self.pending_run_rows.values() if str(row.get("status") or "").lower() == "completed")
+        failed_runs = sum(1 for row in self.pending_run_rows.values() if str(row.get("status") or "").lower() == "failed")
+        return {
+            "companies_total": len(company_ids),
+            "debts_total": debts_total,
+            "successful_runs": successful_runs,
+            "failed_runs": failed_runs,
+        }
+
+    def _build_company_results(self) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        company_ids = set(self.pending_company_debts.keys()) | set(self.pending_run_rows.keys())
+        for company_id in sorted(company_ids):
+            run_row = self.pending_run_rows.get(company_id) or {}
+            debt_rows = self.pending_company_debts.get(company_id) or []
+            status = str(run_row.get("status") or "completed").lower()
+            results.append(
+                {
+                    "company_id": company_id,
+                    "company_name": run_row.get("company_name"),
+                    "status": "success" if status == "completed" else status,
+                    "debts_found": len(debt_rows),
+                }
+            )
+        return results
+
     def set_use_proxy_rotation(self, value: bool) -> None:
         """Ativa ou desativa o uso de rotação de proxy (lista + mitmdump)."""
         self._use_proxy_rotation = value
@@ -702,10 +842,13 @@ class RobotBackend:
                         id=company_id,
                         name=str(row.get("name") or "").strip(),
                         document=digits(str(row.get("document") or "")),
-                        inscricao=str(row.get("state_registration") or ""),
-                        cai=str((row.get("settings") or {}).get("portal_cai") or ""),
                         active=bool(row.get("active", True)),
+                        enabled_for_robot=bool(row.get("enabled_for_robot", True)),
+                        selected_login_cpf=digits(str(row.get("selected_login_cpf") or (row.get("settings") or {}).get("selected_login_cpf") or "")) or None,
+                        state_registration=str(row.get("state_registration") or "").strip() or None,
+                        cae=str(row.get("cae") or "").strip() or None,
                         selected=False,
+                        status="ATIVO" if row.get("active", True) else "INATIVO",
                     )
                 )
             return items
@@ -1068,6 +1211,8 @@ class RobotBackend:
                 job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
                 success=success,
                 error_message=error_message,
+                summary=self._build_result_summary(),
+                company_results=self._build_company_results(),
                 payload=self._build_result_payload(),
             )
             self.current_json_job = None
@@ -1120,6 +1265,7 @@ class RobotBackend:
             if proxy_url and not _is_proxy_reachable(proxy_url):
                 proxy_url = None
                 self._log("Nenhum proxy respondeu; iniciando sem proxy.")
+        extension_dir = ensure_skill_up_extension_dir()
         chrome_cmd = [
             str(chrome_exe),
             f"--remote-debugging-port={CDP_PORT}",
@@ -1135,6 +1281,13 @@ class RobotBackend:
             "--start-maximized",
             "--ignore-certificate-errors",
         ]
+        if extension_dir:
+            chrome_cmd.extend(
+                [
+                    f"--disable-extensions-except={extension_dir}",
+                    f"--load-extension={extension_dir}",
+                ]
+            )
         if proxy_url:
             chrome_cmd.append(f"--proxy-server={proxy_url}")
         CHROME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,6 +1366,7 @@ class RobotBackend:
                     proxy_url = None
                     self._log("Nenhum proxy respondeu; iniciando sem proxy.")
 
+            extension_dir = ensure_skill_up_extension_dir()
             chrome_cmd = [
                 str(chrome_exe),
                 f"--remote-debugging-port={CDP_PORT}",
@@ -1228,6 +1382,13 @@ class RobotBackend:
                 "--start-maximized",
                 "--ignore-certificate-errors",
             ]
+            if extension_dir:
+                chrome_cmd.extend(
+                    [
+                        f"--disable-extensions-except={extension_dir}",
+                        f"--load-extension={extension_dir}",
+                    ]
+                )
             if proxy_url:
                 chrome_cmd.append(f"--proxy-server={proxy_url}")
             CHROME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -3296,12 +3457,23 @@ class MainWindow(QMainWindow):
         self.apply_filter()
 
     def _on_robot_poll_job(self) -> None:
+        if self.active_job:
+            return
         if self.worker and self.worker.isRunning():
             return
         job = self.backend.claim_execution_request(self.append_log)
         if job:
             self.append_log("[Robô] Job do dashboard iniciado.")
-            self._run_job(job)
+            try:
+                self._run_job(job)
+            except Exception as exc:
+                self.append_log(f"[Robô] Falha ao preparar job do dashboard: {exc}")
+                append_runtime_log(f"[{datetime.now().strftime('%H:%M:%S')}] TRACE preparing job failed: {exc!r}")
+                try:
+                    self.backend.complete_execution_request(job["id"], False, f"Falha ao preparar job: {exc}")
+                except Exception:
+                    pass
+                self.active_job = None
 
     def _run_job(self, job: dict[str, Any]) -> None:
         company_ids = [str(company_id) for company_id in (job.get("company_ids") or []) if str(company_id).strip()]
@@ -3320,7 +3492,9 @@ class MainWindow(QMainWindow):
 
     def append_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_frame.append(f"[{timestamp}] {message}")
+        line = f"[{timestamp}] {message}"
+        self.log_frame.append(line)
+        append_runtime_log(line)
 
     def _start_worker(
         self,
@@ -3331,7 +3505,10 @@ class MainWindow(QMainWindow):
         self.backend.ensure_robot_registration()
         self.backend.update_robot_status("processing")
         use_proxy = self.check_use_proxy.isChecked()
-        self.worker = RobotWorker(self.backend, companies, job=job, use_proxy_rotation=use_proxy)
+        worker_use_proxy = use_proxy and not is_scheduler_mode_enabled()
+        if use_proxy and not worker_use_proxy:
+            self.append_log("[Robô] Rotação de proxy desativada no modo agendador.")
+        self.worker = RobotWorker(self.backend, companies, job=job, use_proxy_rotation=worker_use_proxy)
         self.worker.status_changed.connect(self.set_global_status)
         self.worker.log_message.connect(self.append_log)
         self.worker.company_changed.connect(self.update_company_state)
@@ -3409,7 +3586,17 @@ def main() -> int:
     sync_local_resources()
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.show()
+    scheduler_mode = str(os.getenv("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
+    if scheduler_mode:
+        window.hide()
+    else:
+        window.show()
     return app.exec()
 
 

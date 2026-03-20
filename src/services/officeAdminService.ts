@@ -4,13 +4,14 @@ import { getCurrentOfficeContext } from "./officeContextService"
 const SUPABASE_URL = import.meta.env.SUPABASE_URL ?? ""
 const ANON_KEY = import.meta.env.SUPABASE_ANON_KEY ?? ""
 const OFFICE_SERVER_SELECT =
-  "id, office_id, public_base_url, base_path, status, is_active, connector_version, min_supported_connector_version, last_seen_at, last_job_at, created_at, updated_at"
+  "id, office_id, public_base_url, base_path, robots_root_path, status, is_active, connector_version, min_supported_connector_version, last_seen_at, last_job_at, created_at, updated_at"
 
 export type OfficeServerRecord = {
   id: string
   office_id: string
   public_base_url: string
   base_path: string
+  robots_root_path: string | null
   status: string
   is_active: boolean
   connector_version: string | null
@@ -29,6 +30,7 @@ export type PrimeiroEscritorioInput = {
   admin_username: string
   public_base_url: string
   base_path: string
+  robots_root_path?: string | null
   connector_version?: string | null
   min_supported_connector_version?: string | null
 }
@@ -84,7 +86,7 @@ export async function getCurrentOfficeServer(): Promise<OfficeServerRecord | nul
 }
 
 export async function updateCurrentOfficeServer(
-  updates: Partial<Pick<OfficeServerRecord, "public_base_url" | "base_path" | "connector_version" | "min_supported_connector_version" | "status">>
+  updates: Partial<Pick<OfficeServerRecord, "public_base_url" | "base_path" | "robots_root_path" | "connector_version" | "min_supported_connector_version" | "status">>
 ): Promise<OfficeServerRecord> {
   const context = await getCurrentOfficeContext()
   if (!context?.officeId) throw new Error("Nenhum escritório ativo encontrado.")

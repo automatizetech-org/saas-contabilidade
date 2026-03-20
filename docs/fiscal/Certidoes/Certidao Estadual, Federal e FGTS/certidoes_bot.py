@@ -1,4 +1,4 @@
-import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket, hashlib
+import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket, hashlib, io, zipfile
 import math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -101,7 +101,38 @@ def get_internal_dir():
 BASE_DIR = get_base_dir()
 INTERNAL_DIR = get_internal_dir()
 BASE_DIR_PATH = Path(BASE_DIR)
-ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
+def resolve_robots_base_env_dir() -> Path:
+    candidates: List[Path] = []
+    env_root = (os.environ.get("ROBOTS_ROOT_PATH") or "").strip()
+    robot_script_dir = (os.environ.get("ROBOT_SCRIPT_DIR") or "").strip()
+
+    if env_root:
+        candidates.append(Path(env_root))
+    if robot_script_dir:
+        candidates.append(Path(robot_script_dir).resolve().parent)
+    candidates.append(BASE_DIR_PATH.parent)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir.parent)
+        candidates.append(exe_dir)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            resolved = candidate
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if (resolved / ".env").exists() or (resolved / ".env.example").exists():
+            return resolved
+
+    return Path(env_root).resolve() if env_root else BASE_DIR_PATH.parent.resolve()
+
+
+ROBOTS_BASE_ENV_DIR = resolve_robots_base_env_dir()
 
 try:
     from dotenv import load_dotenv
@@ -138,6 +169,8 @@ def get_data_dir() -> Path:
 
 
 DATA_DIR = get_data_dir()
+LOGS_DIR = DATA_DIR / "logs"
+RUNTIME_LOG_PATH = LOGS_DIR / "runtime.log"
 
 
 def get_config_dir():
@@ -187,11 +220,12 @@ PORTAL_TIMEOUT = 90000
 CDP_PORT = 9222
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
 PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
+EXTENSIONS_DIR = DATA_DIR / "extensions"
 # CDP / Chrome portátil:
 # - Por padrão, usa o Chrome portátil em data/Chrome/chrome.exe e o perfil persistente em PROFILE_DIR.
 # - Você pode sobrescrever o executável via env CERTIDOES_CHROME_EXE (útil para testes locais).
 CHROME_CDP_PORT = int((os.environ.get("CERTIDOES_CDP_PORT") or str(CDP_PORT)).strip() or CDP_PORT)
-ROBOT_TECHNICAL_ID = "certidoes_fiscal"
+ROBOT_TECHNICAL_ID = "certidoes"
 ROBOT_DISPLAY_NAME_DEFAULT = "Certidoes Fiscal"
 ROBOT_SEGMENT_PATH_DEFAULT = "FISCAL/CERTIDOES"
 AUTH_PASSWORD = "password"
@@ -203,6 +237,16 @@ JSON_RUNTIME = JsonRobotRuntime(
     Path(__file__).resolve().parent,
 )
 ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
+PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
+LAST_JSON_RESULT_DETAILS: Dict[str, Dict[str, Any]] = {}
+SKILL_UP_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
+SKILL_UP_EXTENSION_UPDATE_URL = (
+    "https://clients2.google.com/service/update2/crx"
+    "?response=redirect"
+    "&prodversion=144.0.7559.110"
+    "&acceptformat=crx2,crx3"
+    f"&x=id%3D{SKILL_UP_EXTENSION_ID}%26uc"
+)
 
 
 def _current_json_job() -> Optional[Dict[str, Any]]:
@@ -212,6 +256,82 @@ def _current_json_job() -> Optional[Dict[str, Any]]:
 def _set_current_json_job(job: Optional[Dict[str, Any]]) -> None:
     global ACTIVE_JSON_JOB
     ACTIVE_JSON_JOB = job if isinstance(job, dict) else None
+
+
+def _clear_pending_result_operations() -> None:
+    PENDING_RESULT_OPERATIONS.clear()
+
+
+def _append_result_operation(operation: Dict[str, Any]) -> None:
+    if isinstance(operation, dict):
+        PENDING_RESULT_OPERATIONS.append(operation)
+
+
+def _consume_result_operations() -> List[Dict[str, Any]]:
+    operations = list(PENDING_RESULT_OPERATIONS)
+    PENDING_RESULT_OPERATIONS.clear()
+    return operations
+
+
+def _set_last_json_result_details(details: Optional[Dict[str, Dict[str, Any]]]) -> None:
+    global LAST_JSON_RESULT_DETAILS
+    LAST_JSON_RESULT_DETAILS = dict(details or {})
+
+
+def _consume_last_json_result_details() -> Dict[str, Dict[str, Any]]:
+    global LAST_JSON_RESULT_DETAILS
+    details = dict(LAST_JSON_RESULT_DETAILS or {})
+    LAST_JSON_RESULT_DETAILS = {}
+    return details
+
+
+def _extract_crx_payload(crx_bytes: bytes) -> bytes:
+    if crx_bytes[:4] != b"Cr24":
+        raise ValueError("Arquivo CRX invÃ¡lido.")
+    version = int.from_bytes(crx_bytes[4:8], "little")
+    if version == 2:
+        pubkey_len = int.from_bytes(crx_bytes[8:12], "little")
+        sig_len = int.from_bytes(crx_bytes[12:16], "little")
+        offset = 16 + pubkey_len + sig_len
+    elif version == 3:
+        header_len = int.from_bytes(crx_bytes[8:12], "little")
+        offset = 12 + header_len
+    else:
+        raise ValueError(f"VersÃ£o de CRX nÃ£o suportada: {version}")
+    return crx_bytes[offset:]
+
+
+def ensure_skill_up_extension_dir() -> Optional[Path]:
+    extension_dir = EXTENSIONS_DIR / SKILL_UP_EXTENSION_ID
+    if (extension_dir / "manifest.json").exists():
+        return extension_dir
+
+    EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_dir = EXTENSIONS_DIR / f".{SKILL_UP_EXTENSION_ID}.tmp"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        response = requests.get(
+            SKILL_UP_EXTENSION_UPDATE_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=60,
+        )
+        response.raise_for_status()
+        zip_payload = _extract_crx_payload(response.content)
+        with zipfile.ZipFile(io.BytesIO(zip_payload)) as zip_ref:
+            zip_ref.extractall(tmp_dir)
+        if not (tmp_dir / "manifest.json").exists():
+            raise RuntimeError("Manifest da extensÃ£o nÃ£o encontrado apÃ³s extraÃ§Ã£o.")
+        shutil.rmtree(extension_dir, ignore_errors=True)
+        tmp_dir.replace(extension_dir)
+        return extension_dir
+    except Exception as exc:
+        try:
+            print(f"[Certidoes] Falha ao preparar extensÃ£o captcha: {exc}", file=sys.stderr)
+        except Exception:
+            pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None
 
 # ICO fallback
 ICO_PATH = ""
@@ -695,6 +815,16 @@ def ensure_license_valid(app) -> bool:
 # =============================================================================
 # Robot infra helpers
 # =============================================================================
+def is_scheduler_mode_enabled() -> bool:
+    return str(os.environ.get("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
+
+
 def only_digits(text: str) -> str:
     return "".join(ch for ch in str(text or "") if ch.isdigit())
 
@@ -921,6 +1051,15 @@ def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: 
         pass
 
 
+def append_runtime_log(message: str) -> None:
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(RUNTIME_LOG_PATH, "a", encoding="utf-8") as handler:
+            handler.write(f"{message}\n")
+    except Exception:
+        pass
+
+
 def update_robot_status(supabase_url: str, supabase_anon_key: str, robot_id: str, status: str) -> None:
     try:
         job = _current_json_job()
@@ -960,6 +1099,8 @@ def claim_execution_request(
         if not job:
             return None
         _set_current_json_job(job)
+        _clear_pending_result_operations()
+        _set_last_json_result_details({})
         JSON_RUNTIME.write_heartbeat(
             status="processing",
             current_job_id=job.get("job_id"),
@@ -979,15 +1120,30 @@ def complete_execution_request(
     request_id: str,
     success: bool,
     error_message: Optional[str] = None,
+    summary: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    company_results: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     try:
         job = _current_json_job()
+        operations = _consume_result_operations()
+        if summary is None and payload is None and company_results is None:
+            fallback_details = _consume_last_json_result_details()
+            if fallback_details:
+                success, error_message, summary, payload, company_results = build_certidoes_result(fallback_details)
+        final_payload: Dict[str, Any] = dict(payload or {})
+        if operations:
+            final_payload["operations"] = operations
         JSON_RUNTIME.write_result(
             job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
             success=success,
             error_message=error_message,
+            summary=summary,
+            payload=final_payload,
+            company_results=company_results,
         )
         _set_current_json_job(None)
+        _set_last_json_result_details({})
     except Exception:
         pass
 
@@ -1073,18 +1229,31 @@ def normalize_result_status(status_text: str) -> str:
     return "irregular"
 
 
-def sync_certidao_result(
-    supabase_url: str,
-    supabase_anon_key: str,
+def resolve_relative_output_path(path_value: Optional[Path], config: Dict[str, Any]) -> Optional[str]:
+    if not path_value:
+        return None
+    try:
+        path_obj = Path(path_value)
+        root = resolve_reports_root(config)
+        return path_obj.resolve().relative_to(root.resolve()).as_posix()
+    except Exception:
+        try:
+            return str(Path(path_value))
+        except Exception:
+            return None
+
+
+def queue_certidao_result(
     company_id: str,
     tipo_certidao: str,
     status_text: str,
     pdf_path: Optional[Path],
     data_consulta: datetime,
+    config: Dict[str, Any],
 ) -> None:
-    if not (supabase_url and supabase_anon_key and company_id and tipo_certidao):
+    if not (company_id and tipo_certidao):
         return
-    file_value = str(pdf_path) if pdf_path else None
+    file_value = resolve_relative_output_path(pdf_path, config)
     periodo = data_consulta.strftime("%Y-%m")
     document_date = data_consulta.strftime("%Y-%m-%d")
     payload = {
@@ -1097,39 +1266,74 @@ def sync_certidao_result(
         "document_date": document_date,
         "robot_technical_id": ROBOT_TECHNICAL_ID,
     }
-    try:
-        base_url = supabase_url.strip().rstrip("/")
-        anon_key = supabase_anon_key.strip()
-        idem_key = f"{company_id}:{tipo_certidao}:{document_date}"
-        headers = {
-            "apikey": anon_key,
-            "Authorization": f"Bearer {anon_key}",
-            "Content-Type": "application/json",
-        }
-        try:
-            requests.delete(
-                f"{base_url}/rest/v1/sync_events",
-                params={"idempotency_key": f"eq.{idem_key}"},
-                headers={**headers, "Prefer": "return=minimal"},
-                timeout=20,
-            )
-        except Exception:
-            pass
-        response = requests.post(
-            f"{base_url}/rest/v1/sync_events",
-            headers={**headers, "Prefer": "return=minimal"},
-            json={
+    idem_key = f"{company_id}:{tipo_certidao}:{document_date}"
+    _append_result_operation(
+        {
+            "kind": "replace_rows",
+            "table": "sync_events",
+            "filters": {
                 "company_id": company_id,
-                "tipo": "certidao_resultado",
-                "payload": json.dumps(payload, ensure_ascii=False),
-                "status": "sucesso",
                 "idempotency_key": idem_key,
             },
-            timeout=20,
+            "rows": [
+                {
+                    "company_id": company_id,
+                    "tipo": "certidao_resultado",
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                    "status": "concluido",
+                    "idempotency_key": idem_key,
+                }
+            ],
+        }
+    )
+
+
+def build_certidoes_result(details: Dict[str, Dict[str, Any]]) -> Tuple[bool, Optional[str], Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
+    company_results: List[Dict[str, Any]] = []
+    success_count = 0
+    failed_count = 0
+    saved_files = 0
+
+    for company_name, raw_detail in (details or {}).items():
+        detail = raw_detail if isinstance(raw_detail, dict) else {}
+        certidoes = {
+            "estadual_go": detail.get("Estadual", ""),
+            "federal": detail.get("Federal", ""),
+            "fgts": detail.get("FGTS", ""),
+        }
+        file_paths = detail.get("file_paths") if isinstance(detail.get("file_paths"), dict) else {}
+        saved_files += len([value for value in file_paths.values() if value])
+        has_error = _detail_has_error(detail)
+        if has_error:
+            failed_count += 1
+        else:
+            success_count += 1
+        company_results.append(
+            {
+                "company_id": detail.get("company_id"),
+                "company_name": company_name,
+                "cnpj": detail.get("cnpj"),
+                "status": "failed" if has_error else "success",
+                "certidoes": certidoes,
+                "file_paths": file_paths,
+                "output_dir": detail.get("output_dir"),
+                "consulted_at": detail.get("consulted_at"),
+            }
         )
-        response.raise_for_status()
-    except Exception as exc:
-        print(f"[Robô] Falha ao sincronizar certidão '{tipo_certidao}' da empresa {company_id}: {exc}", file=sys.stderr)
+
+    total = len(company_results)
+    success = total > 0 and failed_count == 0
+    error_message = None if success else ("Nenhum resultado foi produzido." if total == 0 else "Uma ou mais empresas falharam na emissão das certidões.")
+    summary = {
+        "companies_total": total,
+        "success": success_count,
+        "failed": failed_count,
+        "saved_files": saved_files,
+    }
+    payload = {
+        "companies": company_results,
+    }
+    return success, error_message, summary, payload, company_results
 
 
 # =============================================================================
@@ -1943,6 +2147,7 @@ Get-CimInstance Win32_Process | Where-Object {{
         if not _cdp_ready():
             self._kill_stale_chrome_processes(exe, profile_dir, port)
             self._cleanup_profile_runtime_files(profile_dir)
+            extension_dir = ensure_skill_up_extension_dir()
             chrome_args = [
                 f"--remote-debugging-port={port}",
                 "--remote-debugging-address=127.0.0.1",
@@ -1956,6 +2161,13 @@ Get-CimInstance Win32_Process | Where-Object {{
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
             ]
+            if extension_dir:
+                chrome_args.extend(
+                    [
+                        f"--disable-extensions-except={extension_dir}",
+                        f"--load-extension={extension_dir}",
+                    ]
+                )
             try:
                 self._chrome_proc = subprocess.Popen(
                     [exe, *chrome_args],
@@ -2243,11 +2455,19 @@ Get-CimInstance Win32_Process | Where-Object {{
 
     def _download_pdf_viewer(self, pdf_page, dest_path: Path, label: str = "PDF") -> bool:
         try:
-            pdf_page.wait_for_load_state("load", timeout=PORTAL_TIMEOUT)
+            current_url = (pdf_page.url or "").lower()
+        except Exception:
+            current_url = ""
+        is_pdf_viewer = current_url.startswith("chrome-extension://") or "pdf" in current_url
+        try:
+            if is_pdf_viewer:
+                pdf_page.wait_for_load_state("domcontentloaded", timeout=5000)
+            else:
+                pdf_page.wait_for_load_state("load", timeout=15000)
         except Exception:
             pass
         try:
-            pdf_page.wait_for_timeout(450)
+            pdf_page.wait_for_timeout(800 if is_pdf_viewer else 450)
         except Exception:
             pass
         if not self.hide_browser:
@@ -2347,6 +2567,19 @@ Get-CimInstance Win32_Process | Where-Object {{
                     )
         except Exception:
             print_deadzone = None
+
+        try:
+            cdp_session = pdf_page.context.new_cdp_session(pdf_page)
+            pdf_data = cdp_session.send("Page.printToPDF", {"printBackground": True})
+            raw_pdf = base64.b64decode(pdf_data.get("data", ""))
+            if raw_pdf.startswith(b"%PDF"):
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(raw_pdf)
+                self.log.emit(f"✅ {label} salvo via CDP/PDF viewer em: {dest_path}")
+                self._minimize_browser_window(pdf_page.context, pdf_page, log_once=True)
+                return True
+        except Exception:
+            pass
 
         download_btns = pdf_page.locator("button[aria-label*='Download' i], button[aria-label*='Baixar' i]")
         try:
@@ -2510,18 +2743,18 @@ Get-CimInstance Win32_Process | Where-Object {{
             self.log.emit("ℹ️ A SEFAZ GO abriu direto no PDF; seguindo para o download.")
         pop.wait_for_timeout(4000)
 
+        # se veio PDF do popup, prioriza ele
+        if pop_pdf:
+            dest_path.write_bytes(pop_pdf[-1])
+            self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
+            return dest_path
+
         try:
             downloaded = self._download_pdf_viewer(pop, dest_path, label="certidão estadual")
             if downloaded:
                 return dest_path
         except Exception as e:
             self.log.emit(f"⚠️ Falha ao tentar clicar para baixar a certidão estadual: {e}")
-
-        # se veio PDF do popup, prioriza ele
-        if pop_pdf:
-            dest_path.write_bytes(pop_pdf[-1])
-            self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
-            return dest_path
 
         # se não vier o PDF, salva o container inteiro (HTML) como fallback
         if pdf_bytes:
@@ -2910,33 +3143,37 @@ Get-CimInstance Win32_Process | Where-Object {{
                     self.log.emit(f"⚠️ Erro geral para {name_disp}: {e}")
 
                 # garante apenas uma aba antes de seguir para a próxima empresa
+                detail["consulted_at"] = consulta_at.isoformat()
+                detail["output_dir"] = resolve_relative_output_path(out_dir, self.config) or str(out_dir)
+                detail["file_paths"] = {
+                    "estadual_go": resolve_relative_output_path(pdf_est, self.config),
+                    "federal": resolve_relative_output_path(pdf_fed, self.config),
+                    "fgts": resolve_relative_output_path(pdf_fgts, self.config),
+                }
                 if company_id and (attempt >= max_attempts or not _detail_has_error(detail)):
-                    sync_certidao_result(
-                        self.supabase_url,
-                        self.supabase_anon_key,
+                    queue_certidao_result(
                         company_id,
                         "estadual_go",
                         detail.get("Estadual", ""),
                         pdf_est,
                         consulta_at,
+                        self.config,
                     )
-                    sync_certidao_result(
-                        self.supabase_url,
-                        self.supabase_anon_key,
+                    queue_certidao_result(
                         company_id,
                         "federal",
                         detail.get("Federal", ""),
                         pdf_fed,
                         consulta_at,
+                        self.config,
                     )
-                    sync_certidao_result(
-                        self.supabase_url,
-                        self.supabase_anon_key,
+                    queue_certidao_result(
                         company_id,
                         "fgts",
                         detail.get("FGTS", ""),
                         pdf_fgts,
                         consulta_at,
+                        self.config,
                     )
                 try:
                     self._ensure_single_tab(context)
@@ -3009,6 +3246,7 @@ Get-CimInstance Win32_Process | Where-Object {{
             except Exception:
                 pass
             self._chrome_proc = None
+        _set_last_json_result_details(self.results_details)
         self.finished.emit(self.results)
         self.finished_at = datetime.now()
 # =============================================================================
@@ -3856,6 +4094,7 @@ class MainWindow(QMainWindow):
 
     def log_message(self, msg: str):
         self.log_frame.text.appendPlainText(msg)
+        append_runtime_log(msg)
         QApplication.processEvents()
 
     # ---------- scheduling ----------
@@ -4086,12 +4325,17 @@ class MainWindow(QMainWindow):
         if self._robot_id:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
         if self._active_job:
+            _set_last_json_result_details(details or {})
+            success, error_message, summary, payload, company_results = build_certidoes_result(details or {})
             complete_execution_request(
                 self._robot_supabase_url,
                 self._robot_supabase_key,
                 self._active_job["id"],
-                True,
-                None,
+                success,
+                error_message,
+                summary=summary,
+                payload=payload,
+                company_results=company_results,
             )
             self._active_job = None
 
@@ -4198,6 +4442,7 @@ class MainWindow(QMainWindow):
 # main
 # =============================================================================
 if __name__ == "__main__":
+    scheduler_mode = is_scheduler_mode_enabled()
     app = QApplication(sys.argv)
     try:
         app_icon = _load_app_icon()
@@ -4205,8 +4450,11 @@ if __name__ == "__main__":
             app.setWindowIcon(app_icon)
     except Exception:
         pass
-    if not ensure_license_valid(app):
+    if not scheduler_mode and not ensure_license_valid(app):
         sys.exit(0)
     w = MainWindow()
-    w.show()
+    if scheduler_mode:
+        w.hide()
+    else:
+        w.show()
     sys.exit(app.exec())

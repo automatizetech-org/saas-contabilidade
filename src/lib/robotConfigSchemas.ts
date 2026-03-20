@@ -148,7 +148,7 @@ export function getRobotCapabilities(robot: Robot) {
     } as const;
   }
 
-  if (robot.technical_id === "certidoes_fiscal") {
+  if (robot.technical_id === "certidoes" || robot.technical_id === "certidoes_fiscal") {
     return {
       authBehavior: "cnpj_only",
       usesLoginBinding: false,
