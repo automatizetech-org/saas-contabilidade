@@ -328,7 +328,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                         title={row.file_path ? "Baixar PDF" : "PDF nao disponivel para esta certidao"}
                       >
                         <Download className="h-3.5 w-3.5" />
-                        {row.file_path ? "PDF" : "Sem PDF"}
+                        PDF
                       </Button>
                     </td>
                   </tr>

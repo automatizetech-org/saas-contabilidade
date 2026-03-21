@@ -16,8 +16,8 @@ const statusConfig = {
   // Certidões (mesmo estilo usado na tabela de Certidões)
   negativa: { label: "Negativa", className: "bg-sky-500/15 text-sky-700 dark:text-sky-400" },
   positiva: { label: "Positiva", className: "bg-red-500/15 text-red-700 dark:text-red-400" },
-  irregular: { label: "Irregular", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400" },
-  irregularidade: { label: "Irregular", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400" },
+  irregular: { label: "Irregular", className: "bg-red-500/15 text-red-700 dark:text-red-400" },
+  irregularidade: { label: "Irregular", className: "bg-red-500/15 text-red-700 dark:text-red-400" },
   indefinido: { label: "Indefinido", className: "bg-muted/50 text-muted-foreground" },
   // Taxas/Impostos (municipais, guias)
   vencido: { label: "Vencido", className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
@@ -31,6 +31,8 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   const alias: Record<string, keyof typeof statusConfig> = {
     "irregularidade": "irregular",
     "irregular": "irregular",
+    "empregador nao cadastrado": "negativa",
+    "empregador não cadastrado": "negativa",
     "não processado": "pendente",
     "nao processado": "pendente",
     "erro: nao processado": "erro",

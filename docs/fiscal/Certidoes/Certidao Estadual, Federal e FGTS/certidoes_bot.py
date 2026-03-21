@@ -1,41 +1,9 @@
-import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket, hashlib, io, zipfile, atexit, signal
+import os, sys, json, re, unicodedata, base64, shutil, tempfile, uuid, socket
 import math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Tuple, Dict, List, Optional, Any, Callable
 import subprocess, time
-
-RUNTIME_FOLDER_NAME = "certidoes"
-
-
-def _resolve_runtime_base_dir() -> Path:
-    explicit = os.environ.get("ROBOT_SCRIPT_DIR", "").strip().rstrip(os.sep)
-    if explicit:
-        return Path(explicit).resolve()
-
-    current_dir = Path(__file__).resolve().parent
-    candidates: List[Path] = []
-    robots_root = (os.getenv("ROBOTS_ROOT_PATH") or "").strip()
-
-    if robots_root:
-        candidates.append(Path(robots_root) / RUNTIME_FOLDER_NAME)
-    candidates.append(Path.home() / "Documents" / "ROBOS" / RUNTIME_FOLDER_NAME)
-    candidates.append(current_dir)
-
-    seen: set[str] = set()
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-        except Exception:
-            resolved = candidate
-        key = str(resolved).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        if (resolved / "data" / "json").exists():
-            return resolved
-
-    return current_dir
 
 
 def _configure_qt_platform_plugin_path() -> None:
@@ -119,8 +87,8 @@ def _bases():
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
-        return str(_resolve_runtime_base_dir())
-    return str(_resolve_runtime_base_dir())
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def get_internal_dir():
@@ -129,195 +97,10 @@ def get_internal_dir():
     return get_base_dir()
 
 
-def _json_runtime_utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _json_runtime_ensure_parent(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _json_runtime_atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    _json_runtime_ensure_parent(path)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp_path.replace(path)
-
-
-class JsonRobotRuntime:
-    def __init__(self, technical_id: str, display_name: str, base_dir: Path) -> None:
-        self.technical_id = technical_id
-        self.display_name = display_name
-        self.base_dir = base_dir
-        self.last_status = "inactive"
-        self.json_dir = self.base_dir / "data" / "json"
-        self.job_path = self.json_dir / "job.json"
-        self.result_path = self.json_dir / "result.json"
-        self.heartbeat_path = self.json_dir / "heartbeat.json"
-
-    def register_robot(self) -> str:
-        self.write_heartbeat(status="active")
-        return self.technical_id
-
-    def load_job(self) -> Optional[dict[str, Any]]:
-        if not self.job_path.exists():
-            return None
-        try:
-            payload = json.loads(self.job_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        if not payload.get("id"):
-            payload["id"] = payload.get("execution_request_id") or payload.get("job_id")
-        if not payload.get("job_id"):
-            payload["job_id"] = payload.get("id")
-        if not payload.get("execution_request_id"):
-            payload["execution_request_id"] = payload.get("id")
-        job_execution_id = str(
-            payload.get("execution_request_id")
-            or payload.get("job_id")
-            or payload.get("id")
-            or ""
-        ).strip()
-        if not job_execution_id:
-            return None
-        if self.result_path.exists():
-            try:
-                result_payload = json.loads(self.result_path.read_text(encoding="utf-8"))
-            except Exception:
-                result_payload = None
-            if isinstance(result_payload, dict):
-                result_execution_id = str(
-                    result_payload.get("execution_request_id")
-                    or result_payload.get("job_id")
-                    or result_payload.get("event_id")
-                    or ""
-                ).strip()
-                if result_execution_id and result_execution_id == job_execution_id:
-                    return None
-        return payload
-
-    def load_job_companies(
-        self,
-        job: Optional[dict[str, Any]],
-        company_ids: Optional[List[str]] = None,
-    ) -> List[dict[str, Any]]:
-        if not isinstance(job, dict):
-            return []
-        companies = job.get("companies")
-        if not isinstance(companies, list):
-            return []
-        wanted = {str(company_id) for company_id in (company_ids or []) if str(company_id).strip()}
-        rows: List[dict[str, Any]] = []
-        for row in companies:
-            if not isinstance(row, dict):
-                continue
-            company_id = str(row.get("company_id") or row.get("id") or "").strip()
-            if wanted and company_id not in wanted:
-                continue
-            rows.append(row)
-        return rows
-
-    def write_heartbeat(
-        self,
-        *,
-        status: str,
-        current_job_id: Optional[str] = None,
-        current_execution_request_id: Optional[str] = None,
-        message: Optional[str] = None,
-        progress: Optional[dict[str, Any]] = None,
-        extra: Optional[dict[str, Any]] = None,
-    ) -> None:
-        self.last_status = status
-        payload: dict[str, Any] = {
-            "robot_technical_id": self.technical_id,
-            "display_name": self.display_name,
-            "status": status,
-            "updated_at": _json_runtime_utc_now_iso(),
-            "current_job_id": current_job_id,
-            "current_execution_request_id": current_execution_request_id,
-            "message": message,
-            "progress": progress or {},
-        }
-        if extra:
-            payload.update(extra)
-        _json_runtime_atomic_write_json(self.heartbeat_path, payload)
-
-    def write_result(
-        self,
-        *,
-        job: Optional[dict[str, Any]],
-        success: bool,
-        error_message: Optional[str] = None,
-        summary: Optional[dict[str, Any]] = None,
-        payload: Optional[dict[str, Any]] = None,
-        company_results: Optional[List[dict[str, Any]]] = None,
-    ) -> None:
-        execution_request_id = None
-        job_id = None
-        if isinstance(job, dict):
-            execution_request_id = str(job.get("execution_request_id") or job.get("id") or "").strip() or None
-            job_id = str(job.get("job_id") or job.get("id") or "").strip() or execution_request_id
-
-        event_id = execution_request_id or str(uuid.uuid4())
-        result_payload: dict[str, Any] = {
-            "event_id": event_id,
-            "job_id": job_id or event_id,
-            "execution_request_id": execution_request_id,
-            "robot_technical_id": self.technical_id,
-            "status": "completed" if success else "failed",
-            "started_at": _json_runtime_utc_now_iso(),
-            "finished_at": _json_runtime_utc_now_iso(),
-            "error_message": error_message,
-            "summary": summary or {},
-            "company_results": company_results or [],
-            "payload": payload or {},
-        }
-        _json_runtime_atomic_write_json(self.result_path, result_payload)
-        self.write_heartbeat(
-            status="active",
-            current_job_id=None,
-            current_execution_request_id=None,
-            message="result_ready",
-        )
-
-
 BASE_DIR = get_base_dir()
 INTERNAL_DIR = get_internal_dir()
 BASE_DIR_PATH = Path(BASE_DIR)
-def resolve_robots_base_env_dir() -> Path:
-    candidates: List[Path] = []
-    env_root = (os.environ.get("ROBOTS_ROOT_PATH") or "").strip()
-    robot_script_dir = (os.environ.get("ROBOT_SCRIPT_DIR") or "").strip()
-
-    if env_root:
-        candidates.append(Path(env_root))
-    if robot_script_dir:
-        candidates.append(Path(robot_script_dir).resolve().parent)
-    candidates.append(BASE_DIR_PATH.parent)
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        candidates.append(exe_dir.parent)
-        candidates.append(exe_dir)
-
-    seen: set[str] = set()
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-        except Exception:
-            resolved = candidate
-        key = str(resolved).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        if (resolved / ".env").exists() or (resolved / ".env.example").exists():
-            return resolved
-
-    return Path(env_root).resolve() if env_root else BASE_DIR_PATH.parent.resolve()
-
-
-ROBOTS_BASE_ENV_DIR = resolve_robots_base_env_dir()
+ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
 
 try:
     from dotenv import load_dotenv
@@ -354,9 +137,6 @@ def get_data_dir() -> Path:
 
 
 DATA_DIR = get_data_dir()
-LOGS_DIR = DATA_DIR / "logs"
-RUNTIME_LOG_PATH = LOGS_DIR / "runtime.log"
-INSTANCE_LOCK_PATH = DATA_DIR / "runtime.lock"
 
 
 def get_config_dir():
@@ -405,224 +185,17 @@ AUTOMATION_NAME = "CertidoesBot"
 PORTAL_TIMEOUT = 90000
 CDP_PORT = 9222
 CHROME_EXE = DATA_DIR / "Chrome" / "chrome.exe"
-CHROME_PROFILE_DIRNAME = "chrome_profile"
-CHROME_PROFILE_BACKUP_DIRNAME = "chrome_profile_backup"
-LEGACY_CHROME_PROFILE_DIRNAME = "chrome_cdp_profile"
-LEGACY_CHROME_PROFILE_BACKUP_DIRNAME = "chrome_cdp_profile_backup"
-PROFILE_DIR = DATA_DIR / CHROME_PROFILE_DIRNAME
-PROFILE_BACKUP_DIR = DATA_DIR / CHROME_PROFILE_BACKUP_DIRNAME
-EXTENSIONS_DIR = DATA_DIR / "extensions"
-SYSTEM_CHROME_USER_DATA_DIR = (
-    (Path(os.getenv("LOCALAPPDATA")) / "Google" / "Chrome" / "User Data").resolve()
-    if os.getenv("LOCALAPPDATA")
-    else Path()
-)
-SYSTEM_CHROME_DEFAULT_PROFILE_DIR = (
-    (SYSTEM_CHROME_USER_DATA_DIR / "Default").resolve()
-    if str(SYSTEM_CHROME_USER_DATA_DIR)
-    else Path()
-)
-SYSTEM_CHROME_PROFILE_1_DIR = (
-    (SYSTEM_CHROME_USER_DATA_DIR / "Profile 1").resolve()
-    if str(SYSTEM_CHROME_USER_DATA_DIR)
-    else Path()
-)
+PROFILE_DIR = DATA_DIR / "chrome_cdp_profile"
 # CDP / Chrome portátil:
-# - Por padrão, usa o Chrome portátil em data/Chrome/chrome.exe e um perfil de trabalho descartável em PROFILE_DIR.
-# - O backup imutável do perfil preparado fica em PROFILE_BACKUP_DIR.
+# - Por padrão, usa o Chrome portátil em data/Chrome/chrome.exe e o perfil persistente em PROFILE_DIR.
 # - Você pode sobrescrever o executável via env CERTIDOES_CHROME_EXE (útil para testes locais).
 CHROME_CDP_PORT = int((os.environ.get("CERTIDOES_CDP_PORT") or str(CDP_PORT)).strip() or CDP_PORT)
-ROBOT_TECHNICAL_ID = "certidoes"
+ROBOT_TECHNICAL_ID = "certidoes_fiscal"
 ROBOT_DISPLAY_NAME_DEFAULT = "Certidoes Fiscal"
 ROBOT_SEGMENT_PATH_DEFAULT = "FISCAL/CERTIDOES"
 AUTH_PASSWORD = "password"
 AUTH_CERTIFICATE = "certificate"
 CERTIDOES_DIRNAME = "Certidoes"
-JSON_RUNTIME = JsonRobotRuntime(
-    ROBOT_TECHNICAL_ID,
-    ROBOT_DISPLAY_NAME_DEFAULT,
-    Path(__file__).resolve().parent,
-)
-ACTIVE_JSON_JOB: Optional[Dict[str, Any]] = None
-PENDING_RESULT_OPERATIONS: List[Dict[str, Any]] = []
-LAST_JSON_RESULT_DETAILS: Dict[str, Dict[str, Any]] = {}
-SKILL_UP_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
-_PROCESS_SHUTDOWN_MARKED_INACTIVE = False
-_WINDOWS_CONSOLE_HANDLER = None
-
-
-def _mark_process_inactive(window: Any | None = None, reason: str = "process_exit") -> None:
-    global _PROCESS_SHUTDOWN_MARKED_INACTIVE
-    if _PROCESS_SHUTDOWN_MARKED_INACTIVE:
-        return
-    _PROCESS_SHUTDOWN_MARKED_INACTIVE = True
-    try:
-        JSON_RUNTIME.write_heartbeat(
-            status="inactive",
-            current_job_id=None,
-            current_execution_request_id=None,
-            message=reason,
-        )
-    except Exception:
-        pass
-    try:
-        if window is not None and getattr(window, "_robot_id", None):
-            update_robot_status(
-                getattr(window, "_robot_supabase_url", "") or "",
-                getattr(window, "_robot_supabase_key", "") or "",
-                getattr(window, "_robot_id", "") or "",
-                "inactive",
-            )
-    except Exception:
-        pass
-
-
-def _install_process_shutdown_handlers(window: Any | None = None) -> None:
-    global _WINDOWS_CONSOLE_HANDLER
-
-    def _handle_signal(signum, _frame) -> None:
-        _mark_process_inactive(window, f"signal_{signum}")
-        raise SystemExit(0)
-
-    atexit.register(lambda: _mark_process_inactive(window, "atexit"))
-    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
-        sig = getattr(signal, signal_name, None)
-        if sig is None:
-            continue
-        try:
-            signal.signal(sig, _handle_signal)
-        except Exception:
-            pass
-
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
-
-            @handler_type
-            def _console_handler(ctrl_type: int) -> bool:
-                _mark_process_inactive(window, f"console_ctrl_{ctrl_type}")
-                return False
-
-            ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler, True)
-            _WINDOWS_CONSOLE_HANDLER = _console_handler
-        except Exception:
-            pass
-SKILL_UP_EXTENSION_UPDATE_URL = (
-    "https://clients2.google.com/service/update2/crx"
-    "?response=redirect"
-    "&prodversion=144.0.7559.110"
-    "&acceptformat=crx2,crx3"
-    f"&x=id%3D{SKILL_UP_EXTENSION_ID}%26uc"
-)
-
-
-def _current_json_job() -> Optional[Dict[str, Any]]:
-    return ACTIVE_JSON_JOB if isinstance(ACTIVE_JSON_JOB, dict) else None
-
-
-def _migrate_legacy_profile_dir(preferred_dir: Path, legacy_dir: Path) -> None:
-    if preferred_dir.exists() or not legacy_dir.exists():
-        return
-    try:
-        legacy_dir.replace(preferred_dir)
-        return
-    except Exception:
-        pass
-    try:
-        shutil.copytree(legacy_dir, preferred_dir)
-    except Exception:
-        return
-    try:
-        shutil.rmtree(legacy_dir, ignore_errors=True)
-    except Exception:
-        pass
-
-
-def _set_current_json_job(job: Optional[Dict[str, Any]]) -> None:
-    global ACTIVE_JSON_JOB
-    ACTIVE_JSON_JOB = job if isinstance(job, dict) else None
-
-
-_migrate_legacy_profile_dir(PROFILE_DIR, DATA_DIR / LEGACY_CHROME_PROFILE_DIRNAME)
-_migrate_legacy_profile_dir(PROFILE_BACKUP_DIR, DATA_DIR / LEGACY_CHROME_PROFILE_BACKUP_DIRNAME)
-
-
-def _clear_pending_result_operations() -> None:
-    PENDING_RESULT_OPERATIONS.clear()
-
-
-def _append_result_operation(operation: Dict[str, Any]) -> None:
-    if isinstance(operation, dict):
-        PENDING_RESULT_OPERATIONS.append(operation)
-
-
-def _consume_result_operations() -> List[Dict[str, Any]]:
-    operations = list(PENDING_RESULT_OPERATIONS)
-    PENDING_RESULT_OPERATIONS.clear()
-    return operations
-
-
-def _set_last_json_result_details(details: Optional[Dict[str, Dict[str, Any]]]) -> None:
-    global LAST_JSON_RESULT_DETAILS
-    LAST_JSON_RESULT_DETAILS = dict(details or {})
-
-
-def _consume_last_json_result_details() -> Dict[str, Dict[str, Any]]:
-    global LAST_JSON_RESULT_DETAILS
-    details = dict(LAST_JSON_RESULT_DETAILS or {})
-    LAST_JSON_RESULT_DETAILS = {}
-    return details
-
-
-def _extract_crx_payload(crx_bytes: bytes) -> bytes:
-    if crx_bytes[:4] != b"Cr24":
-        raise ValueError("Arquivo CRX invÃ¡lido.")
-    version = int.from_bytes(crx_bytes[4:8], "little")
-    if version == 2:
-        pubkey_len = int.from_bytes(crx_bytes[8:12], "little")
-        sig_len = int.from_bytes(crx_bytes[12:16], "little")
-        offset = 16 + pubkey_len + sig_len
-    elif version == 3:
-        header_len = int.from_bytes(crx_bytes[8:12], "little")
-        offset = 12 + header_len
-    else:
-        raise ValueError(f"VersÃ£o de CRX nÃ£o suportada: {version}")
-    return crx_bytes[offset:]
-
-
-def ensure_skill_up_extension_dir() -> Optional[Path]:
-    extension_dir = EXTENSIONS_DIR / SKILL_UP_EXTENSION_ID
-    if (extension_dir / "manifest.json").exists():
-        return extension_dir
-
-    EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_dir = EXTENSIONS_DIR / f".{SKILL_UP_EXTENSION_ID}.tmp"
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        response = requests.get(
-            SKILL_UP_EXTENSION_UPDATE_URL,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=60,
-        )
-        response.raise_for_status()
-        zip_payload = _extract_crx_payload(response.content)
-        with zipfile.ZipFile(io.BytesIO(zip_payload)) as zip_ref:
-            zip_ref.extractall(tmp_dir)
-        if not (tmp_dir / "manifest.json").exists():
-            raise RuntimeError("Manifest da extensÃ£o nÃ£o encontrado apÃ³s extraÃ§Ã£o.")
-        shutil.rmtree(extension_dir, ignore_errors=True)
-        tmp_dir.replace(extension_dir)
-        return extension_dir
-    except Exception as exc:
-        try:
-            print(f"[Certidoes] Falha ao preparar extensÃ£o captcha: {exc}", file=sys.stderr)
-        except Exception:
-            pass
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
 
 # ICO fallback
 ICO_PATH = ""
@@ -1106,24 +679,13 @@ def ensure_license_valid(app) -> bool:
 # =============================================================================
 # Robot infra helpers
 # =============================================================================
-def is_scheduler_mode_enabled() -> bool:
-    return str(os.environ.get("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "sim",
-        "on",
-    }
-
-
 def only_digits(text: str) -> str:
     return "".join(ch for ch in str(text or "") if ch.isdigit())
 
 
 def _robot_log(message: str) -> None:
-    line = emit_terminal_log(message)
     try:
-        append_runtime_log(line)
+        print(message, file=sys.stderr)
     except Exception:
         pass
 
@@ -1139,25 +701,18 @@ def get_robot_supabase(preferences: Optional[Dict[str, Any]] = None) -> Tuple[Op
 _robot_api_config: Optional[Dict[str, Any]] = None
 
 
-def build_server_api_headers(url_base: str) -> Dict[str, str]:
-    headers: Dict[str, str] = {}
-    if "ngrok" in url_base.lower():
-        headers["ngrok-skip-browser-warning"] = "true"
-    connector_secret = (os.environ.get("CONNECTOR_SECRET") or "").strip()
-    if connector_secret:
-        headers["Authorization"] = f"Bearer {hashlib.sha256(connector_secret.encode('utf-8')).hexdigest()}"
-    return headers
-
-
 def fetch_robot_config_from_api() -> Optional[Dict[str, Any]]:
     url_base = (os.environ.get("FOLDER_STRUCTURE_API_URL") or os.environ.get("SERVER_API_URL") or "").strip().rstrip("/")
     if not url_base:
         return None
     try:
+        headers = {}
+        if "ngrok" in url_base.lower():
+            headers["ngrok-skip-browser-warning"] = "true"
         response = requests.get(
             f"{url_base}/api/robot-config",
             params={"technical_id": ROBOT_TECHNICAL_ID},
-            headers=build_server_api_headers(url_base),
+            headers=headers,
             timeout=15,
         )
         response.raise_for_status()
@@ -1228,27 +783,6 @@ def load_companies_from_supabase(supabase_url: str, supabase_anon_key: str) -> L
 def load_companies_from_supabase_by_ids(
     supabase_url: str, supabase_anon_key: str, company_ids: List[str]
 ) -> List[Dict[str, str]]:
-    snapshot_rows = JSON_RUNTIME.load_job_companies(_current_json_job(), company_ids)
-    if snapshot_rows:
-        companies: List[Dict[str, str]] = []
-        for row in snapshot_rows:
-            company_id = row.get("company_id") or row.get("id")
-            if not company_id:
-                continue
-            companies.append(
-                {
-                    "id": str(company_id),
-                    "name": str(row.get("name") or "").strip(),
-                    "doc": only_digits(row.get("document") or row.get("doc") or ""),
-                    "cnpj": only_digits(row.get("document") or row.get("cnpj") or ""),
-                    "auth_mode": str(row.get("auth_mode") or AUTH_PASSWORD).strip().lower(),
-                    "cert_blob_b64": row.get("cert_blob_b64") or "",
-                    "cert_password": row.get("cert_password") or "",
-                }
-            )
-        order_map = {company_id: idx for idx, company_id in enumerate(company_ids)}
-        companies.sort(key=lambda item: order_map.get(item.get("id"), 10**9))
-        return companies
     if not (supabase_url and supabase_anon_key and company_ids):
         return []
     try:
@@ -1302,14 +836,92 @@ def fetch_robot_display_config(supabase_url: str, supabase_anon_key: str) -> Opt
 
 def register_robot(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
     try:
-        return JSON_RUNTIME.register_robot()
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        api_cfg = get_robot_api_config() or {}
+        segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+        res = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        rows = getattr(res, "data", None) or []
+        if rows:
+            robot_id = rows[0]["id"]
+            upd = client.table("robots").update(
+                {
+                    "status": "active",
+                    "segment_path": segment_path,
+                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", robot_id).execute()
+            upd_rows = getattr(upd, "data", None)
+            if upd_rows is None:
+                _robot_log("[Robô] Aviso: update em robots não retornou linhas. Verifique RLS/permissões.")
+            return robot_id
+        ins = (
+            client.table("robots")
+            .insert(
+                {
+                    "technical_id": ROBOT_TECHNICAL_ID,
+                    "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+                    "status": "active",
+                    "segment_path": segment_path,
+                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .select("id")
+            .execute()
+        )
+        data = getattr(ins, "data", None) or []
+        if data:
+            return data[0].get("id")
+        _robot_log("[Robô] Insert em robots retornou vazio. Verifique RLS/permissões na tabela robots para a anon key.")
+        return None
     except Exception as exc:
-        _robot_log(f"[Robô] Falha ao iniciar runtime JSON: {exc}")
+        _robot_log(f"[Robô] Falha ao registrar no dashboard (robots): {exc}")
         return None
 
 
 def register_robot_compat(supabase_url: str, supabase_anon_key: str) -> Optional[str]:
-    return register_robot(supabase_url, supabase_anon_key)
+    try:
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        api_cfg = get_robot_api_config() or {}
+        segment_path = (api_cfg.get("segment_path") or ROBOT_SEGMENT_PATH_DEFAULT).strip()
+        res = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        rows = getattr(res, "data", None) or []
+        if rows:
+            robot_id = rows[0]["id"]
+            upd = client.table("robots").update(
+                {
+                    "status": "active",
+                    "segment_path": segment_path,
+                    "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", robot_id).execute()
+            upd_rows = getattr(upd, "data", None)
+            if upd_rows is None:
+                _robot_log("[Robô] Aviso: update em robots não retornou linhas. Verifique RLS/permissões.")
+            return robot_id
+
+        ins = client.table("robots").insert(
+            {
+                "technical_id": ROBOT_TECHNICAL_ID,
+                "display_name": ROBOT_DISPLAY_NAME_DEFAULT,
+                "status": "active",
+                "segment_path": segment_path,
+                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+        ins_data = getattr(ins, "data", None)
+        if ins_data is None:
+            _robot_log("[Robô] Insert em robots não retornou data. Vou tentar reler pelo technical_id.")
+
+        reread = client.table("robots").select("id").eq("technical_id", ROBOT_TECHNICAL_ID).execute()
+        reread_rows = getattr(reread, "data", None) or []
+        if reread_rows:
+            return reread_rows[0].get("id")
+
+        _robot_log("[Robô] Insert em robots não ficou visível. Verifique RLS/permissões na tabela robots para a anon key.")
+        return None
+    except Exception as exc:
+        _robot_log(f"[Robô] Falha ao registrar no dashboard (robots): {exc}")
+        return None
 
 
 def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Dict[str, Any]]:
@@ -1332,83 +944,26 @@ def fetch_robot_config(supabase_url: str, supabase_anon_key: str) -> Optional[Di
 
 def update_robot_heartbeat(supabase_url: str, supabase_anon_key: str, robot_id: str) -> None:
     try:
-        job = _current_json_job()
-        JSON_RUNTIME.write_heartbeat(
-            status="processing" if job else "active",
-            current_job_id=(job or {}).get("job_id"),
-            current_execution_request_id=(job or {}).get("execution_request_id"),
-        )
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update(
+            {
+                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", robot_id).execute()
     except Exception as exc:
         _robot_log(f"[Robô] Falha ao atualizar heartbeat: {exc}")
         pass
 
 
-def append_runtime_log(message: str) -> None:
-    try:
-        LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        with open(RUNTIME_LOG_PATH, "a", encoding="utf-8") as handler:
-            handler.write(f"{message}\n")
-    except Exception:
-        pass
-
-
-def emit_terminal_log(message: str) -> str:
-    text = str(message or "").rstrip()
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    line = f"[{timestamp}] [CERTIDOES] {text}" if text else f"[{timestamp}] [CERTIDOES]"
-    try:
-        print(line, flush=True)
-    except Exception:
-        pass
-    return line
-
-
-def _pid_is_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
-def ensure_single_instance() -> None:
-    INSTANCE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    current_pid = os.getpid()
-    if INSTANCE_LOCK_PATH.exists():
-        try:
-            existing_pid = int((INSTANCE_LOCK_PATH.read_text(encoding="utf-8") or "").strip() or "0")
-        except Exception:
-            existing_pid = 0
-        if existing_pid and existing_pid != current_pid and _pid_is_alive(existing_pid):
-            append_runtime_log(f"[Robo] Instância já em execução (PID {existing_pid}). Encerrando novo processo.")
-            raise SystemExit(0)
-    INSTANCE_LOCK_PATH.write_text(str(current_pid), encoding="utf-8")
-
-    def _cleanup() -> None:
-        try:
-            if not INSTANCE_LOCK_PATH.exists():
-                return
-            saved_pid = int((INSTANCE_LOCK_PATH.read_text(encoding="utf-8") or "").strip() or "0")
-            if saved_pid == current_pid:
-                INSTANCE_LOCK_PATH.unlink()
-        except Exception:
-            pass
-
-    atexit.register(_cleanup)
-
-
 def update_robot_status(supabase_url: str, supabase_anon_key: str, robot_id: str, status: str) -> None:
     try:
-        job = _current_json_job()
-        JSON_RUNTIME.write_heartbeat(
-            status=status,
-            current_job_id=(job or {}).get("job_id"),
-            current_execution_request_id=(job or {}).get("execution_request_id"),
-        )
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("robots").update(
+            {
+                "status": status,
+                "last_heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", robot_id).execute()
     except Exception as exc:
         _robot_log(f"[Robô] Falha ao atualizar status '{status}': {exc}")
         pass
@@ -1436,19 +991,79 @@ def claim_execution_request(
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> Optional[Dict[str, Any]]:
     try:
-        job = JSON_RUNTIME.load_job()
-        if not job:
-            return None
-        _set_current_json_job(job)
-        _clear_pending_result_operations()
-        _set_last_json_result_details({})
-        JSON_RUNTIME.write_heartbeat(
-            status="processing",
-            current_job_id=job.get("job_id"),
-            current_execution_request_id=job.get("execution_request_id"),
-            message="job_loaded",
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        active_rule_ids = _get_active_schedule_rule_ids(client)
+        try:
+            rpc_response = client.rpc(
+                "claim_next_execution_request",
+                {
+                    "p_robot_technical_id": ROBOT_TECHNICAL_ID,
+                    "p_robot_id": robot_id,
+                    "p_active_schedule_rule_ids": active_rule_ids,
+                },
+            ).execute()
+            rpc_rows = getattr(rpc_response, "data", None) or []
+            if rpc_rows:
+                return rpc_rows[0]
+        except Exception:
+            pass
+        res = (
+            client.table("execution_requests")
+            .select("*")
+            .eq("status", "pending")
+            .order("execution_order")
+            .order("created_at")
+            .limit(10)
+            .execute()
         )
-        return job
+        rows = getattr(res, "data", None) or []
+        for row in rows:
+            schedule_rule_id = row.get("schedule_rule_id")
+            if schedule_rule_id is not None and active_rule_ids:
+                if schedule_rule_id not in active_rule_ids:
+                    continue
+            execution_mode = str(row.get("execution_mode") or "sequential").strip().lower()
+            execution_group_id = row.get("execution_group_id")
+            if execution_mode == "sequential" and execution_group_id:
+                blockers = (
+                    client.table("execution_requests")
+                    .select("id, execution_order, created_at")
+                    .eq("execution_group_id", execution_group_id)
+                    .in_("status", ["pending", "running"])
+                    .order("execution_order")
+                    .order("created_at")
+                    .execute()
+                )
+                blocker_rows = getattr(blockers, "data", None) or []
+                if blocker_rows and blocker_rows[0].get("id") != row.get("id"):
+                    continue
+            tech_ids = row.get("robot_technical_ids") or []
+            if "all" in tech_ids or ROBOT_TECHNICAL_ID in tech_ids:
+                (
+                    client.table("execution_requests")
+                    .update(
+                        {
+                            "status": "running",
+                            "robot_id": robot_id,
+                            "claimed_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    .eq("id", row["id"])
+                    .eq("status", "pending")
+                    .execute()
+                )
+                claimed = (
+                    client.table("execution_requests")
+                    .select("*")
+                    .eq("id", row["id"])
+                    .eq("status", "running")
+                    .limit(1)
+                    .execute()
+                )
+                claimed_rows = getattr(claimed, "data", None) or []
+                if claimed_rows:
+                    return claimed_rows[0]
+        return None
     except Exception as exc:
         if log_callback:
             log_callback(f"[Robô] Erro ao buscar job da fila: {exc}")
@@ -1461,30 +1076,16 @@ def complete_execution_request(
     request_id: str,
     success: bool,
     error_message: Optional[str] = None,
-    summary: Optional[Dict[str, Any]] = None,
-    payload: Optional[Dict[str, Any]] = None,
-    company_results: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     try:
-        job = _current_json_job()
-        operations = _consume_result_operations()
-        if summary is None and payload is None and company_results is None:
-            fallback_details = _consume_last_json_result_details()
-            if fallback_details:
-                success, error_message, summary, payload, company_results = build_certidoes_result(fallback_details)
-        final_payload: Dict[str, Any] = dict(payload or {})
-        if operations:
-            final_payload["operations"] = operations
-        JSON_RUNTIME.write_result(
-            job=job if isinstance(job, dict) and str(job.get("execution_request_id") or job.get("id") or "") == str(request_id) else {"execution_request_id": request_id, "job_id": request_id},
-            success=success,
-            error_message=error_message,
-            summary=summary,
-            payload=final_payload,
-            company_results=company_results,
-        )
-        _set_current_json_job(None)
-        _set_last_json_result_details({})
+        client = create_client(supabase_url.strip(), supabase_anon_key.strip())
+        client.table("execution_requests").update(
+            {
+                "status": "completed" if success else "failed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "error_message": error_message,
+            }
+        ).eq("id", request_id).execute()
     except Exception:
         pass
 
@@ -1570,31 +1171,18 @@ def normalize_result_status(status_text: str) -> str:
     return "irregular"
 
 
-def resolve_relative_output_path(path_value: Optional[Path], config: Dict[str, Any]) -> Optional[str]:
-    if not path_value:
-        return None
-    try:
-        path_obj = Path(path_value)
-        root = resolve_reports_root(config)
-        return path_obj.resolve().relative_to(root.resolve()).as_posix()
-    except Exception:
-        try:
-            return str(Path(path_value))
-        except Exception:
-            return None
-
-
-def queue_certidao_result(
+def sync_certidao_result(
+    supabase_url: str,
+    supabase_anon_key: str,
     company_id: str,
     tipo_certidao: str,
     status_text: str,
     pdf_path: Optional[Path],
     data_consulta: datetime,
-    config: Dict[str, Any],
 ) -> None:
-    if not (company_id and tipo_certidao):
+    if not (supabase_url and supabase_anon_key and company_id and tipo_certidao):
         return
-    file_value = resolve_relative_output_path(pdf_path, config)
+    file_value = str(pdf_path) if pdf_path else None
     periodo = data_consulta.strftime("%Y-%m")
     document_date = data_consulta.strftime("%Y-%m-%d")
     payload = {
@@ -1607,74 +1195,39 @@ def queue_certidao_result(
         "document_date": document_date,
         "robot_technical_id": ROBOT_TECHNICAL_ID,
     }
-    idem_key = f"{company_id}:{tipo_certidao}:{document_date}"
-    _append_result_operation(
-        {
-            "kind": "replace_rows",
-            "table": "sync_events",
-            "filters": {
+    try:
+        base_url = supabase_url.strip().rstrip("/")
+        anon_key = supabase_anon_key.strip()
+        idem_key = f"{company_id}:{tipo_certidao}:{document_date}"
+        headers = {
+            "apikey": anon_key,
+            "Authorization": f"Bearer {anon_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            requests.delete(
+                f"{base_url}/rest/v1/sync_events",
+                params={"idempotency_key": f"eq.{idem_key}"},
+                headers={**headers, "Prefer": "return=minimal"},
+                timeout=20,
+            )
+        except Exception:
+            pass
+        response = requests.post(
+            f"{base_url}/rest/v1/sync_events",
+            headers={**headers, "Prefer": "return=minimal"},
+            json={
                 "company_id": company_id,
+                "tipo": "certidao_resultado",
+                "payload": json.dumps(payload, ensure_ascii=False),
+                "status": "sucesso",
                 "idempotency_key": idem_key,
             },
-            "rows": [
-                {
-                    "company_id": company_id,
-                    "tipo": "certidao_resultado",
-                    "payload": json.dumps(payload, ensure_ascii=False),
-                    "status": "concluido",
-                    "idempotency_key": idem_key,
-                }
-            ],
-        }
-    )
-
-
-def build_certidoes_result(details: Dict[str, Dict[str, Any]]) -> Tuple[bool, Optional[str], Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
-    company_results: List[Dict[str, Any]] = []
-    success_count = 0
-    failed_count = 0
-    saved_files = 0
-
-    for company_name, raw_detail in (details or {}).items():
-        detail = raw_detail if isinstance(raw_detail, dict) else {}
-        certidoes = {
-            "estadual_go": detail.get("Estadual", ""),
-            "federal": detail.get("Federal", ""),
-            "fgts": detail.get("FGTS", ""),
-        }
-        file_paths = detail.get("file_paths") if isinstance(detail.get("file_paths"), dict) else {}
-        saved_files += len([value for value in file_paths.values() if value])
-        has_error = _detail_has_error(detail)
-        if has_error:
-            failed_count += 1
-        else:
-            success_count += 1
-        company_results.append(
-            {
-                "company_id": detail.get("company_id"),
-                "company_name": company_name,
-                "cnpj": detail.get("cnpj"),
-                "status": "failed" if has_error else "success",
-                "certidoes": certidoes,
-                "file_paths": file_paths,
-                "output_dir": detail.get("output_dir"),
-                "consulted_at": detail.get("consulted_at"),
-            }
+            timeout=20,
         )
-
-    total = len(company_results)
-    success = total > 0 and failed_count == 0
-    error_message = None if success else ("Nenhum resultado foi produzido." if total == 0 else "Uma ou mais empresas falharam na emissão das certidões.")
-    summary = {
-        "companies_total": total,
-        "success": success_count,
-        "failed": failed_count,
-        "saved_files": saved_files,
-    }
-    payload = {
-        "companies": company_results,
-    }
-    return success, error_message, summary, payload, company_results
+        response.raise_for_status()
+    except Exception as exc:
+        print(f"[Robô] Falha ao sincronizar certidão '{tipo_certidao}' da empresa {company_id}: {exc}", file=sys.stderr)
 
 
 # =============================================================================
@@ -2325,9 +1878,7 @@ class AutomationThread(QThread):
         self.finished_at: Optional[datetime] = None
         self._minimize_log_sent = False
         self._chrome_proc: Optional[subprocess.Popen] = None
-        self._skill_up_extension_ready = False
         self._stop_requested = False
-        self._working_profile_prepared = False
 
     def stop(self) -> None:
         # Parada cooperativa (evita deixar Chrome/processos/perfil órfãos).
@@ -2407,220 +1958,6 @@ class AutomationThread(QThread):
                 except Exception:
                     pass
 
-    def _profile_has_skill_up_installed(self, profile_dir: Path) -> bool:
-        secure_prefs = profile_dir / "Default" / "Secure Preferences"
-        extension_root = profile_dir / "Default" / "Extensions" / SKILL_UP_EXTENSION_ID
-        if not extension_root.exists():
-            return False
-        if not secure_prefs.exists():
-            return False
-        try:
-            payload = json.loads(secure_prefs.read_text(encoding="utf-8"))
-        except Exception:
-            return False
-        settings = (((payload.get("extensions") or {}).get("settings")) or {})
-        extension_row = settings.get(SKILL_UP_EXTENSION_ID)
-        if not isinstance(extension_row, dict):
-            return False
-        state = str(extension_row.get("state") or "").strip()
-        path_value = str(extension_row.get("path") or "").strip()
-        return state in {"1", "enabled", "ENABLED"} or bool(path_value)
-
-    def _resolve_extension_source_profile(self) -> Optional[Path]:
-        candidates = []
-        if SYSTEM_CHROME_DEFAULT_PROFILE_DIR:
-            candidates.append(SYSTEM_CHROME_DEFAULT_PROFILE_DIR)
-        if SYSTEM_CHROME_PROFILE_1_DIR:
-            candidates.append(SYSTEM_CHROME_PROFILE_1_DIR)
-
-        seen: set[str] = set()
-        for candidate in candidates:
-            try:
-                resolved = candidate.resolve()
-            except Exception:
-                resolved = candidate
-            key = str(resolved).lower()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            if self._source_profile_has_skill_up(resolved):
-                return resolved
-        return None
-
-    def _source_profile_has_skill_up(self, source_profile_dir: Path) -> bool:
-        secure_prefs = source_profile_dir / "Secure Preferences"
-        extension_root = source_profile_dir / "Extensions" / SKILL_UP_EXTENSION_ID
-        if not secure_prefs.exists() or not extension_root.exists():
-            return False
-        try:
-            payload = json.loads(secure_prefs.read_text(encoding="utf-8", errors="ignore"))
-            settings = (payload.get("extensions") or {}).get("settings") or {}
-            entry = settings.get(SKILL_UP_EXTENSION_ID)
-            if not isinstance(entry, dict):
-                return False
-            manifest = entry.get("manifest") or {}
-            return "Skill Up" in str(manifest.get("name") or "")
-        except Exception:
-            return False
-
-    def _is_profile_healthy(self, profile_dir: Path) -> bool:
-        required = (
-            profile_dir / "Local State",
-            profile_dir / "Default" / "Preferences",
-            profile_dir / "Default" / "Secure Preferences",
-        )
-        return all(path.exists() for path in required)
-
-    def _copy_profile_tree(self, source: Path, target: Path) -> None:
-        ignore_names = {
-            "Cache",
-            "Code Cache",
-            "GPUCache",
-            "GrShaderCache",
-            "GraphiteDawnCache",
-            "DawnGraphiteCache",
-            "DawnWebGPUCache",
-            "ShaderCache",
-            "Crashpad",
-            "BrowserMetrics",
-            "BrowserMetrics-spare.pma",
-            "DevToolsActivePort",
-            "SingletonCookie",
-            "SingletonLock",
-            "SingletonSocket",
-            "lockfile",
-            "LOCK",
-            "Cookies",
-            "Cookies-journal",
-            "Network Persistent State",
-            "Session Storage",
-            "Sessions",
-            "Local Storage",
-            "shared_proto_db",
-            "Site Characteristics Database",
-            "Sync Data",
-            "Safe Browsing Network",
-        }
-
-        def _ignore(_dir: str, names: List[str]) -> set[str]:
-            return {name for name in names if name in ignore_names}
-
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        shutil.copytree(source, target, ignore=_ignore)
-
-    def _remove_tree_with_retries(self, target: Path, *, max_attempts: int = 6) -> None:
-        if not target.exists():
-            return
-        for attempt in range(max_attempts):
-            try:
-                shutil.rmtree(target, ignore_errors=False)
-            except FileNotFoundError:
-                return
-            except Exception:
-                time.sleep(1.0 + attempt * 0.5)
-            if not target.exists():
-                return
-        shutil.rmtree(target, ignore_errors=True)
-        if target.exists():
-            raise RuntimeError(f"Não foi possível remover completamente o perfil Chrome em {target}")
-
-    def _seed_profile_backup_from_source(self, backup_dir: Path) -> bool:
-        source_profile_dir = self._resolve_extension_source_profile()
-        if source_profile_dir is None:
-            return False
-        source_user_data_dir = source_profile_dir.parent
-        temp_dir = backup_dir.with_name(f"{backup_dir.name}_seed_tmp")
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        (temp_dir / "Default").mkdir(parents=True, exist_ok=True)
-        copy_items = [
-            ("Local State", False),
-            ("Preferences", True),
-            ("Secure Preferences", True),
-            ("Extensions", True),
-            ("Local Extension Settings", True),
-            ("Managed Extension Settings", True),
-            ("Sync Extension Settings", True),
-            ("Extension Rules", True),
-            ("Extension Scripts", True),
-            ("Extension State", True),
-            ("Service Worker", True),
-        ]
-        try:
-            for relative_name, in_default in copy_items:
-                source_path = (source_profile_dir / relative_name) if in_default else (source_user_data_dir / relative_name)
-                target_path = (temp_dir / "Default" / relative_name) if in_default else (temp_dir / relative_name)
-                if not source_path.exists():
-                    continue
-                if source_path.is_dir():
-                    shutil.copytree(source_path, target_path, dirs_exist_ok=True)
-                else:
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source_path, target_path)
-
-            if not self._profile_has_skill_up_installed(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return False
-
-            if backup_dir.exists():
-                shutil.rmtree(backup_dir, ignore_errors=True)
-            temp_dir.replace(backup_dir)
-            self._cleanup_profile_runtime_files(backup_dir)
-            self.log.emit("🧱 Backup estável do perfil Chrome criado a partir do perfil preparado do Chrome local.")
-            return True
-        except Exception as exc:
-            self.log.emit(f"[WARN] Falha ao criar backup do perfil Chrome a partir do Chrome local: {exc}")
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            return False
-
-    def _ensure_profile_backup(self, profile_dir: Path, backup_dir: Path) -> None:
-        profile_dir.parent.mkdir(parents=True, exist_ok=True)
-        backup_dir.parent.mkdir(parents=True, exist_ok=True)
-        if not profile_dir.exists():
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            self.log.emit(f"🧱 Pasta do perfil Chrome criada em {profile_dir}.")
-        if self._is_profile_healthy(backup_dir) and self._profile_has_skill_up_installed(backup_dir):
-            return
-        if self._is_profile_healthy(profile_dir) and self._profile_has_skill_up_installed(profile_dir):
-            self.log.emit("🧱 Criando backup estável do perfil Chrome preparado do robô.")
-            self._copy_profile_tree(profile_dir, backup_dir)
-            self._cleanup_profile_runtime_files(backup_dir)
-            return
-        if self._seed_profile_backup_from_source(backup_dir):
-            return
-        raise RuntimeError(
-            "Perfil Chrome preparado do robô não encontrado. "
-            "Prepare data/chrome_profile com a extensão/configuração necessária antes de executar."
-        )
-
-    def _prepare_working_profile(self, profile_dir: Path, backup_dir: Path) -> None:
-        self._ensure_profile_backup(profile_dir, backup_dir)
-        self._kill_stale_chrome_processes(str(CHROME_EXE), profile_dir, int(CHROME_CDP_PORT))
-        self._remove_tree_with_retries(profile_dir)
-        profile_dir.parent.mkdir(parents=True, exist_ok=True)
-        self._copy_profile_tree(backup_dir, profile_dir)
-        self._cleanup_profile_runtime_files(profile_dir)
-        if not self._profile_has_skill_up_installed(profile_dir):
-            raise RuntimeError("O perfil de trabalho não contém a extensão Skill Up preparada.")
-        self._working_profile_prepared = True
-        self.log.emit("🧱 Perfil Chrome de trabalho recriado a partir do backup estável.")
-
-    def _restore_working_profile(self, profile_dir: Path, backup_dir: Path) -> None:
-        try:
-            self._ensure_profile_backup(profile_dir, backup_dir)
-        except Exception as exc:
-            self.log.emit(f"[WARN] Backup do perfil Chrome indisponível para restauração: {exc}")
-            return
-        try:
-            self._remove_tree_with_retries(profile_dir)
-            profile_dir.parent.mkdir(parents=True, exist_ok=True)
-            self._copy_profile_tree(backup_dir, profile_dir)
-            self._cleanup_profile_runtime_files(profile_dir)
-            self._working_profile_prepared = False
-            self.log.emit("🧱 Perfil Chrome de trabalho descartado e restaurado a partir do backup estável.")
-        except Exception as exc:
-            self.log.emit(f"[WARN] Falha ao restaurar o perfil Chrome de trabalho: {exc}")
-
     def _kill_stale_chrome_processes(self, chrome_exe: str, profile_dir: Path, port: int) -> None:
         chrome_hint = os.path.normcase(str(chrome_exe or "")).lower()
         profile_hint = os.path.normcase(str(profile_dir.resolve())).lower()
@@ -2676,9 +2013,12 @@ Get-CimInstance Win32_Process | Where-Object {{
         if not exe:
             raise RuntimeError("Chrome portátil não encontrado em data/Chrome/chrome.exe.")
 
-        # 2) Perfil: sempre o mesmo backup preparado, recriado como cópia de trabalho descartável.
+        # 2) Perfil: sempre o mesmo (persistente)
         profile_dir = PROFILE_DIR if isinstance(PROFILE_DIR, Path) else Path(PROFILE_DIR)
-        self._prepare_working_profile(profile_dir, PROFILE_BACKUP_DIR)
+        try:
+            profile_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
         # 3) CDP: 1 Chrome só. Se já existir escutando na porta, só conecta.
         port = int(CHROME_CDP_PORT)
@@ -2779,7 +2119,6 @@ Get-CimInstance Win32_Process | Where-Object {{
         if not page:
             page = ctx.new_page()
         try:
-            self._ensure_skill_up_extension_ready(ctx)
             page = self._ensure_single_tab(ctx)
             page.goto("about:blank", wait_until="domcontentloaded", timeout=15000)
         except Exception:
@@ -3002,57 +2341,11 @@ Get-CimInstance Win32_Process | Where-Object {{
 
     def _download_pdf_viewer(self, pdf_page, dest_path: Path, label: str = "PDF") -> bool:
         try:
-            current_url = (pdf_page.url or "").lower()
-        except Exception:
-            current_url = ""
-        is_pdf_viewer = current_url.startswith("chrome-extension://") or "pdf" in current_url
-        try:
-            if is_pdf_viewer:
-                pdf_page.wait_for_load_state("domcontentloaded", timeout=5000)
-            else:
-                pdf_page.wait_for_load_state("load", timeout=15000)
+            pdf_page.wait_for_load_state("load", timeout=PORTAL_TIMEOUT)
         except Exception:
             pass
-
-    def _ensure_skill_up_extension_ready(self, ctx) -> None:
-        if self._skill_up_extension_ready or not ctx:
-            return
-
-        extension_url_prefix = f"chrome-extension://{SKILL_UP_EXTENSION_ID}/"
-        setup_url = f"{extension_url_prefix}setup.html"
-        service_worker_seen = False
-
-        for _ in range(30):
-            try:
-                workers = list(getattr(ctx, "service_workers", []) or [])
-            except Exception:
-                workers = []
-            if any(SKILL_UP_EXTENSION_ID in (getattr(worker, "url", "") or "") for worker in workers):
-                service_worker_seen = True
-                break
-            time.sleep(0.5)
-
-        setup_page = None
         try:
-            setup_page = ctx.new_page()
-            setup_page.goto(setup_url, wait_until="domcontentloaded", timeout=20000)
-            setup_page.wait_for_timeout(2000)
-            service_worker_seen = True
-            self.log.emit("🧩 Extensão Skill Up carregada e página de setup validada.")
-        except Exception as exc:
-            self.log.emit(f"[WARN] Não foi possível validar a página da extensão Skill Up: {exc}")
-        finally:
-            if setup_page is not None:
-                try:
-                    setup_page.close()
-                except Exception:
-                    pass
-
-        if not service_worker_seen:
-            raise RuntimeError("Extensão Skill Up não foi confirmada no Chrome. O robô não pode prosseguir sem a extensão.")
-        self._skill_up_extension_ready = True
-        try:
-            pdf_page.wait_for_timeout(800 if is_pdf_viewer else 450)
+            pdf_page.wait_for_timeout(450)
         except Exception:
             pass
         if not self.hide_browser:
@@ -3220,20 +2513,6 @@ Get-CimInstance Win32_Process | Where-Object {{
                     pass
 
         if not download:
-            try:
-                cdp_session = pdf_page.context.new_cdp_session(pdf_page)
-                pdf_data = cdp_session.send("Page.printToPDF", {"printBackground": True})
-                raw_pdf = base64.b64decode(pdf_data.get("data", ""))
-                if raw_pdf.startswith(b"%PDF"):
-                    dest_path.parent.mkdir(parents=True, exist_ok=True)
-                    dest_path.write_bytes(raw_pdf)
-                    self.log.emit(f"✅ {label} salvo via CDP/PDF viewer em: {dest_path}")
-                    self._minimize_browser_window(pdf_page.context, pdf_page, log_once=True)
-                    return True
-            except Exception:
-                pass
-
-        if not download:
             self.log.emit(f"❌ Não consegui disparar download do {label} pelo visualizador. Último erro: {last_error}")
             return False
 
@@ -3329,15 +2608,6 @@ Get-CimInstance Win32_Process | Where-Object {{
             self.log.emit("ℹ️ A SEFAZ GO abriu direto no PDF; seguindo para o download.")
         pop.wait_for_timeout(4000)
 
-        # se veio PDF do popup, prioriza ele
-        if pop_pdf:
-            raw_popup_pdf = pop_pdf[-1]
-            if raw_popup_pdf.startswith(b"%PDF"):
-                dest_path.write_bytes(raw_popup_pdf)
-                self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
-                return dest_path
-            self.log.emit("⚠️ A resposta capturada da SEFAZ GO não era um PDF válido. Vou tentar o download pelo visualizador.")
-
         try:
             downloaded = self._download_pdf_viewer(pop, dest_path, label="certidão estadual")
             if downloaded:
@@ -3345,14 +2615,17 @@ Get-CimInstance Win32_Process | Where-Object {{
         except Exception as e:
             self.log.emit(f"⚠️ Falha ao tentar clicar para baixar a certidão estadual: {e}")
 
+        # se veio PDF do popup, prioriza ele
+        if pop_pdf:
+            dest_path.write_bytes(pop_pdf[-1])
+            self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
+            return dest_path
+
         # se não vier o PDF, salva o container inteiro (HTML) como fallback
         if pdf_bytes:
-            raw_pdf = pdf_bytes[-1]
-            if raw_pdf.startswith(b"%PDF"):
-                dest_path.write_bytes(raw_pdf)
-                self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
-                return dest_path
-            self.log.emit("⚠️ O fallback de rede da SEFAZ GO não retornou um PDF válido.")
+            dest_path.write_bytes(pdf_bytes[-1])
+            self.log.emit(f"📄 Certidão estadual salva: {dest_path}")
+            return dest_path
         try:
             container_html = pop.locator("#container").evaluate("el => el.outerHTML")
             fallback = out_dir / "estadual_go_container.html"
@@ -3735,37 +3008,33 @@ Get-CimInstance Win32_Process | Where-Object {{
                     self.log.emit(f"⚠️ Erro geral para {name_disp}: {e}")
 
                 # garante apenas uma aba antes de seguir para a próxima empresa
-                detail["consulted_at"] = consulta_at.isoformat()
-                detail["output_dir"] = resolve_relative_output_path(out_dir, self.config) or str(out_dir)
-                detail["file_paths"] = {
-                    "estadual_go": resolve_relative_output_path(pdf_est, self.config),
-                    "federal": resolve_relative_output_path(pdf_fed, self.config),
-                    "fgts": resolve_relative_output_path(pdf_fgts, self.config),
-                }
                 if company_id and (attempt >= max_attempts or not _detail_has_error(detail)):
-                    queue_certidao_result(
+                    sync_certidao_result(
+                        self.supabase_url,
+                        self.supabase_anon_key,
                         company_id,
                         "estadual_go",
                         detail.get("Estadual", ""),
                         pdf_est,
                         consulta_at,
-                        self.config,
                     )
-                    queue_certidao_result(
+                    sync_certidao_result(
+                        self.supabase_url,
+                        self.supabase_anon_key,
                         company_id,
                         "federal",
                         detail.get("Federal", ""),
                         pdf_fed,
                         consulta_at,
-                        self.config,
                     )
-                    queue_certidao_result(
+                    sync_certidao_result(
+                        self.supabase_url,
+                        self.supabase_anon_key,
                         company_id,
                         "fgts",
                         detail.get("FGTS", ""),
                         pdf_fgts,
                         consulta_at,
-                        self.config,
                     )
                 try:
                     self._ensure_single_tab(context)
@@ -3834,11 +3103,10 @@ Get-CimInstance Win32_Process | Where-Object {{
                 pass
             try:
                 profile_dir = PROFILE_DIR if isinstance(PROFILE_DIR, Path) else Path(PROFILE_DIR)
-                self._restore_working_profile(profile_dir, PROFILE_BACKUP_DIR)
+                self._cleanup_profile_runtime_files(profile_dir)
             except Exception:
                 pass
             self._chrome_proc = None
-        _set_last_json_result_details(self.results_details)
         self.finished.emit(self.results)
         self.finished_at = datetime.now()
 # =============================================================================
@@ -3929,37 +3197,32 @@ class MainWindow(QMainWindow):
 
     def _init_robot_integration(self):
         url, key = get_robot_supabase()
-        self._robot_supabase_url = url or None
-        self._robot_supabase_key = key or None
+        self._robot_supabase_url = url
+        self._robot_supabase_key = key
         if self.output_base:
             self.config["_resolved_output_base"] = str(self.output_base)
         self.config["_segment_path"] = self._segment_path
         self.config["_date_rule"] = self._date_rule
-        self._robot_id = register_robot_compat(url or "", key or "")
         if url and key:
             self.companies = load_companies_from_supabase(url, key)
             self._sort_companies()
+            self._robot_id = register_robot_compat(url, key)
             if not (get_robot_api_config() or {}).get("segment_path"):
                 robot_cfg = fetch_robot_config(url, key)
                 if robot_cfg and robot_cfg.get("segment_path"):
                     self._segment_path = robot_cfg["segment_path"]
                     self.config["_segment_path"] = self._segment_path
             if self._robot_id:
-                self._log("[Robo] Dashboard sincronizado.")
+                self.heartbeat_timer.start(60000)
+                self.display_config_timer.start(10000)
+                self.job_poll_timer.start(10000)
+                QTimer.singleShot(500, self._on_display_config_poll)
+                QTimer.singleShot(1500, self._on_robot_poll_job)
                 self._log("[Robô] Conectado ao dashboard. Status: ativo.")
             else:
                 self._log("[Robô] Supabase encontrado, mas falhou ao registrar em robots.")
         else:
             self._log("[Robô] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não definidos.")
-        if self._robot_id:
-            if not self.heartbeat_timer.isActive():
-                self.heartbeat_timer.start(60000)
-            if not self.job_poll_timer.isActive():
-                self.job_poll_timer.start(10000)
-            if url and key and not self.display_config_timer.isActive():
-                self.display_config_timer.start(10000)
-                QTimer.singleShot(500, self._on_display_config_poll)
-            QTimer.singleShot(1500, self._on_robot_poll_job)
         self._reload_company_list()
 
     def _refresh_companies_from_supabase(self):
@@ -3972,7 +3235,7 @@ class MainWindow(QMainWindow):
         self._reload_company_list()
 
     def _on_robot_heartbeat(self):
-        if self._robot_id:
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_heartbeat(self._robot_supabase_url, self._robot_supabase_key, self._robot_id)
 
     def _on_display_config_poll(self):
@@ -3998,7 +3261,7 @@ class MainWindow(QMainWindow):
         self._reload_company_list()
 
     def _on_robot_poll_job(self):
-        if not self._robot_id:
+        if not self._robot_id or not self._robot_supabase_url or not self._robot_supabase_key:
             return
         if self.thread and self.thread.isRunning():
             return
@@ -4069,7 +3332,7 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
-        if self._robot_id:
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             current_status = "processing" if self.thread and self.thread.isRunning() else "active"
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, current_status)
         if not self.heartbeat_timer.isActive():
@@ -4094,7 +3357,7 @@ class MainWindow(QMainWindow):
             if self.thread.isRunning():
                 self.thread.terminate()
                 self.thread.wait(2000)
-        if self._robot_id:
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "inactive")
         self.heartbeat_timer.stop()
         self.display_config_timer.stop()
@@ -4685,9 +3948,7 @@ class MainWindow(QMainWindow):
         self._update_chk_text(checked)
 
     def log_message(self, msg: str):
-        line = emit_terminal_log(msg)
-        self.log_frame.text.appendPlainText(line)
-        append_runtime_log(line)
+        self.log_frame.text.appendPlainText(msg)
         QApplication.processEvents()
 
     # ---------- scheduling ----------
@@ -4878,7 +4139,7 @@ class MainWindow(QMainWindow):
             if self.thread.isRunning():
                 self.thread.terminate()
                 self.thread.wait(2000)
-        if stopped_job:
+        if stopped_job and self._robot_supabase_url and self._robot_supabase_key:
             complete_execution_request(
                 self._robot_supabase_url,
                 self._robot_supabase_key,
@@ -4915,20 +4176,15 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.log_message(f"⚠️ Não consegui gerar o relatório PDF: {e}")
         # Sincronizar status e atualização no Monday.com
-        if self._robot_id:
+        if self._robot_id and self._robot_supabase_url and self._robot_supabase_key:
             update_robot_status(self._robot_supabase_url, self._robot_supabase_key, self._robot_id, "active")
-        if self._active_job:
-            _set_last_json_result_details(details or {})
-            success, error_message, summary, payload, company_results = build_certidoes_result(details or {})
+        if self._active_job and self._robot_supabase_url and self._robot_supabase_key:
             complete_execution_request(
                 self._robot_supabase_url,
                 self._robot_supabase_key,
                 self._active_job["id"],
-                success,
-                error_message,
-                summary=summary,
-                payload=payload,
-                company_results=company_results,
+                True,
+                None,
             )
             self._active_job = None
 
@@ -5035,8 +4291,6 @@ class MainWindow(QMainWindow):
 # main
 # =============================================================================
 if __name__ == "__main__":
-    scheduler_mode = is_scheduler_mode_enabled()
-    ensure_single_instance()
     app = QApplication(sys.argv)
     try:
         app_icon = _load_app_icon()
@@ -5044,13 +4298,8 @@ if __name__ == "__main__":
             app.setWindowIcon(app_icon)
     except Exception:
         pass
-    if not scheduler_mode and not ensure_license_valid(app):
+    if not ensure_license_valid(app):
         sys.exit(0)
     w = MainWindow()
-    app.aboutToQuit.connect(lambda: _mark_process_inactive(w, "qt_about_to_quit"))
-    _install_process_shutdown_handlers(w)
-    if scheduler_mode:
-        w.hide()
-    else:
-        w.show()
+    w.show()
     sys.exit(app.exec())

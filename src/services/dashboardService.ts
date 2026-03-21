@@ -67,6 +67,16 @@ function normalizeCompanyIds(companyIds: string[] | null) {
   )]
 }
 
+function normalizeCertidaoStatus(status: unknown) {
+  const normalized = String(status ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+  if (normalized === "empregador nao cadastrado") return "negativa"
+  return String(status ?? "").trim() || null
+}
+
 function parseMoneyLike(value: unknown) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0
   if (typeof value !== "string") return 0
@@ -371,7 +381,7 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
       id: d.id,
       company_id: String(d.company_id || ""),
       periodo: String(payload.periodo || "") || null,
-      status: String(payload.status || "") || null,
+      status: normalizeCertidaoStatus(payload.status),
       document_date: String(payload.document_date || payload.data_consulta || "").slice(0, 10) || null,
       tipo_certidao: tipoCertidao,
       file_path: String(payload.arquivo_pdf || "") || null,

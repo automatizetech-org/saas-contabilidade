@@ -85,6 +85,11 @@ function normalizeDigits(value: unknown) {
   return String(value ?? "").replace(/\D/g, "")
 }
 
+function isNegativeCertidaoStatus(status: unknown) {
+  const normalized = normalizeText(status)
+  return normalized === "regular" || normalized === "negativa" || normalized === "empregador nao cadastrado"
+}
+
 function mapUnifiedRpcRow(row: any): UnifiedDocumentRow {
   return {
     id: String(row.id),
@@ -362,39 +367,19 @@ function buildMonthSeries(rows: FiscalListRow[], dateFrom?: string, dateTo?: str
 }
 
 export async function getCertidoesOverviewSummary(companyIds: string[] | null): Promise<CertidoesOverview> {
-  try {
-    const { data, error } = await supabase.rpc("get_certidoes_overview_summary", {
-      company_ids: companyIds?.length ? companyIds : null,
-    })
-    if (error) throw error
-
-    const payload = (data ?? {}) as CertidoesOverview
-    return {
-      cards: {
-        total: Number(payload.cards?.total ?? 0),
-        negativas: Number(payload.cards?.negativas ?? 0),
-        irregulares: Number(payload.cards?.irregulares ?? 0),
-      },
-      chartData: (payload.chartData ?? []).map((item) => ({ name: item.name, value: Number(item.value ?? 0) })),
-    }
-  } catch {
-    const certidoes = await getCertidoesDocuments(companyIds)
-    const negativas = certidoes.filter((certidao) => {
-      const status = String((certidao as { status?: string | null }).status || "").toLowerCase()
-      return status === "regular" || status === "negativa"
-    }).length
-    const irregulares = certidoes.length - negativas
-    return {
-      cards: {
-        total: certidoes.length,
-        negativas,
-        irregulares,
-      },
-      chartData: [
-        { name: "Negativas", value: negativas },
-        { name: "Irregulares", value: irregulares },
-      ],
-    }
+  const certidoes = await getCertidoesDocuments(companyIds)
+  const negativas = certidoes.filter((certidao) => isNegativeCertidaoStatus((certidao as { status?: string | null }).status)).length
+  const irregulares = certidoes.length - negativas
+  return {
+    cards: {
+      total: certidoes.length,
+      negativas,
+      irregulares,
+    },
+    chartData: [
+      { name: "Negativas", value: negativas },
+      { name: "Irregulares", value: irregulares },
+    ],
   }
 }
 
