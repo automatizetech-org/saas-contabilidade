@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { StatsCard } from "@/components/dashboard/StatsCard";
@@ -35,6 +35,7 @@ export default function FiscalPage() {
   const { data: analytics, isLoading: loadingAnalytics } = useQuery({
     queryKey: ["fiscal-overview-analytics", companyFilter, dateFrom, dateTo],
     queryFn: () => getFiscalOverviewAnalytics(companyFilter, dateFrom, dateTo),
+    placeholderData: keepPreviousData,
   });
   const { data: recentDocs = [], isLoading: loadingRecent } = useQuery({
     queryKey: ["fiscal-recent", companyFilter],

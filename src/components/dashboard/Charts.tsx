@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from "recharts";
 
 const CHART_COLORS = [
@@ -9,6 +10,23 @@ const CHART_COLORS = [
   "hsl(38, 92%, 50%)",
 ];
 
+const CHART_ANIMATION = {
+  begin: 0,
+  duration: 650,
+  easing: "ease-in-out" as const,
+};
+
+function getAreaAnimationId(data: { name: string; value: number }[]) {
+  const signature = data.map((item) => `${item.name}:${item.value}`).join("|");
+  let hash = 0;
+
+  for (let index = 0; index < signature.length; index += 1) {
+    hash = (hash * 31 + signature.charCodeAt(index)) | 0;
+  }
+
+  return Math.abs(hash);
+}
+
 interface MiniChartProps {
   data: { name: string; value: number }[];
   type?: "area" | "bar";
@@ -19,6 +37,8 @@ interface MiniChartProps {
 }
 
 export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height = 200, valueLabel }: MiniChartProps) {
+  const gradientId = useId().replace(/:/g, "");
+  const areaAnimationId = getAreaAnimationId(data);
   const tooltipFormatter = valueLabel ? (value: number) => [value, valueLabel] : undefined;
   const tooltipStyle = {
     background: "var(--ap-tooltip-bg)",
@@ -28,6 +48,7 @@ export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height
     boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
     fontSize: "12px",
   };
+
   if (type === "bar") {
     return (
       <ResponsiveContainer width="100%" height={height}>
@@ -49,7 +70,7 @@ export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data}>
         <defs>
-          <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.3} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
@@ -61,7 +82,20 @@ export function MiniChart({ data, type = "area", color = CHART_COLORS[0], height
           contentStyle={tooltipStyle}
           formatter={tooltipFormatter}
         />
-        <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2} fillOpacity={1} fill="url(#colorValue)" />
+        <Area
+          type="monotone"
+          dataKey="value"
+          stroke={color}
+          strokeWidth={2}
+          fillOpacity={1}
+          fill={`url(#${gradientId})`}
+          isAnimationActive
+          animateNewValues
+          animationId={areaAnimationId}
+          animationBegin={CHART_ANIMATION.begin}
+          animationDuration={CHART_ANIMATION.duration}
+          animationEasing={CHART_ANIMATION.easing}
+        />
       </AreaChart>
     </ResponsiveContainer>
   );

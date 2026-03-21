@@ -436,6 +436,7 @@ export default function FiscalDetailPage() {
       }),
     // Evita disputar banda/CPU com o carregamento da tabela.
     enabled: !isObrigacao && !documentsLoading,
+    placeholderData: keepPreviousData,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
@@ -444,6 +445,7 @@ export default function FiscalDetailPage() {
     queryKey: ["nfs-stats", companyFilter, resolvedDateFrom, resolvedDateTo],
     queryFn: () => getNfsStatsByDateRange(companyFilter, resolvedDateFrom, resolvedDateTo),
     enabled: isNfs && !!resolvedDateFrom && !!resolvedDateTo && !documentsLoading,
+    placeholderData: keepPreviousData,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
@@ -463,6 +465,7 @@ export default function FiscalDetailPage() {
     queryKey: ["nfs-stats-prev", companyFilter, prevPeriod?.first, prevPeriod?.last],
     queryFn: () => getNfsStatsByDateRange(companyFilter, prevPeriod!.first, prevPeriod!.last),
     enabled: Boolean(prevPeriod?.first && prevPeriod?.last) && !documentsLoading,
+    placeholderData: keepPreviousData,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });

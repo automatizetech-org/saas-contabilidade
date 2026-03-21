@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -30,6 +30,7 @@ export default function Dashboard() {
   const { data: overview, isLoading: overviewLoading } = useQuery({
     queryKey: ["dashboard-overview", companyFilter],
     queryFn: () => getDashboardOverview(companyFilter),
+    placeholderData: keepPreviousData,
   });
 
   const { data: recentEvents = [], isLoading: recentLoading } = useQuery({
