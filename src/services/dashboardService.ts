@@ -77,24 +77,6 @@ function normalizeCertidaoStatus(status: unknown) {
   return String(status ?? "").trim() || null
 }
 
-const CERTIDAO_DEFAULT_FILE_NAMES: Record<string, string> = {
-  federal: "federal.pdf",
-  estadual_go: "estadual_go.pdf",
-  fgts: "fgts.pdf",
-}
-
-function resolveCertidaoFilePath(companyName: unknown, tipoCertidao: unknown, filePath: unknown) {
-  const explicitPath = String(filePath ?? "").trim()
-  if (explicitPath) return explicitPath.replace(/\\/g, "/")
-
-  const normalizedTipo = String(tipoCertidao ?? "").trim().toLowerCase()
-  const defaultFileName = CERTIDAO_DEFAULT_FILE_NAMES[normalizedTipo]
-  const normalizedCompany = String(companyName ?? "").trim()
-  if (!normalizedCompany || !defaultFileName) return null
-
-  return `${normalizedCompany}/FISCAL/CERTIDOES/${defaultFileName}`
-}
-
 function parseMoneyLike(value: unknown) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0
   if (typeof value !== "string") return 0
@@ -393,7 +375,6 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
     const payload = d.payload || {}
     const tipoCertidao = String(payload.tipo_certidao || "").trim()
     if (!tipoCertidao) continue
-    const companyName = names.get(d.company_id) ?? ""
     const key = `${d.company_id}:${tipoCertidao}`
     const current = latestByCompanyAndType.get(key)
     const candidate = {
@@ -403,7 +384,7 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
       status: normalizeCertidaoStatus(payload.status),
       document_date: String(payload.document_date || payload.data_consulta || "").slice(0, 10) || null,
       tipo_certidao: tipoCertidao,
-      file_path: resolveCertidaoFilePath(companyName, tipoCertidao, payload.arquivo_pdf),
+      file_path: String(payload.arquivo_pdf || "") || null,
       created_at: String(d.created_at || ""),
     }
     if (!current || candidate.created_at > current.created_at) {
