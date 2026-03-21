@@ -1,18 +1,21 @@
 import { ReactNode } from "react";
 import { useNavigate, useLocation, Navigate } from "react-router-dom";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useSupabaseConnectionStatus } from "@/hooks/useSupabaseConnectionStatus";
+import { getEcacMailboxSummary, getEcacMailboxSummaryQueryKey } from "@/services/ecacMailboxService";
 import { pathToPanelKey } from "@/lib/panelAccess";
+import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling";
 import { cn } from "@/utils";
 import { Moon, Sun, PanelLeftClose, PanelLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/services/supabaseClient";
 import { MaintenanceBanner } from "@/components/MaintenanceBanner";
-import { useQueryClient } from "@tanstack/react-query";
 import { getFiscalDetailDocumentsPage, getFiscalDetailSummary, type FiscalDetailKind } from "@/services/documentsService";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
 import { persistQueryClient } from "@tanstack/query-persist-client-core";
@@ -47,6 +50,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
   });
 
   const showMaintenanceBanner = useSupabaseConnectionStatus();
+  const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
+  const { data: ecacMailboxSummary } = useQuery({
+    queryKey: getEcacMailboxSummaryQueryKey(companyFilter),
+    queryFn: () => getEcacMailboxSummary(companyFilter),
+    placeholderData: keepPreviousData,
+    refetchInterval: () => getVisibilityAwareRefetchInterval(),
+    refetchIntervalInBackground: true,
+    enabled: Boolean(profile?.office_id) && profile?.office_status !== "inactive",
+  });
+  const mailboxToastStateRef = useRef<{ scope: string; unread: number | null }>({
+    scope: "",
+    unread: null,
+  });
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_OPEN_KEY, String(sidebarOpen));
@@ -56,6 +72,42 @@ export function AppLayout({ children }: { children: ReactNode }) {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
+
+  useEffect(() => {
+    const scope = `${profile?.office_id ?? "none"}|${companyFilter?.join(",") ?? "all"}`;
+    if (mailboxToastStateRef.current.scope !== scope) {
+      mailboxToastStateRef.current = { scope, unread: null };
+    }
+  }, [profile?.office_id, companyFilter]);
+
+  useEffect(() => {
+    if (!profile?.office_id || profile.office_status === "inactive") return;
+    if (!ecacMailboxSummary) return;
+
+    const scope = `${profile.office_id}|${companyFilter?.join(",") ?? "all"}`;
+    const currentUnread = ecacMailboxSummary.unreadMessages;
+    const previousUnread = mailboxToastStateRef.current.unread;
+
+    if (previousUnread == null) {
+      const sessionKey = `ecac-mailbox-login-toast:${scope}`;
+      if (currentUnread > 0 && sessionStorage.getItem(sessionKey) !== "1") {
+        toast("Caixa Postal E-CAC com novidades", {
+          description: `${currentUnread} mensagem(ns) nova(s) aguardando leitura.`,
+        });
+        sessionStorage.setItem(sessionKey, "1");
+      }
+    } else if (currentUnread > previousUnread) {
+      const diff = currentUnread - previousUnread;
+      toast("Nova notificacao da Caixa Postal E-CAC", {
+        description: `${diff} nova(s) mensagem(ns) recebida(s).`,
+      });
+    }
+
+    mailboxToastStateRef.current = {
+      scope,
+      unread: currentUnread,
+    };
+  }, [companyFilter, ecacMailboxSummary, profile?.office_id, profile?.office_status]);
 
   useEffect(() => {
     if (!profile?.office_id || profile.office_status !== "inactive") return;
@@ -138,7 +190,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       queryKey: ["nfs-stats-prev", companyIdsFilter, prevFirst, prevLast],
       queryFn: () => getNfsStatsByDateRange(companyIdsFilter, prevFirst, prevLast),
     });
-  }, [profile?.office_id, profile?.office_status, selectedCompanyIds, prefetchedForKey, queryClient]);
+  }, [location.pathname, profile?.office_id, profile?.office_status, selectedCompanyIds, prefetchedForKey, queryClient]);
 
   const handleSignOut = async () => {
     // Limpa o cache em memória e para a persistência em background.

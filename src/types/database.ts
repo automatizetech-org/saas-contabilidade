@@ -325,6 +325,25 @@ export type Database = {
         status: string;
         created_at: string;
       }>;
+      ecac_mailbox_messages: TableDef<{
+        id: string;
+        office_id: string;
+        company_id: string;
+        robot_technical_id: string | null;
+        external_message_id: string;
+        subject: string;
+        sender_name: string | null;
+        sender_document: string | null;
+        category: string | null;
+        status: "novo" | "lido" | "arquivado";
+        received_at: string;
+        fetched_at: string;
+        is_read: boolean;
+        read_at: string | null;
+        payload: Json;
+        created_at: string;
+        updated_at: string;
+      }>;
       dp_checklist: TableDef<{
         id: string;
         office_id: string;

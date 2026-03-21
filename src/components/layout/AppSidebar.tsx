@@ -23,10 +23,14 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils";
 import { useState, useEffect } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { useBranding, getSidebarTitle } from "@/contexts/BrandingContext";
+import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling";
+import { getEcacMailboxSummary, getEcacMailboxSummaryQueryKey } from "@/services/ecacMailboxService";
+import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
@@ -145,6 +149,16 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
   const { isSuperAdmin, canAccessAdmin, profile } = useProfile();
   const { logoUrl, branding } = useBranding();
   const sidebarTitle = getSidebarTitle(branding?.client_name);
+  const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
+  const { data: ecacMailboxSummary } = useQuery({
+    queryKey: getEcacMailboxSummaryQueryKey(companyFilter),
+    queryFn: () => getEcacMailboxSummary(companyFilter),
+    placeholderData: keepPreviousData,
+    refetchInterval: () => getVisibilityAwareRefetchInterval(),
+    refetchIntervalInBackground: true,
+    enabled: Boolean(profile?.office_id),
+  });
+  const ecacMailboxUnread = ecacMailboxSummary?.unreadMessages ?? 0;
 
   const visibleNavItems = navItems.filter((item) => {
     if (item.path === "/admin") return canAccessAdmin;
@@ -162,7 +176,9 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
 
   const isActive = (path: string) => location.pathname === path;
   const isParentActive = (item: NavItem) =>
-    item.children?.some((child) => location.pathname === child.path) || location.pathname === item.path;
+    item.children?.some((child) => location.pathname === child.path) ||
+    (item.path === "/fiscal" && location.pathname === "/fiscal/caixa-postal-ecac") ||
+    location.pathname === item.path;
 
   useEffect(() => {
     if (window.innerWidth < 768) setMobileOpen(false);
@@ -272,6 +288,11 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                   <div className="flex items-center gap-2 min-w-0">
                     <item.icon size={18} className="shrink-0 text-inherit" />
                     <span className="font-medium truncate">{item.name}</span>
+                    {item.path === "/fiscal" && ecacMailboxUnread > 0 ? (
+                      <Badge className="border-amber-500/30 bg-amber-500/15 text-amber-200 hover:bg-amber-500/15">
+                        {ecacMailboxUnread > 99 ? "99+" : ecacMailboxUnread}
+                      </Badge>
+                    ) : null}
                     <span className="ml-auto shrink-0">
                       {expandedItems.includes(item.path) ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                     </span>
@@ -287,13 +308,31 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
                         key={child.path}
                         to={child.path}
                         className={cn(
-                          "flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 truncate min-w-0",
+                          "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 truncate min-w-0",
                           isActive(child.path) ? "bg-primary/10 text-foreground font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
                         )}
                       >
-                        {child.name}
+                        <span className="truncate">{child.name}</span>
                       </Link>
                     ))}
+                    {item.path === "/fiscal" ? (
+                      <Link
+                        to="/fiscal/caixa-postal-ecac"
+                        className={cn(
+                          "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 truncate min-w-0",
+                          isActive("/fiscal/caixa-postal-ecac")
+                            ? "bg-primary/10 text-foreground font-semibold"
+                            : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
+                        )}
+                      >
+                        <span className="truncate">Caixa Postal E-CAC</span>
+                        {ecacMailboxUnread > 0 ? (
+                          <Badge className="ml-auto border-amber-500/30 bg-amber-500/15 text-amber-200 hover:bg-amber-500/15">
+                            {ecacMailboxUnread > 99 ? "99+" : ecacMailboxUnread}
+                          </Badge>
+                        ) : null}
+                      </Link>
+                    ) : null}
                   </div>
                 )}
               </>

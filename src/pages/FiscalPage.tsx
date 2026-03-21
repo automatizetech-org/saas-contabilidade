@@ -2,20 +2,24 @@ import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { StatsCard } from "@/components/dashboard/StatsCard";
-import { GlassCard } from "@/components/dashboard/GlassCard";
-import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { DonutChart, MiniChart } from "@/components/dashboard/Charts";
 import { Building2, CalendarDays, Receipt } from "lucide-react";
+import { DonutChart, MiniChart } from "@/components/dashboard/Charts";
+import { GlassCard } from "@/components/dashboard/GlassCard";
+import { StatsCard } from "@/components/dashboard/StatsCard";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
+import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling";
 import { getFiscalOverviewAnalytics, getRecentFiscalDocuments } from "@/services/dashboardService";
+import { getEcacMailboxSummary, getEcacMailboxSummaryQueryKey } from "@/services/ecacMailboxService";
 
 const topicos = [
   { label: "NFS", path: "/fiscal/nfs" },
   { label: "NFE/NFC", path: "/fiscal/nfe-nfc" },
   { label: "DIFAL", path: "/fiscal/difal" },
   { label: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
-  { label: "Certidões", path: "/fiscal/certidoes" },
+  { label: "Certidoes", path: "/fiscal/certidoes" },
+  { label: "Caixa Postal E-CAC", path: "/fiscal/caixa-postal-ecac" },
 ];
 
 function getDefaultPeriod() {
@@ -41,6 +45,13 @@ export default function FiscalPage() {
     queryKey: ["fiscal-recent", companyFilter],
     queryFn: () => getRecentFiscalDocuments(companyFilter, 10),
   });
+  const { data: ecacMailboxSummary } = useQuery({
+    queryKey: getEcacMailboxSummaryQueryKey(companyFilter),
+    queryFn: () => getEcacMailboxSummary(companyFilter),
+    placeholderData: keepPreviousData,
+    refetchInterval: () => getVisibilityAwareRefetchInterval(),
+    refetchIntervalInBackground: true,
+  });
 
   const cards = analytics?.cards ?? {
     totalDocumentos: 0,
@@ -52,13 +63,15 @@ export default function FiscalPage() {
   const byCompany = analytics?.byCompany ?? [];
   const byStatus = analytics?.byStatus ?? [];
   const byTypeSummary = analytics?.byTypeSummary ?? { NFS: 0, NFE: 0, NFC: 0, outros: 0 };
+  const ecacMailboxUnread = ecacMailboxSummary?.unreadMessages ?? 0;
 
   const cardsPorTipo = [
-    { tipo: "NFS-e", valor: byTypeSummary.NFS, descricao: "Notas de serviço no período", path: "/fiscal/nfs" },
-    { tipo: "NF-e", valor: byTypeSummary.NFE, descricao: "Notas fiscais eletrônicas", path: "/fiscal/nfe-nfc" },
+    { tipo: "NFS-e", valor: byTypeSummary.NFS, descricao: "Notas de servico no periodo", path: "/fiscal/nfs" },
+    { tipo: "NF-e", valor: byTypeSummary.NFE, descricao: "Notas fiscais eletronicas", path: "/fiscal/nfe-nfc" },
     { tipo: "NFC-e", valor: byTypeSummary.NFC, descricao: "Notas ao consumidor", path: "/fiscal/nfe-nfc" },
     { tipo: "Outros", valor: byTypeSummary.outros, descricao: "Demais tipos localizados", path: "/documentos" },
-    { tipo: "Empresas ativas", valor: cards.empresasComEmissao, descricao: "Empresas com emissão no período", path: "/empresas" },
+    { tipo: "Empresas ativas", valor: cards.empresasComEmissao, descricao: "Empresas com emissao no periodo", path: "/empresas" },
+    { tipo: "Caixa Postal E-CAC", valor: ecacMailboxUnread, descricao: "Mensagens novas na caixa postal", path: "/fiscal/caixa-postal-ecac" },
   ];
 
   const tooltipStyle = {
@@ -74,7 +87,7 @@ export default function FiscalPage() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold font-display tracking-tight">Fiscal</h1>
-          <p className="text-sm text-muted-foreground mt-1">Visão analítica e conferência rápida das rotinas fiscais.</p>
+          <p className="text-sm text-muted-foreground mt-1">Visao analitica e conferencia rapida das rotinas fiscais.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
@@ -87,25 +100,32 @@ export default function FiscalPage() {
           </div>
           {topicos.map((item) => (
             <Link key={item.path} to={item.path} className="rounded-lg border border-border bg-card px-4 py-2 text-xs font-medium hover:bg-muted transition-colors">
-              {item.label}
+              <span className="flex items-center gap-2">
+                <span>{item.label}</span>
+                {item.path === "/fiscal/caixa-postal-ecac" && ecacMailboxUnread > 0 ? (
+                  <Badge className="border-amber-500/30 bg-amber-500/15 text-amber-200 hover:bg-amber-500/15">
+                    {ecacMailboxUnread > 99 ? "99+" : ecacMailboxUnread}
+                  </Badge>
+                ) : null}
+              </span>
             </Link>
           ))}
         </div>
       </div>
 
       {(loadingAnalytics || loadingRecent) && !analytics ? (
-        <div className="text-sm text-muted-foreground">Carregando…</div>
+        <div className="text-sm text-muted-foreground">Carregando...</div>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <StatsCard title="Total no período" value={cards.totalDocumentos.toLocaleString()} icon={Receipt} description="Notas fiscais no período (documentos reais)" />
-            <StatsCard title="Emitidos hoje" value={cards.documentosHoje.toLocaleString()} icon={CalendarDays} description="Documentos com data de referência hoje" />
-            <StatsCard title="Empresas com emissão" value={cards.empresasComEmissao.toLocaleString()} icon={Building2} description="Empresas com pelo menos uma nota no período" />
+            <StatsCard title="Total no periodo" value={cards.totalDocumentos.toLocaleString()} icon={Receipt} description="Notas fiscais no periodo (documentos reais)" />
+            <StatsCard title="Emitidos hoje" value={cards.documentosHoje.toLocaleString()} icon={CalendarDays} description="Documentos com data de referencia hoje" />
+            <StatsCard title="Empresas com emissao" value={cards.empresasComEmissao.toLocaleString()} icon={Building2} description="Empresas com pelo menos uma nota no periodo" />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <GlassCard className="p-6">
-              <h3 className="text-sm font-semibold font-display mb-2">Distribuição por tipo</h3>
+              <h3 className="text-sm font-semibold font-display mb-2">Distribuicao por tipo</h3>
               <p className="text-xs text-muted-foreground mb-4">NFS-e, NF-e, NFC-e e demais tipos localizados</p>
               <DonutChart data={byType} height={260} />
             </GlassCard>
@@ -119,14 +139,14 @@ export default function FiscalPage() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <GlassCard className="p-6">
-              <h3 className="text-sm font-semibold font-display mb-2">Documentos fiscais por mês</h3>
-              <p className="text-xs text-muted-foreground mb-4">Evolução mensal da quantidade de documentos</p>
+              <h3 className="text-sm font-semibold font-display mb-2">Documentos fiscais por mes</h3>
+              <p className="text-xs text-muted-foreground mb-4">Evolucao mensal da quantidade de documentos</p>
               <MiniChart data={byMonth} type="bar" height={260} valueLabel="Documentos" />
             </GlassCard>
 
             <GlassCard className="p-6">
               <h3 className="text-sm font-semibold font-display mb-2">Volume por empresa</h3>
-              <p className="text-xs text-muted-foreground mb-4">Empresas com maior volume no período</p>
+              <p className="text-xs text-muted-foreground mb-4">Empresas com maior volume no periodo</p>
               <div className="h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={byCompany} layout="vertical" margin={{ left: 12, right: 12 }}>
@@ -143,18 +163,22 @@ export default function FiscalPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <GlassCard className="p-6">
-              <h3 className="text-sm font-semibold font-display mb-4">Últimos documentos</h3>
+              <h3 className="text-sm font-semibold font-display mb-4">Ultimos documentos</h3>
               {recentDocs.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Nenhum documento recente encontrado.</p>
               ) : (
                 <div className="space-y-3">
-                  {recentDocs.map((d) => (
-                    <Link key={d.id} to={d.type === "NFE" || d.type === "NFC" ? "/fiscal/nfe-nfc" : `/fiscal/${(d.type || "nfs").toLowerCase()}`} className="flex items-center justify-between py-2 border-b border-border last:border-0 hover:bg-muted/30 rounded px-1 -mx-1 transition-colors">
+                  {recentDocs.map((document) => (
+                    <Link
+                      key={document.id}
+                      to={document.type === "NFE" || document.type === "NFC" ? "/fiscal/nfe-nfc" : `/fiscal/${(document.type || "nfs").toLowerCase()}`}
+                      className="flex items-center justify-between py-2 border-b border-border last:border-0 hover:bg-muted/30 rounded px-1 -mx-1 transition-colors"
+                    >
                       <div className="min-w-0">
-                        <p className="text-xs font-medium truncate">{d.companyName || "—"}</p>
-                        <p className="text-[10px] text-muted-foreground">{d.type}</p>
+                        <p className="text-xs font-medium truncate">{document.companyName || "—"}</p>
+                        <p className="text-[10px] text-muted-foreground">{document.type}</p>
                       </div>
-                      <StatusBadge status={d.status as "validado" | "novo" | "processando" | "pendente" | "divergente"} />
+                      <StatusBadge status={document.status as "validado" | "novo" | "processando" | "pendente" | "divergente"} />
                     </Link>
                   ))}
                 </div>
@@ -162,7 +186,7 @@ export default function FiscalPage() {
             </GlassCard>
 
             <GlassCard className="p-6">
-              <h3 className="text-sm font-semibold font-display mb-4">Métricas rápidas</h3>
+              <h3 className="text-sm font-semibold font-display mb-4">Metricas rapidas</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {cardsPorTipo.map((item) => (
                   <Link key={item.tipo} to={item.path} className="rounded-xl border border-border bg-background/70 px-4 py-4 hover:bg-muted/30 transition-colors">

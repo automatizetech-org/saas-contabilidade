@@ -6,6 +6,7 @@ import LoginPage from "@/pages/LoginPage";
 import Dashboard from "@/pages/Dashboard";
 import FiscalPage from "@/pages/FiscalPage";
 import FiscalDetailPage from "@/pages/FiscalDetailPage";
+import FiscalEcacMailboxPage from "@/pages/FiscalEcacMailboxPage";
 import DPPage from "@/pages/DPPage";
 import DPTopicPage from "@/pages/DPTopicPage";
 import FinanceiroPage from "@/pages/FinanceiroPage";
@@ -30,6 +31,7 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/dashboard" element={<ProtectedRoute><AppLayout><Dashboard /></AppLayout></ProtectedRoute>} />
       <Route path="/fiscal" element={<ProtectedRoute><AppLayout><FiscalPage /></AppLayout></ProtectedRoute>} />
+      <Route path="/fiscal/caixa-postal-ecac" element={<ProtectedRoute><AppLayout><FiscalEcacMailboxPage /></AppLayout></ProtectedRoute>} />
       <Route path="/fiscal/simples-nacional" element={<Navigate to="/inteligencia-tributaria/simples-nacional" replace />} />
       <Route path="/fiscal/:type" element={<ProtectedRoute><AppLayout><FiscalDetailPage /></AppLayout></ProtectedRoute>} />
       <Route path="/dp" element={<ProtectedRoute><AppLayout><DPPage /></AppLayout></ProtectedRoute>} />
