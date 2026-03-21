@@ -61,6 +61,32 @@ async function fetchBlobWithProgress(
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let received = 0
+  let chunkCount = 0
+  let displayedPercent = 0
+  let targetPercent = 0
+  const startedAt = Date.now()
+
+  const emitProgress = (next: number) => {
+    if (!onProgress) return
+    const safe = Math.min(100, Math.max(displayedPercent, Math.round(next)))
+    if (safe === displayedPercent) return
+    displayedPercent = safe
+    onProgress(safe)
+  }
+
+  const setTargetProgress = (next: number) => {
+    targetPercent = Math.min(99, Math.max(targetPercent, Math.round(next)))
+  }
+
+  const progressTimer = onProgress
+    ? window.setInterval(() => {
+        if (displayedPercent >= targetPercent) return
+        const step = Math.max(1, Math.ceil((targetPercent - displayedPercent) / 4))
+        emitProgress(displayedPercent + step)
+      }, 120)
+    : null
+
+  if (onProgress) onProgress(0)
   try {
     for (;;) {
       const { done, value } = await reader.read()
@@ -68,13 +94,25 @@ async function fetchBlobWithProgress(
       if (value) {
         chunks.push(value)
         received += value.length
+        chunkCount += 1
         if (onProgress && total > 0) {
           const percent = Math.min(99, Math.round((received / total) * 100))
-          onProgress(percent)
+          setTargetProgress(percent)
+        } else if (onProgress) {
+          const elapsedSeconds = (Date.now() - startedAt) / 1000
+          const estimated = Math.min(
+            95,
+            Math.max(
+              displayedPercent + 1,
+              6 + chunkCount * 3 + Math.floor(elapsedSeconds * 4)
+            )
+          )
+          setTargetProgress(estimated)
         }
       }
     }
   } finally {
+    if (progressTimer !== null) window.clearInterval(progressTimer)
     reader.releaseLock()
   }
   if (onProgress) onProgress(100)
@@ -217,6 +255,7 @@ export async function downloadListedFilesZipWithCategory(
 
   const zip = new JSZip()
   const usedPaths = new Set<string>()
+  let completedFiles = 0
   const makeUniqueZipPath = (zipPath: string) => {
     let candidate = zipPath
     let i = 0
@@ -237,10 +276,22 @@ export async function downloadListedFilesZipWithCategory(
       const safeCompany = companyName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").replace(/\s+/g, " ").trim() || "EMPRESA"
       const safeCategory = category.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").replace(/\s+/g, " ").trim() || "outros"
       zip.file(makeUniqueZipPath(`${safeCompany}/${safeCategory}/${filename}`), blob)
+      completedFiles += 1
+      if (onProgress) {
+        onProgress(Math.min(90, Math.round((completedFiles / normalizedItems.length) * 90)))
+      }
     })
   )
 
-  const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" })
+  const zipBlob = await zip.generateAsync(
+    { type: "blob", compression: "STORE" },
+    (metadata) => {
+      if (!onProgress) return
+      const zipPercent = 90 + Math.round((metadata.percent / 100) * 9)
+      onProgress(Math.min(99, Math.max(90, zipPercent)))
+    }
+  )
+  if (onProgress) onProgress(100)
   triggerBlobDownload(zipBlob, `${suggestedName}.zip`)
 }
 
