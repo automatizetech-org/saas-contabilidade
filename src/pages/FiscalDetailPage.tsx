@@ -319,17 +319,27 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
                     <td className="px-4 py-3 text-muted-foreground">{formatDateLabel(row.document_date)}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.status as never} /></td>
                     <td className="px-4 py-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                        onClick={() => handleBaixarPdf(row)}
-                        disabled={!row.file_path}
-                        title={row.file_path ? "Baixar PDF" : "PDF nao disponivel para esta certidao"}
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        PDF
-                      </Button>
+                      {row.file_path ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => handleBaixarPdf(row)}
+                          title="Baixar PDF"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          PDF
+                        </Button>
+                      ) : (
+                        <span
+                          className="inline-flex h-7 items-center gap-1 rounded-md border border-border/50 px-3 text-xs text-muted-foreground/45 opacity-50"
+                          title="PDF nao disponivel para esta certidao"
+                          aria-disabled="true"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          PDF
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
