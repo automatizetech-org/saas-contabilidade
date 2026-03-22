@@ -525,7 +525,11 @@ export default function EmpresasPage() {
             nfs_password: null,
             selected_login_cpf: null,
           }
-          const config = sanitizeRobotConfigForCompany(robot.technical_id, rawConfig, editStateRegistration)
+          const config = sanitizeRobotConfigForCompany(robot, rawConfig, {
+            stateRegistration: editStateRegistration,
+            document: editDocument,
+            cae: editCae,
+          })
           return upsertCompanyRobotConfig(editingCompany.id, robot.technical_id, {
             enabled: config.enabled,
             auth_mode: config.auth_mode,
@@ -934,6 +938,8 @@ export default function EmpresasPage() {
                   }
                   contadorCpf={editContadorCpf}
                   stateRegistration={editStateRegistration}
+                  document={editDocument}
+                  cae={editCae}
                   availableCities={companies.map((company) => company.city_name)}
                   disabled={editSaving}
                 />

@@ -126,10 +126,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
     const officeId = profile.office_id;
     if (persistenceRef.current?.officeId === officeId) return;
 
-    // Para trocar de escritório, limpamos apenas o cache em memória.
-    queryClient.clear();
+    // Na primeira carga após login não limpamos o cache inteiro, porque isso
+    // remove auth/profile e pode disparar uma cascata de refetch logo ao entrar.
+    // Só limpamos queries de dados ao trocar de escritório de fato.
     if (persistenceRef.current) {
       persistenceRef.current.unsubscribe();
+      if (persistenceRef.current.officeId !== officeId) {
+        queryClient.removeQueries({
+          predicate: (query) => {
+            const rootKey = String(query.queryKey[0] ?? "");
+            return rootKey !== "auth-session" && rootKey !== "profile";
+          },
+        });
+      }
       persistenceRef.current = null;
     }
 

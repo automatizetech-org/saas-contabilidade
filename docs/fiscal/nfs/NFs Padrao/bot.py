@@ -2019,7 +2019,19 @@ def fetch_robot_display_config(supabase_url: str, supabase_anon_key: str) -> Opt
     """Retorna a config de exibição do robô (empresas, período, modo) para sincronizar com o dashboard."""
     try:
         client = create_client(supabase_url.strip(), supabase_anon_key.strip())
-        r = client.table("robot_display_config").select("*").eq("robot_technical_id", ROBOT_TECHNICAL_ID).limit(1).execute()
+        office_id = ""
+        current_job = _current_json_job()
+        if isinstance(current_job, dict):
+            office_id = str(current_job.get("office_id") or "").strip()
+        if not office_id:
+            try:
+                office_id = str((_bridge_get_office_context(client) or {}).get("office_id") or "").strip()
+            except Exception:
+                office_id = ""
+        query = client.table("robot_display_config").select("*").eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+        if office_id:
+            query = query.eq("office_id", office_id)
+        r = query.limit(1).execute()
         rows = getattr(r, "data", None) or []
         if not rows:
             return None

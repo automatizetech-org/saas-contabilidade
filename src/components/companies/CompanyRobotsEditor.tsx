@@ -49,6 +49,8 @@ export function CompanyRobotsEditor({
   onConfigChange,
   contadorCpf,
   stateRegistration,
+  document,
+  cae,
   availableCities = [],
   disabled = false,
 }: {
@@ -60,6 +62,8 @@ export function CompanyRobotsEditor({
   onConfigChange: (robotTechnicalId: string, next: RobotCompanyConfigInput) => void;
   contadorCpf: string;
   stateRegistration?: string | null;
+  document?: string | null;
+  cae?: string | null;
   availableCities?: Array<string | null | undefined>;
   disabled?: boolean;
 }) {
@@ -92,8 +96,12 @@ export function CompanyRobotsEditor({
   } satisfies Record<string, Json>;
   const fields = getRobotCompanyFormSchema(selectedRobot);
   const capabilities = getRobotCapabilities(selectedRobot);
-  const canEnableSelectedRobot = canEnableRobotForCompany(selectedRobot.technical_id, stateRegistration);
-  const enableRequirementMessage = getRobotEnableRequirementMessage(selectedRobot.technical_id);
+  const canEnableSelectedRobot = canEnableRobotForCompany(selectedRobot, {
+    stateRegistration,
+    document,
+    cae,
+  });
+  const enableRequirementMessage = getRobotEnableRequirementMessage(selectedRobot);
   const accountantNameByCpf = new Map(
     accountants.map((accountant) => [onlyDigits(accountant.cpf), accountant.name]),
   );

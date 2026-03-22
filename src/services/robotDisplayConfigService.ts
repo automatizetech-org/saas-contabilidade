@@ -7,11 +7,19 @@ export type RobotDisplayConfig = Tables<"robot_display_config">
 const ROBOT_NFS_ID = "nfs_padrao"
 
 export async function getRobotDisplayConfig(
-  robotTechnicalId: string = ROBOT_NFS_ID
+  robotTechnicalId: string = ROBOT_NFS_ID,
+  officeId?: string | null,
 ): Promise<RobotDisplayConfig | null> {
+  const effectiveOfficeId =
+    typeof officeId === "string" && officeId.trim()
+      ? officeId.trim()
+      : (await getCurrentOfficeContext().catch(() => null))?.officeId ?? null
+  if (!effectiveOfficeId) return null
+
   const { data, error } = await supabase
     .from("robot_display_config")
     .select("*")
+    .eq("office_id", effectiveOfficeId)
     .eq("robot_technical_id", robotTechnicalId)
     .maybeSingle()
   if (error) throw error
@@ -44,7 +52,7 @@ export async function upsertRobotDisplayConfig(params: {
     updated_at: payload.updated_at,
   }
 
-  const existing = await getRobotDisplayConfig(params.robotTechnicalId)
+  const existing = await getRobotDisplayConfig(params.robotTechnicalId, context.officeId)
 
   if (existing) {
     try {

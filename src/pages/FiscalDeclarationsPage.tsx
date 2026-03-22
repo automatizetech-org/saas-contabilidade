@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
 import {
   BadgeAlert,
   CalendarRange,
@@ -26,17 +26,21 @@ import {
   sanitizeDeclarationError,
 } from "@/features/fiscal-declaracoes/helpers";
 import {
+  downloadDeclarationArtifact,
   getDeclarationRunState,
   getFiscalDeclarationsBootstrap,
+  listDeclarationArtifacts,
   startDeclarationRun,
 } from "@/features/fiscal-declaracoes/service";
 import type {
   DeclarationActionKind,
+  DeclarationArtifactListItem,
   DeclarationGuideModalState,
   DeclarationRunItem,
   DeclarationRunState,
 } from "@/features/fiscal-declaracoes/types";
 import { DeclarationActionCard } from "@/features/fiscal-declaracoes/components/DeclarationActionCard";
+import { DeclarationArtifactsCard } from "@/features/fiscal-declaracoes/components/DeclarationArtifactsCard";
 import { DeclarationExecutionModal } from "@/features/fiscal-declaracoes/components/DeclarationExecutionModal";
 import { DeclarationProcessingPanel } from "@/features/fiscal-declaracoes/components/DeclarationProcessingPanel";
 import { OverdueGuidesCard } from "@/features/fiscal-declaracoes/components/OverdueGuidesCard";
@@ -50,6 +54,45 @@ const initialGuideModalState: DeclarationGuideModalState = {
   recalculateByDefault: false,
 };
 
+const SIMPLES_DOCUMENT_ACTIONS: Array<{
+  action: DeclarationActionKind;
+  title: string;
+  description: string;
+}> = [
+  {
+    action: "simples_emitir_guia",
+    title: "Documentos de Guias",
+    description: "Lista os arquivos da subpasta final configurada para emissao e recalculo do Simples Nacional.",
+  },
+  {
+    action: "simples_extrato",
+    title: "Documentos de Extrato",
+    description: "Consulta os extratos ja salvos no disco, respeitando o leaf date rule da pasta final.",
+  },
+  {
+    action: "simples_defis",
+    title: "Documentos de DEFIS",
+    description: "Mostra declaracoes e comprovantes que o robo passar a gravar na pasta final desta rotina.",
+  },
+];
+
+const MEI_DOCUMENT_ACTIONS: Array<{
+  action: DeclarationActionKind;
+  title: string;
+  description: string;
+}> = [
+  {
+    action: "mei_declaracao_anual",
+    title: "Documentos da Declaracao Anual",
+    description: "Prepara a leitura dos arquivos anuais do MEI pela mesma regra central de base path e estrutura.",
+  },
+  {
+    action: "mei_guias_mensais",
+    title: "Documentos de Guias Mensais",
+    description: "Lista guias e comprovantes do MEI sem expor caminhos arbitrarios para o frontend.",
+  },
+];
+
 export default function FiscalDeclarationsPage() {
   const { data: companies = [] } = useCompanies();
   const { selectedCompanyIds } = useSelectedCompanyIds();
@@ -59,6 +102,7 @@ export default function FiscalDeclarationsPage() {
   const [defaultCompetence, setDefaultCompetence] = useState(() => getDefaultDeclarationCompetence());
   const [activeRun, setActiveRun] = useState<DeclarationRunState | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
 
   const canOperate = isSuperAdmin || officeRole === "owner" || officeRole === "admin" || officeRole === "operator";
   const visibleCompanies = useMemo(() => {
@@ -109,6 +153,42 @@ export default function FiscalDeclarationsPage() {
   const availableCompanies = bootstrapQuery.data?.availableCompanies ?? declarationCompanies;
   const overdueGuides = bootstrapQuery.data?.overdueGuides ?? [];
   const actionAvailability = bootstrapQuery.data?.actionAvailability;
+  const documentCompanyIds = availableCompanies.map((company) => company.id);
+  const documentQueries = useQueries({
+    queries: [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map(({ action }) => ({
+      queryKey: ["fiscal-declaracoes-documents", action, defaultCompetence, documentCompanyIds.join(",")],
+      queryFn: () =>
+        listDeclarationArtifacts({
+          action,
+          companyIds: documentCompanyIds,
+          competence: defaultCompetence,
+          limit: 150,
+        }),
+      enabled: documentCompanyIds.length > 0,
+      placeholderData: keepPreviousData,
+      staleTime: 10_000,
+    })),
+  });
+  const documentResponseByAction = useMemo(
+    () =>
+      new Map(
+        [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map((item, index) => [
+          item.action,
+          documentQueries[index]?.data,
+        ]),
+      ),
+    [documentQueries],
+  );
+  const documentLoadingByAction = useMemo(
+    () =>
+      new Map(
+        [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map((item, index) => [
+          item.action,
+          Boolean(documentQueries[index]?.isLoading || documentQueries[index]?.isFetching),
+        ]),
+      ),
+    [documentQueries],
+  );
 
   const resolveActionDisabledReason = (action: DeclarationActionKind) => {
     if (!canOperate) return "Seu perfil tem acesso somente para consulta nesta área.";
@@ -221,6 +301,29 @@ export default function FiscalDeclarationsPage() {
       return;
     }
     await handleDownloadArtifact(item);
+  };
+
+  const handleDownloadDeclarationDocument = async (
+    action: DeclarationActionKind,
+    item: DeclarationArtifactListItem,
+  ) => {
+    setDownloadingArtifactKey(item.artifact_key);
+    try {
+      await downloadDeclarationArtifact({
+        action,
+        companyId: item.company_id,
+        competence: defaultCompetence,
+        artifactKey: item.artifact_key,
+        suggestedName: item.file_name,
+      });
+      toast.success("Download iniciado.");
+    } catch (error) {
+      toast.error(
+        sanitizeDeclarationError(error, "Nao foi possivel baixar o documento localizado no servidor."),
+      );
+    } finally {
+      setDownloadingArtifactKey(null);
+    }
   };
 
   return (
@@ -378,6 +481,22 @@ export default function FiscalDeclarationsPage() {
               })
             }
           />
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            {SIMPLES_DOCUMENT_ACTIONS.map((item) => (
+              <DeclarationArtifactsCard
+                key={item.action}
+                action={item.action}
+                title={item.title}
+                description={item.description}
+                competence={defaultCompetence}
+                loading={documentLoadingByAction.get(item.action) ?? false}
+                response={documentResponseByAction.get(item.action)}
+                busyArtifactKey={downloadingArtifactKey}
+                onDownload={(artifact) => handleDownloadDeclarationDocument(item.action, artifact)}
+              />
+            ))}
+          </div>
         </TabsContent>
 
         <TabsContent value="mei" className="space-y-6">
@@ -415,6 +534,22 @@ export default function FiscalDeclarationsPage() {
               onClick={() => handleQuickAction("mei_guias_mensais")}
               toneClassName="from-background to-primary/5"
             />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {MEI_DOCUMENT_ACTIONS.map((item) => (
+              <DeclarationArtifactsCard
+                key={item.action}
+                action={item.action}
+                title={item.title}
+                description={item.description}
+                competence={defaultCompetence}
+                loading={documentLoadingByAction.get(item.action) ?? false}
+                response={documentResponseByAction.get(item.action)}
+                busyArtifactKey={downloadingArtifactKey}
+                onDownload={(artifact) => handleDownloadDeclarationDocument(item.action, artifact)}
+              />
+            ))}
           </div>
         </TabsContent>
       </Tabs>

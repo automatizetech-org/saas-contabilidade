@@ -4,6 +4,10 @@ import {
 } from "@/services/companiesService";
 import { createExecutionRequest } from "@/services/executionRequestsService";
 import { getRobots, type Robot } from "@/services/robotsService";
+import {
+  downloadOfficeServerAction,
+  postOfficeServerJson,
+} from "@/services/serverFileService";
 import { supabase } from "@/services/supabaseClient";
 import type { Json } from "@/types/database";
 import {
@@ -20,6 +24,7 @@ import type {
   DeclarationActionKind,
   DeclarationActionMode,
   DeclarationBootstrapData,
+  DeclarationArtifactListResponse,
   DeclarationCompany,
   DeclarationGuideSubmitInput,
   DeclarationRunItem,
@@ -512,4 +517,40 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       : null,
     runId: current.runId,
   });
+}
+
+export async function listDeclarationArtifacts(params: {
+  action: DeclarationActionKind;
+  companyIds: string[];
+  competence: string;
+  limit?: number;
+}): Promise<DeclarationArtifactListResponse> {
+  return postOfficeServerJson<DeclarationArtifactListResponse>(
+    "list-declaration-artifacts",
+    {
+      action: params.action,
+      company_ids: params.companyIds,
+      competence: params.competence,
+      limit: params.limit ?? 200,
+    },
+  );
+}
+
+export async function downloadDeclarationArtifact(params: {
+  action: DeclarationActionKind;
+  companyId: string;
+  competence: string;
+  artifactKey: string;
+  suggestedName?: string;
+}): Promise<void> {
+  await downloadOfficeServerAction(
+    "download-declaration-artifact",
+    {
+      action: params.action,
+      company_id: params.companyId,
+      competence: params.competence,
+      artifact_key: params.artifactKey,
+    },
+    params.suggestedName,
+  );
 }

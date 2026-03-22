@@ -56,7 +56,6 @@ import { getCompaniesForUser } from "@/services/companiesService";
 import { AdminFileRetention } from "@/components/admin/AdminFileRetention";
 import { AdminFolderStructure } from "@/components/admin/AdminFolderStructure";
 import { AdminRobotsList } from "@/components/admin/AdminRobotsList";
-import { AdminScheduler } from "@/components/admin/AdminScheduler";
 import { AdminBrandingBlock } from "@/components/admin/branding";
 import { PANEL_KEYS, PANEL_LABELS } from "@/lib/panelAccess";
 
@@ -1309,9 +1308,8 @@ export default function AdminPage() {
             <AdminFileRetention isSuperAdmin={canManageOffice} />
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <AdminRobotsList isSuperAdmin={canManageOffice} />
-            <AdminScheduler isSuperAdmin={canManageOffice} />
+          <section className="grid gap-4">
+            <AdminRobotsList isSuperAdmin={canManageOffice} canOperateRobots={false} />
           </section>
         </>
       ) : !isSuperAdmin ? (

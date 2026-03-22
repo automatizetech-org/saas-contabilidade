@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getCompaniesForUser, type CompanySefazLogin } from "@/services/companiesService";
-import { getRobots, updateRobot } from "@/services/robotsService";
+import { getCompaniesForUser, getCompanyRobotConfigsForSelection, type CompanySefazLogin } from "@/services/companiesService";
+import { getRobotEditableGlobalLogins, getRobots, updateRobot } from "@/services/robotsService";
 import type { Robot } from "@/services/robotsService";
 import {
   getFolderStructureFlat,
@@ -10,6 +10,7 @@ import {
 import type { FolderStructureNodeTree, FolderStructureNodeRow } from "@/types/folderStructure";
 import { pathSegmentsToNode } from "@/types/folderStructure";
 import { GlassCard } from "@/components/dashboard/GlassCard";
+import { AdminRobotOperationsCard } from "@/components/admin/AdminRobotOperationsCard";
 import { RobotConfigFieldGroup } from "@/components/robots/RobotConfigFieldGroup";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,6 +33,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { getDefaultNotesMode, getNotesModeOptions, isNotesModeCompatible } from "@/lib/robotNotes";
+import { indexCompanyRobotConfigs } from "@/lib/robotEligibility";
 import {
   getRobotAdminFormSchema,
   getRobotConfigRecord,
@@ -39,6 +41,10 @@ import {
   type RobotConfigTarget,
 } from "@/lib/robotConfigSchemas";
 import type { FiscalNotesKind, Json, RobotNotesMode } from "@/types/database";
+import { getExecutionRequestsQueue } from "@/services/executionRequestsService";
+import { findRobotOperationRule, getScheduleRules } from "@/services/scheduleRulesService";
+import type { ExecutionRequest } from "@/services/executionRequestsService";
+import { formatCountdownLabel, getNextRobotRunAt } from "@/lib/robotExecutionPlanning";
 
 function statusLabel(s: Robot["status"]): string {
   switch (s) {
@@ -136,9 +142,11 @@ function DepartmentTreeItem({
 
 export function AdminRobotsList({
   isSuperAdmin,
+  canOperateRobots = false,
   robots: robotsProp,
 }: {
   isSuperAdmin: boolean;
+  canOperateRobots?: boolean;
   robots?: Robot[];
 }) {
   const queryClient = useQueryClient();
@@ -155,6 +163,7 @@ export function AdminRobotsList({
   const [adminSettingsDraft, setAdminSettingsDraft] = useState<Record<string, Json>>({});
   const [executionDefaultsDraft, setExecutionDefaultsDraft] = useState<Record<string, Json>>({});
   const [saving, setSaving] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const { data: queriedRobots = [], isLoading } = useQuery({
     queryKey: ["admin-robots"],
@@ -175,9 +184,82 @@ export function AdminRobotsList({
     queryKey: ["admin-robots-companies"],
     queryFn: () => getCompaniesForUser("all"),
   });
+  const { data: companyRobotConfigs = [] } = useQuery({
+    queryKey: ["admin-robots-company-configs", companies.map((company) => company.id).join(","), robots.map((robot) => robot.technical_id).join(",")],
+    queryFn: () =>
+      getCompanyRobotConfigsForSelection({
+        companyIds: companies.map((company) => company.id),
+        robotTechnicalIds: robots.map((robot) => robot.technical_id),
+      }),
+    enabled: companies.length > 0 && robots.length > 0,
+    staleTime: 5_000,
+  });
+  const { data: scheduleRules = [] } = useQuery({
+    queryKey: ["admin-robot-schedule-rules"],
+    queryFn: getScheduleRules,
+    enabled: robots.length > 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 15_000,
+  });
+  const { data: queueItems = [] } = useQuery({
+    queryKey: ["admin-robot-execution-queue"],
+    queryFn: getExecutionRequestsQueue,
+    enabled: robots.length > 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 2_500,
+  });
 
   const folderTree = flatNodes.length > 0 ? buildFolderTree(flatNodes) : [];
   const adminFields = editing ? getRobotAdminFormSchema(editing) : [];
+  const companyConfigsByRobot = indexCompanyRobotConfigs(companyRobotConfigs);
+  const queuePositionById = useMemo(() => {
+    const positions = new Map<string, number>();
+    queueItems.forEach((item, index) => positions.set(item.id, index + 1));
+    return positions;
+  }, [queueItems]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const globalQueueRows = useMemo(() => {
+    return robots
+      .map((robot) => {
+        const queueForRobot = queueItems.filter(
+          (item) => Array.isArray(item.robot_technical_ids) && item.robot_technical_ids.includes(robot.technical_id),
+        );
+        const runningItem = queueForRobot.find((item) => item.status === "running") ?? null;
+        const pendingItem = queueForRobot.find((item) => item.status === "pending") ?? null;
+        const activeRule = findRobotOperationRule(scheduleRules, robot.technical_id);
+        const nextRunAt =
+          robot.status !== "inactive" && activeRule?.status === "active"
+            ? getNextRobotRunAt(activeRule)
+            : null;
+
+        if (!runningItem && !pendingItem && !nextRunAt) return null;
+
+        const effectiveItem = runningItem ?? pendingItem;
+        const statusLabel = runningItem
+          ? "Executando"
+          : pendingItem
+            ? "Na fila"
+            : robot.status === "inactive"
+              ? "Inativo"
+              : "Agendado";
+
+        return {
+          robot,
+          activeRule,
+          nextRunAt,
+          effectiveItem,
+          statusLabel,
+          countdownLabel: nextRunAt ? formatCountdownLabel(Math.max(0, nextRunAt.getTime() - nowMs)) : null,
+          queuePosition: effectiveItem ? queuePositionById.get(effectiveItem.id) ?? null : null,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+  }, [nowMs, queueItems, queuePositionById, robots, scheduleRules]);
 
   const handleDynamicFieldChange = (target: RobotConfigTarget, key: string, value: Json) => {
     if (target === "execution_defaults") {
@@ -218,7 +300,7 @@ export function AdminRobotsList({
     }
   };
 
-  const openRename = (robot: Robot) => {
+  const openRename = async (robot: Robot) => {
     const kind: FiscalNotesKind =
       robot.fiscal_notes_kind ??
       (robot.notes_mode === "modelo_55" ||
@@ -239,12 +321,105 @@ export function AdminRobotsList({
     setGlobalLogins(getRobotGlobalLogins(robot.global_logins));
     setAdminSettingsDraft(getRobotConfigRecord(robot.admin_settings));
     setExecutionDefaultsDraft(getRobotConfigRecord(robot.execution_defaults));
+
+    try {
+      const persistedLogins = await getRobotEditableGlobalLogins(robot.id, robot.technical_id);
+      if (persistedLogins.length > 0) {
+        setGlobalLogins(persistedLogins);
+      }
+    } catch {
+      // Mantém o fallback carregado pelo RPC se a leitura direta falhar.
+    }
   };
 
   const notesModeOptions = getNotesModeOptions(fiscalNotesKind);
 
   return (
     <>
+      <GlassCard className="overflow-hidden">
+        <div className="border-b border-border p-4">
+          <h3 className="text-sm font-semibold font-display">Fila global</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Visao unica da fila e dos agendamentos ativos, antes da lista de robos vinculados.
+          </p>
+        </div>
+        <div className="divide-y divide-border">
+          {globalQueueRows.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              Nenhum robo em fila, executando ou com agenda ativa no momento.
+            </div>
+          ) : (
+            globalQueueRows.map((row) => {
+              const isRunning = row.effectiveItem?.status === "running";
+              const isPending = row.effectiveItem?.status === "pending";
+              return (
+                <div key={row.robot.id} className="space-y-3 px-4 py-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-medium">{row.robot.display_name}</p>
+                        <span className="rounded border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+                          {row.robot.technical_id}
+                        </span>
+                        <span className="rounded border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                          {row.statusLabel}
+                        </span>
+                        {row.queuePosition ? (
+                          <span className="rounded border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                            Posicao {row.queuePosition}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <span>Segmento: {row.robot.segment_path || "Nao configurado"}</span>
+                        <span>
+                          Fonte: {row.effectiveItem?.source ?? (row.activeRule ? "robot_auto" : "manual")}
+                        </span>
+                        <span>
+                          Empresas: {row.effectiveItem?.company_ids?.length ?? row.activeRule?.company_ids?.length ?? 0}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {row.countdownLabel ? (
+                        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-2 text-right">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-primary-icon">Falta</p>
+                          <p className="font-mono text-sm text-primary-icon">{row.countdownLabel}</p>
+                        </div>
+                      ) : null}
+                      {isRunning ? (
+                        <span className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-100">
+                          Executando agora
+                        </span>
+                      ) : isPending ? (
+                        <span className="rounded border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-xs text-sky-100">
+                          Aguardando na fila
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                    {row.effectiveItem?.created_at ? (
+                      <span>
+                        Na fila desde {format(new Date(row.effectiveItem.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                      </span>
+                    ) : null}
+                    {row.nextRunAt ? (
+                      <span>
+                        Proxima agenda em {format(row.nextRunAt, "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                      </span>
+                    ) : null}
+                    {row.effectiveItem?.error_message ? <span className="text-destructive">{row.effectiveItem.error_message}</span> : null}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </GlassCard>
+
       <GlassCard className="overflow-hidden">
         <div className="border-b border-border p-4">
           <h3 className="text-sm font-semibold font-display">Robos vinculados</h3>
@@ -266,43 +441,51 @@ export function AdminRobotsList({
             robots.map((robot) => (
               <div
                 key={robot.id}
-                className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
+                className="space-y-4 px-4 py-4 transition-colors hover:bg-muted/20"
               >
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="rounded-lg bg-primary/10 p-2 shrink-0">
-                    <Bot className="h-4 w-4 text-primary-icon" />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2 shrink-0">
+                      <Bot className="h-4 w-4 text-primary-icon" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{robot.display_name}</p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground">{robot.technical_id}</p>
+                      {robot.segment_path ? (
+                        <p className="truncate text-[10px] text-muted-foreground">Departamento: {robot.segment_path}</p>
+                      ) : null}
+                      {robot.status === "inactive" && robot.last_heartbeat_at ? (
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          Ultima vez ativo: {format(new Date(robot.last_heartbeat_at), "dd/MM/yyyy 'as' HH:mm", { locale: ptBR })}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{robot.display_name}</p>
-                    <p className="truncate font-mono text-[10px] text-muted-foreground">{robot.technical_id}</p>
-                    {robot.segment_path ? (
-                      <p className="truncate text-[10px] text-muted-foreground">Departamento: {robot.segment_path}</p>
-                    ) : null}
-                    {robot.status === "inactive" && robot.last_heartbeat_at ? (
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        Ultima vez ativo: {format(new Date(robot.last_heartbeat_at), "dd/MM/yyyy 'as' HH:mm", { locale: ptBR })}
-                      </p>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium ${statusClass(robot.status)}`}>
+                      <Circle className="h-1.5 w-1.5 fill-current" />
+                      {statusLabel(robot.status)}
+                    </span>
+                    {isSuperAdmin ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => openRename(robot)}
+                        aria-label="Editar"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
                     ) : null}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium ${statusClass(robot.status)}`}>
-                    <Circle className="h-1.5 w-1.5 fill-current" />
-                    {statusLabel(robot.status)}
-                  </span>
-                  {isSuperAdmin ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => openRename(robot)}
-                      aria-label="Editar"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
+                <AdminRobotOperationsCard
+                  robot={robot}
+                  companies={companies}
+                  companyConfigsByRobot={companyConfigsByRobot}
+                  scheduleRule={findRobotOperationRule(scheduleRules, robot.technical_id)}
+                />
               </div>
             ))
           )}

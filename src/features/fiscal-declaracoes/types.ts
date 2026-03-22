@@ -42,6 +42,43 @@ export type DeclarationBootstrapData = {
   actionAvailability: Record<DeclarationActionKind, DeclarationActionAvailability>;
 };
 
+export type DeclarationDocumentSourceStatus =
+  | "ready"
+  | "robot_missing"
+  | "segment_missing"
+  | "mapping_missing"
+  | "folder_missing";
+
+export type DeclarationDocumentSource = {
+  status: DeclarationDocumentSourceStatus;
+  reason: string | null;
+  robot_technical_id: string | null;
+  robot_display_name?: string | null;
+  action_key?: string | null;
+  segment_path?: string | null;
+  subfolder_path?: string | null;
+  logical_folder_path?: string | null;
+  date_rule?: string | null;
+  competence?: string | null;
+};
+
+export type DeclarationArtifactListItem = {
+  artifact_key: string;
+  company_id: string;
+  company_name: string;
+  company_document: string | null;
+  file_name: string;
+  modified_at: string | null;
+  size_bytes: number | null;
+};
+
+export type DeclarationArtifactListResponse = {
+  action: DeclarationActionKind;
+  title: string;
+  source: DeclarationDocumentSource;
+  items: DeclarationArtifactListItem[];
+};
+
 export type DeclarationRunItemStatus =
   | "pendente"
   | "processando"

@@ -3,6 +3,10 @@ import { supabase } from "./supabaseClient"
 
 const SUPABASE_URL = (import.meta.env.SUPABASE_URL ?? "").toString().trim().replace(/\/$/, "")
 const SUPABASE_ANON_KEY = (import.meta.env.SUPABASE_ANON_KEY ?? "").toString().trim()
+const INVALID_DOWNLOAD_NAME_PATTERN = new RegExp(
+  '[<>:"/\\\\|?*' + String.fromCharCode(0) + "-" + String.fromCharCode(31) + "]",
+  "g"
+)
 
 function triggerBlobDownload(blob: Blob, filename: string) {
   const a = document.createElement("a")
@@ -10,7 +14,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   const safeName = String(filename || "")
     .split(/[\\/]/)
     .pop()
-    ?.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+    ?.replace(INVALID_DOWNLOAD_NAME_PATTERN, "")
     .trim()
   a.download = safeName || "arquivo"
   a.click()
@@ -47,6 +51,20 @@ async function readError(res: Response) {
   } catch {
     return text || `Erro ${res.status}`
   }
+}
+
+export async function postOfficeServerJson<T>(
+  action: string,
+  payload: Record<string, unknown>
+): Promise<T> {
+  const headers = await getAuthHeaders("application/json")
+  const res = await fetchOfficeServer(action, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await readError(res))
+  return (await res.json().catch(() => ({}))) as T
 }
 
 /** Baixa a resposta em stream e chama onProgress(0-100). Retorna o blob. */
@@ -172,6 +190,27 @@ export async function downloadServerFileByPath(filePath: string, suggestedName?:
   triggerBlobDownload(blob, suggestedName || filename)
 }
 
+export async function downloadOfficeServerAction(
+  action: string,
+  payload: Record<string, unknown>,
+  suggestedName?: string
+): Promise<void> {
+  const headers = await getAuthHeaders("application/json")
+  const res = await fetchOfficeServer(action, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await readError(res))
+  const blob = await res.blob()
+  const disposition = res.headers.get("Content-Disposition")
+  const filename =
+    disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
+    suggestedName ||
+    "arquivo"
+  triggerBlobDownload(blob, filename)
+}
+
 export async function downloadServerFilesZip(filePaths: string[], suggestedName = "guias-municipais"): Promise<void> {
   const paths = filePaths.map((filePath) => String(filePath || "").trim()).filter(Boolean)
   if (paths.length === 0) throw new Error("Nenhum arquivo selecionado para baixar.")
@@ -273,8 +312,8 @@ export async function downloadListedFilesZipWithCategory(
   await Promise.all(
     normalizedItems.map(async ({ companyName, category, filePath }) => {
       const { blob, filename } = await fetchServerFileByPath(filePath)
-      const safeCompany = companyName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").replace(/\s+/g, " ").trim() || "EMPRESA"
-      const safeCategory = category.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").replace(/\s+/g, " ").trim() || "outros"
+      const safeCompany = companyName.replace(INVALID_DOWNLOAD_NAME_PATTERN, "").replace(/\s+/g, " ").trim() || "EMPRESA"
+      const safeCategory = category.replace(INVALID_DOWNLOAD_NAME_PATTERN, "").replace(/\s+/g, " ").trim() || "outros"
       zip.file(makeUniqueZipPath(`${safeCompany}/${safeCategory}/${filename}`), blob)
       completedFiles += 1
       if (onProgress) {

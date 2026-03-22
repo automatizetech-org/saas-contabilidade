@@ -10,6 +10,7 @@ export type Robot = VisibleRobotRow;
 export type RobotStatus = Robot["status"];
 
 let visibleRobotsRpcAvailable: boolean | null = null;
+const CONFIGURED_PASSWORD_PLACEHOLDER = "__configured__";
 
 function getErrorText(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -103,6 +104,104 @@ function sanitizeGlobalLogins(logins: CompanySefazLogin[] | undefined) {
     ...login,
     is_default: defaultIndex === -1 ? index === 0 : index === defaultIndex,
   }));
+}
+
+function parseStoredGlobalLogins(value: unknown): CompanySefazLogin[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const row = item as Record<string, unknown>;
+      const cpf = onlyDigits(String(row.cpf ?? ""));
+      const password = String(row.password ?? row.senha ?? "").trim();
+      if (!isValidCpf(cpf) || !password) return null;
+      return {
+        cpf,
+        password,
+        is_default: Boolean(row.is_default),
+      } satisfies CompanySefazLogin;
+    })
+    .filter((item): item is CompanySefazLogin => Boolean(item))
+    .filter((item) => {
+      if (seen.has(item.cpf)) return false;
+      seen.add(item.cpf);
+      return true;
+    });
+}
+
+async function loadPersistedGlobalLogins(robotId: string, technicalId: string): Promise<CompanySefazLogin[]> {
+  const context = await getCurrentOfficeContext().catch(() => null);
+  const officeId = context?.officeId ?? null;
+
+  if (officeId) {
+    const { data, error } = await supabase
+      .from("office_robot_configs")
+      .select("global_logins")
+      .eq("office_id", officeId)
+      .eq("robot_technical_id", technicalId)
+      .maybeSingle();
+
+    if (!error && data) {
+      return parseStoredGlobalLogins((data as Record<string, unknown>).global_logins);
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("robots")
+    .select("global_logins")
+    .eq("id", robotId)
+    .maybeSingle();
+
+  if (error) return [];
+  return parseStoredGlobalLogins((data as Record<string, unknown> | null)?.global_logins);
+}
+
+export async function getRobotEditableGlobalLogins(
+  robotId: string,
+  technicalId: string,
+): Promise<CompanySefazLogin[]> {
+  return loadPersistedGlobalLogins(robotId, technicalId);
+}
+
+function mergeConfiguredGlobalLoginPasswords(
+  nextLogins: CompanySefazLogin[],
+  persistedLogins: CompanySefazLogin[],
+): CompanySefazLogin[] {
+  const persistedByCpf = new Map(
+    persistedLogins.map((login) => [onlyDigits(login.cpf), String(login.password ?? "").trim()] as const),
+  );
+
+  const unresolvedCpfs: string[] = [];
+  const merged = nextLogins.map((login) => {
+    const cpf = onlyDigits(login.cpf);
+    const password = String(login.password ?? "").trim();
+
+    if (password !== CONFIGURED_PASSWORD_PLACEHOLDER) {
+      return { ...login, cpf, password };
+    }
+
+    const persistedPassword = persistedByCpf.get(cpf);
+    if (!persistedPassword) {
+      unresolvedCpfs.push(cpf);
+      return { ...login, cpf, password };
+    }
+
+    return {
+      ...login,
+      cpf,
+      password: persistedPassword,
+    };
+  });
+
+  if (unresolvedCpfs.length > 0) {
+    throw new Error(
+      "Nao foi possivel preservar as senhas ja configuradas deste robo. Reabra a tela e tente novamente.",
+    );
+  }
+
+  return merged;
 }
 
 function buildRobotRow(
@@ -263,7 +362,10 @@ export async function updateRobot(
 
   const sanitizedUpdates: Record<string, unknown> = { ...(updates as Record<string, unknown>) };
   if (updates.global_logins !== undefined) {
-    sanitizedUpdates.global_logins = sanitizeGlobalLogins(updates.global_logins);
+    const persistedGlobalLogins = await loadPersistedGlobalLogins(id, existingRobot.technical_id);
+    sanitizedUpdates.global_logins = sanitizeGlobalLogins(
+      mergeConfiguredGlobalLoginPasswords(updates.global_logins, persistedGlobalLogins),
+    );
   }
 
   const catalogPayload: Record<string, unknown> = {};

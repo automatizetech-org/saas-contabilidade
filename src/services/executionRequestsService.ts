@@ -15,17 +15,20 @@ export async function createExecutionRequest(params: {
   executionOrder?: number | null
   jobPayload?: Json | null
   source?: string | null
+  replacePendingForRobots?: boolean
 }): Promise<ExecutionRequest> {
   const { data: { user } } = await supabase.auth.getUser()
-  for (const technicalId of params.robotTechnicalIds) {
-    const deleteQuery = supabase
-      .from("execution_requests")
-      .delete()
-      .eq("status", "pending")
-      .contains("robot_technical_ids", [technicalId])
+  if (params.replacePendingForRobots) {
+    for (const technicalId of params.robotTechnicalIds) {
+      const deleteQuery = supabase
+        .from("execution_requests")
+        .delete()
+        .eq("status", "pending")
+        .contains("robot_technical_ids", [technicalId])
 
-    const { error: deleteError } = await deleteQuery
-    if (deleteError) throw deleteError
+      const { error: deleteError } = await deleteQuery
+      if (deleteError) throw deleteError
+    }
   }
 
   const row: Record<string, unknown> = {
@@ -50,6 +53,57 @@ export async function createExecutionRequest(params: {
     .single()
   if (error) throw error
   return data as ExecutionRequest
+}
+
+export async function getExecutionRequestsQueue(): Promise<ExecutionRequest[]> {
+  const { data, error } = await supabase
+    .from("execution_requests")
+    .select("*")
+    .in("status", ["pending", "running"])
+    .order("created_at", { ascending: true })
+    .order("execution_order", { ascending: true, nullsFirst: true })
+  if (error) throw error
+  return (data ?? []) as ExecutionRequest[]
+}
+
+export async function cancelExecutionRequest(
+  requestId: string,
+  reason = "Cancelado manualmente pelo operador",
+): Promise<void> {
+  const { data: request, error: requestError } = await supabase
+    .from("execution_requests")
+    .select("id, status")
+    .eq("id", requestId)
+    .maybeSingle()
+  if (requestError) throw requestError
+  if (!request?.id) throw new Error("Solicitacao nao encontrada.")
+
+  if (request.status === "pending") {
+    const { error } = await supabase
+      .from("execution_requests")
+      .delete()
+      .eq("id", requestId)
+      .eq("status", "pending")
+    if (error) throw error
+    return
+  }
+
+  if (request.status === "running") {
+    const { error } = await supabase
+      .from("execution_requests")
+      .update({
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        error_message: reason,
+        result_summary: {
+          cancelled: true,
+          cancelled_reason: reason,
+        },
+      })
+      .eq("id", requestId)
+      .eq("status", "running")
+    if (error) throw error
+  }
 }
 
 export async function getRecentExecutionRequests(limit = 20): Promise<ExecutionRequest[]> {
@@ -104,7 +158,12 @@ export async function markRunningAsCancelledByScheduleRuleId(scheduleRuleId: str
     .from("execution_requests")
     .update({
       status: "failed",
+      completed_at: new Date().toISOString(),
       error_message: "Cancelado ao parar agendamento",
+      result_summary: {
+        cancelled: true,
+        cancelled_reason: "Cancelado ao parar agendamento",
+      },
     })
     .eq("schedule_rule_id", scheduleRuleId)
     .eq("status", "running")
@@ -128,7 +187,12 @@ export async function markRunningAsCancelledByRobotTechnicalIds(robotTechnicalId
       .from("execution_requests")
       .update({
         status: "failed",
+        completed_at: new Date().toISOString(),
         error_message: "Cancelado ao parar agendamento",
+        result_summary: {
+          cancelled: true,
+          cancelled_reason: "Cancelado ao parar agendamento",
+        },
       })
       .eq("status", "running")
       .contains("robot_technical_ids", [technicalId])

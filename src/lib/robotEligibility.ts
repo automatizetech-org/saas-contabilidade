@@ -144,6 +144,7 @@ export type RobotEligibilityIssue = {
 function getEligibilityPolicy(robot: Robot): EligibilityPolicy {
   const capabilities = asObject(robot.capabilities)
   const authBehaviorRaw = String(capabilities.auth_behavior ?? "").trim()
+  const hasExplicitCapabilities = Object.keys(capabilities).length > 0
   const fallbackAuthBehavior =
     robot.technical_id === "nfs_padrao"
       ? "choice"
@@ -173,22 +174,24 @@ function getEligibilityPolicy(robot: Robot): EligibilityPolicy {
     if (field === "cae") policy.requireCae = true
   }
 
-  if (robot.technical_id === "nfs_padrao") {
-    policy.requireEnabledConfig = true
-    policy.authBehavior = "choice"
-  } else if (robot.technical_id === "sefaz_xml") {
-    policy.requireEnabledConfig = false
-    policy.requireStateRegistration = true
-    policy.requireAnyLoginSource = true
-    policy.authBehavior = "login_only"
-  } else if (robot.technical_id === "goiania_taxas_impostos") {
-    policy.requireEnabledConfig = false
-    policy.requireCae = true
-    policy.requireAnyLoginSource = true
-    policy.loginRouting = "any_available"
-  } else if (robot.technical_id === "certidoes" || robot.technical_id === "certidoes_fiscal") {
-    policy.requireEnabledConfig = false
-    policy.requireDocument = true
+  if (!hasExplicitCapabilities) {
+    if (robot.technical_id === "nfs_padrao") {
+      policy.requireEnabledConfig = true
+      policy.authBehavior = "choice"
+    } else if (robot.technical_id === "sefaz_xml") {
+      policy.requireEnabledConfig = false
+      policy.requireStateRegistration = true
+      policy.requireAnyLoginSource = true
+      policy.authBehavior = "login_only"
+    } else if (robot.technical_id === "goiania_taxas_impostos") {
+      policy.requireEnabledConfig = false
+      policy.requireCae = true
+      policy.requireAnyLoginSource = true
+      policy.loginRouting = "any_available"
+    } else if (robot.technical_id === "certidoes" || robot.technical_id === "certidoes_fiscal") {
+      policy.requireEnabledConfig = false
+      policy.requireDocument = true
+    }
   }
 
   return policy

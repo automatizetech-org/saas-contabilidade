@@ -229,6 +229,30 @@ async function readError(response: Response) {
   }
 }
 
+async function proxyJson(
+  server: OfficeServer,
+  connectorSecretHash: string,
+  userToken: string,
+  endpoint: string,
+  init?: RequestInit,
+) {
+  const response = await fetch(`${server.public_base_url}${endpoint}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${connectorSecretHash}`,
+      "X-Office-User-JWT": userToken,
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "1",
+      ...(init?.headers ?? {}),
+    },
+  });
+  const text = await response.text().catch(() => "{}");
+  return new Response(text, {
+    status: response.status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 async function proxyBinary(
   server: OfficeServer,
   connectorSecretHash: string,
@@ -295,6 +319,27 @@ async function proxyBinaryStream(
         'attachment; filename="documentos.zip"',
     },
   });
+}
+
+async function validateOfficeCompanies(
+  admin: RequestContext["admin"],
+  officeId: string,
+  companyIds: string[],
+) {
+  const normalized = [
+    ...new Set(companyIds.map((value) => String(value ?? "").trim()).filter(Boolean)),
+  ];
+  if (normalized.length === 0) return;
+
+  const { data, error } = await admin
+    .from("companies")
+    .select("id")
+    .eq("office_id", officeId)
+    .in("id", normalized);
+  if (error) throw error;
+  if ((data?.length ?? 0) !== normalized.length) {
+    throw new Error("Uma ou mais empresas nao pertencem ao escritorio atual.");
+  }
 }
 
 Deno.serve(async (req) => {
@@ -472,6 +517,84 @@ Deno.serve(async (req) => {
         .eq("id", documentId);
     }
     return result;
+  }
+
+  if (action === "list-declaration-artifacts") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para consultar documentos de declaracoes." },
+        403,
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
+    try {
+      await validateOfficeCompanies(
+        admin,
+        officeId,
+        Array.isArray(body.company_ids) ? body.company_ids : [],
+      );
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Empresas invalidas." },
+        403,
+      );
+    }
+
+    return proxyJson(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/declarations/artifacts/list",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action: body.action,
+          company_ids: Array.isArray(body.company_ids) ? body.company_ids : [],
+          competence: body.competence,
+          limit: body.limit,
+        }),
+      },
+    );
+  }
+
+  if (action === "download-declaration-artifact") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para baixar documentos de declaracoes." },
+        403,
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
+    try {
+      await validateOfficeCompanies(
+        admin,
+        officeId,
+        body.company_id ? [body.company_id] : [],
+      );
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Empresa invalida." },
+        403,
+      );
+    }
+
+    return proxyBinary(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/declarations/artifacts/download",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action: body.action,
+          company_id: body.company_id,
+          competence: body.competence,
+          artifact_key: body.artifact_key,
+        }),
+      },
+    );
   }
 
   const MAX_DOCS_PER_ZIP = 50000;

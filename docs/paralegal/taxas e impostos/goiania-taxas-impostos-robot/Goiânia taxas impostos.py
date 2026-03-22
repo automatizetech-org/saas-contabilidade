@@ -1115,14 +1115,19 @@ class RobotBackend:
 
     def fetch_robot_display_config(self) -> dict[str, Any] | None:
         try:
-            response = (
-                self._client()
-                .table("robot_display_config")
-                .select("*")
-                .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
-                .limit(1)
-                .execute()
-            )
+            client = self._client()
+            office_id = ""
+            if isinstance(self.current_json_job, dict):
+                office_id = str(self.current_json_job.get("office_id") or "").strip()
+            if not office_id:
+                try:
+                    office_id = str((_bridge_get_office_context(client) or {}).get("office_id") or "").strip()
+                except Exception:
+                    office_id = ""
+            query = client.table("robot_display_config").select("*").eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+            if office_id:
+                query = query.eq("office_id", office_id)
+            response = query.limit(1).execute()
             rows = response.data or []
             return rows[0] if rows else None
         except Exception:

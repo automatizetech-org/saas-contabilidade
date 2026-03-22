@@ -52,6 +52,16 @@ function asArray(value: Json | null | undefined): Json[] {
   return Array.isArray(value) ? value : [];
 }
 
+function getCapabilityBoolean(robot: Robot, key: string): boolean {
+  const capabilities = asObject(robot.capabilities);
+  return capabilities[key] === true;
+}
+
+function getCapabilityText(robot: Robot, key: string): string {
+  const capabilities = asObject(robot.capabilities);
+  return String(capabilities[key] ?? "").trim();
+}
+
 function normalizeFieldOption(value: Json): RobotConfigFieldOption | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, Json>;
@@ -120,13 +130,16 @@ function normalizeFieldSchema(value: Json): RobotConfigFieldSchema | null {
 export function getRobotCapabilities(robot: Robot) {
   const capabilities = asObject(robot.capabilities);
   const authBehavior = String(capabilities.auth_behavior ?? "").trim();
+  const usesLoginBinding = Boolean(capabilities.uses_login_binding);
+  const showsPasswordField = Boolean(capabilities.shows_password_field);
+  const helperText = String(capabilities.helper_text ?? "").trim();
 
   if (authBehavior === "choice" || authBehavior === "login_only" || authBehavior === "cnpj_only") {
     return {
       authBehavior,
-      usesLoginBinding: Boolean(capabilities.uses_login_binding),
-      showsPasswordField: Boolean(capabilities.shows_password_field),
-      helperText: String(capabilities.helper_text ?? "").trim(),
+      usesLoginBinding,
+      showsPasswordField,
+      helperText,
     } as const;
   }
 
@@ -159,9 +172,9 @@ export function getRobotCapabilities(robot: Robot) {
 
   return {
     authBehavior: "cnpj_only",
-    usesLoginBinding: false,
-    showsPasswordField: false,
-    helperText: "Este robô só exibe as opções necessárias para o modo de execução dele.",
+    usesLoginBinding,
+    showsPasswordField,
+    helperText: helperText || "Este robô só exibe as opções necessárias para o modo de execução dele.",
   } as const;
 }
 
@@ -175,6 +188,18 @@ function getFallbackAdminSchema(robot: Robot): RobotConfigFieldSchema[] {
       help_text: "Se preenchido, o agendador e o job local enviam apenas empresas dessa cidade para este robô.",
     },
   ];
+
+  if (getCapabilityBoolean(robot, "exposes_global_logins")) {
+    fields.push({
+      key: "global_logins",
+      label: getCapabilityText(robot, "global_logins_label") || "Logins globais",
+      type: "login_list",
+      target: "global_logins",
+      help_text:
+        getCapabilityText(robot, "global_logins_help_text") ||
+        "Cadastre aqui os logins CPF/senha usados por este robô.",
+    });
+  }
 
   if (robot.technical_id === "sefaz_xml") {
     fields.push({
@@ -201,6 +226,64 @@ function getFallbackAdminSchema(robot: Robot): RobotConfigFieldSchema[] {
         type: "boolean",
         target: "admin_settings",
         help_text: "Se marcado, o robô não captura débitos de ISS.",
+      },
+    );
+  }
+
+  const robotText = `${robot.technical_id} ${robot.display_name} ${robot.segment_path ?? ""}`
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+  const looksLikeSimplesRobot =
+    robotText.includes("simples") || robotText.includes("defis");
+  const looksLikeMeiRobot = robotText.includes("mei");
+
+  if (looksLikeSimplesRobot) {
+    fields.push(
+      {
+        key: "declaration_output_simples_emitir_guia",
+        label: "Subpasta da emissao de guia",
+        type: "text",
+        target: "admin_settings",
+        placeholder: "Guias",
+        help_text: "Subpasta final usada pela tela de Declaracoes para localizar guias do Simples dentro do segment_path do robo.",
+      },
+      {
+        key: "declaration_output_simples_extrato",
+        label: "Subpasta do extrato",
+        type: "text",
+        target: "admin_settings",
+        placeholder: "Extrato do Simples",
+        help_text: "Mapeia a rotina de extrato para a pasta final correspondente, incluindo a date_rule do leaf configurado.",
+      },
+      {
+        key: "declaration_output_simples_defis",
+        label: "Subpasta da DEFIS",
+        type: "text",
+        target: "admin_settings",
+        placeholder: "DEFIS",
+        help_text: "Usada pela tela de Declaracoes para localizar DEFIS no Base Path do escritorio.",
+      },
+    );
+  }
+
+  if (looksLikeMeiRobot) {
+    fields.push(
+      {
+        key: "declaration_output_mei_declaracao_anual",
+        label: "Subpasta da declaracao anual",
+        type: "text",
+        target: "admin_settings",
+        placeholder: "Declaracao Anual",
+        help_text: "Subpasta final da declaracao anual do MEI dentro do segment_path deste robo.",
+      },
+      {
+        key: "declaration_output_mei_guias_mensais",
+        label: "Subpasta das guias mensais",
+        type: "text",
+        target: "admin_settings",
+        placeholder: "Guias Mensais",
+        help_text: "Subpasta final usada para localizar guias e comprovantes mensais do MEI.",
       },
     );
   }
