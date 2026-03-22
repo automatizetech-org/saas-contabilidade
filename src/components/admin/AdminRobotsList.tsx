@@ -258,7 +258,18 @@ export function AdminRobotsList({
           queuePosition: effectiveItem ? queuePositionById.get(effectiveItem.id) ?? null : null,
         };
       })
-      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .sort((left, right) => {
+        const leftPosition = left.queuePosition ?? Number.POSITIVE_INFINITY;
+        const rightPosition = right.queuePosition ?? Number.POSITIVE_INFINITY;
+        if (leftPosition !== rightPosition) return leftPosition - rightPosition;
+
+        const leftNextRunAt = left.nextRunAt?.getTime() ?? Number.POSITIVE_INFINITY;
+        const rightNextRunAt = right.nextRunAt?.getTime() ?? Number.POSITIVE_INFINITY;
+        if (leftNextRunAt !== rightNextRunAt) return leftNextRunAt - rightNextRunAt;
+
+        return left.robot.display_name.localeCompare(right.robot.display_name, "pt-BR");
+      });
   }, [nowMs, queueItems, queuePositionById, robots, scheduleRules]);
 
   const handleDynamicFieldChange = (target: RobotConfigTarget, key: string, value: Json) => {
