@@ -26,6 +26,7 @@ const pages = [
   { name: "Fiscal", path: "/fiscal", icon: FileText, group: "Navegacao" },
   { name: "Fiscal - NFS", path: "/fiscal/nfs", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - NFE/NFC", path: "/fiscal/nfe-nfc", icon: FileText, group: "Fiscal" },
+  { name: "Fiscal - Declaracoes", path: "/fiscal/declaracoes", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - DIFAL", path: "/fiscal/difal", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - IRRF/CSLL", path: "/fiscal/irrf-csll", icon: FileText, group: "Fiscal" },
   { name: "Fiscal - Certidoes", path: "/fiscal/certidoes", icon: FileText, group: "Fiscal" },

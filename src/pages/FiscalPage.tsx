@@ -16,6 +16,7 @@ import { getEcacMailboxSummary, getEcacMailboxSummaryQueryKey } from "@/services
 const topicos = [
   { label: "NFS", path: "/fiscal/nfs" },
   { label: "NFE/NFC", path: "/fiscal/nfe-nfc" },
+  { label: "Declaracoes", path: "/fiscal/declaracoes" },
   { label: "DIFAL", path: "/fiscal/difal" },
   { label: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
   { label: "Certidoes", path: "/fiscal/certidoes" },

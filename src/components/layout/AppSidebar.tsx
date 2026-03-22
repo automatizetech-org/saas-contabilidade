@@ -64,6 +64,7 @@ const navItems: NavItem[] = [
       { name: "Visão Geral", path: "/fiscal" },
       { name: "NFS", path: "/fiscal/nfs" },
       { name: "NFE/NFC", path: "/fiscal/nfe-nfc" },
+      { name: "Declarações", path: "/fiscal/declaracoes" },
       { name: "DIFAL", path: "/fiscal/difal" },
       { name: "IRRF/CSLL", path: "/fiscal/irrf-csll" },
       { name: "Certidões", path: "/fiscal/certidoes" },
