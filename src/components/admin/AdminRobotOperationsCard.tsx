@@ -4,6 +4,13 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { getRobotEligibilityReport } from "@/lib/robotEligibility";
 import { formatCountdownLabel, getNextRobotRunAt } from "@/lib/robotExecutionPlanning";
@@ -26,6 +33,7 @@ export function AdminRobotOperationsCard({
 }) {
   const [search, setSearch] = useState("");
   const [countdownMs, setCountdownMs] = useState(0);
+  const [companiesModalOpen, setCompaniesModalOpen] = useState(false);
 
   const companyIds = useMemo(() => companies.map((company) => company.id), [companies]);
   const eligibility = useMemo(
@@ -116,15 +124,48 @@ export function AdminRobotOperationsCard({
           </div>
         ) : null}
 
-        <div className="space-y-4 rounded-2xl border border-border bg-background/40 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="rounded-2xl border border-border bg-background/40 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Lista de empresas</p>
+              <p className="text-xs text-muted-foreground">
+                Abra o painel somente leitura deste robo para acompanhar elegibilidade e bloqueios.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full sm:w-auto"
+              onClick={() => setCompaniesModalOpen(true)}
+            >
+              Lista de empresas
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <Dialog
+        open={companiesModalOpen}
+        onOpenChange={(open) => {
+          setCompaniesModalOpen(open);
+          if (!open) setSearch("");
+        }}
+      >
+        <DialogContent aria-describedby={undefined} className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Lista de empresas</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
             <div>
-              <p className="text-sm font-medium">Empresas do escritorio</p>
+              <p className="text-sm font-medium">{robot.display_name}</p>
               <p className="text-xs text-muted-foreground">
                 Painel somente de leitura para acompanhar elegibilidade e bloqueios deste robo.
               </p>
             </div>
-            <div className="relative w-full sm:w-[220px]">
+
+            <div className="relative w-full sm:w-[260px]">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
@@ -133,58 +174,64 @@ export function AdminRobotOperationsCard({
                 className="h-9 pl-8 text-xs"
               />
             </div>
-          </div>
 
-          <div className="rounded-2xl border border-border bg-background/70 px-4 py-3 text-xs text-muted-foreground">
-            {hasActiveSchedule
-              ? "A agenda deste robo esta ativa e a fila global acima mostra o acompanhamento."
-              : "Sem agenda ativa para este robo no momento."}
-          </div>
+            <div className="rounded-2xl border border-border bg-background/70 px-4 py-3 text-xs text-muted-foreground">
+              {hasActiveSchedule
+                ? "A agenda deste robo esta ativa e a fila global acima mostra o acompanhamento."
+                : "Sem agenda ativa para este robo no momento."}
+            </div>
 
-          <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
-            {filteredCompanies.map((company) => {
-              const eligible = eligibleCompanyIds.includes(company.id);
-              const blockedReason = blockedByCompanyId.get(company.id) ?? null;
-              return (
-                <div
-                  key={company.id}
-                  className={cn(
-                    "flex items-start gap-3 rounded-2xl border px-4 py-3 transition-colors",
-                    eligible ? "border-primary/30 bg-primary/5" : "border-border bg-background/70",
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-sm font-medium">{company.name}</p>
-                      <Badge
-                        className={
-                          eligible
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-                            : "border-amber-500/30 bg-amber-500/10 text-amber-100"
-                        }
-                      >
-                        {eligible ? "Elegivel" : "Bloqueada"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                      <span className="inline-flex items-center gap-1">
-                        <Building2 className="h-3.5 w-3.5" />
-                        {company.document || "CNPJ nao informado"}
-                      </span>
-                      {blockedReason ? (
-                        <span className="inline-flex items-center gap-1 text-amber-200">
-                          <ShieldAlert className="h-3.5 w-3.5" />
-                          {blockedReason}
+            <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
+              {filteredCompanies.map((company) => {
+                const eligible = eligibleCompanyIds.includes(company.id);
+                const blockedReason = blockedByCompanyId.get(company.id) ?? null;
+                return (
+                  <div
+                    key={company.id}
+                    className={cn(
+                      "flex items-start gap-3 rounded-2xl border px-4 py-3 transition-colors",
+                      eligible ? "border-primary/30 bg-primary/5" : "border-border bg-background/70",
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-medium">{company.name}</p>
+                        <Badge
+                          className={
+                            eligible
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                              : "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                          }
+                        >
+                          {eligible ? "Elegivel" : "Bloqueada"}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <Building2 className="h-3.5 w-3.5" />
+                          {company.document || "CNPJ nao informado"}
                         </span>
-                      ) : null}
+                        {blockedReason ? (
+                          <span className="inline-flex items-center gap-1 text-amber-200">
+                            <ShieldAlert className="h-3.5 w-3.5" />
+                            {blockedReason}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
+                );
+              })}
+
+              {filteredCompanies.length === 0 ? (
+                <div className="rounded-2xl border border-border bg-background/70 px-4 py-6 text-center text-sm text-muted-foreground">
+                  Nenhuma empresa encontrada para esta busca.
                 </div>
-              );
-            })}
+              ) : null}
+            </div>
           </div>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
     </GlassCard>
   );
 }
