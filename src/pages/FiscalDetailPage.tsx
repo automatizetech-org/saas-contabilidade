@@ -18,6 +18,7 @@ import {
   type CursorPageToken,
   type FiscalDetailKind,
   type FiscalZipPathRow,
+  resolveNfeNfcZipSegment,
 } from "@/services/documentsService";
 import { downloadFiscalDocument, downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
@@ -730,13 +731,15 @@ export default function FiscalDetailPage() {
                     }
 
                     const category = kind === "nfs" ? "nfs" : "nfe-nfc";
-                    const items = zipPaths.map((r) => ({
-                      companyName: r.empresa || "EMPRESA",
-                      category,
-                      filePath: r.file_path,
-                      zipInnerSegment:
-                        kind === "nfe-nfc" && (r.modelo === "55" || r.modelo === "65") ? r.modelo : undefined,
-                    }));
+                    const items = zipPaths.map((r) => {
+                      const modeloSeg = kind === "nfe-nfc" ? resolveNfeNfcZipSegment(r) : undefined
+                      return {
+                        companyName: r.empresa || "EMPRESA",
+                        category,
+                        filePath: r.file_path,
+                        zipInnerSegment: modeloSeg,
+                      }
+                    })
 
                     const zipSuffix = kind === "nfs" ? "nfs" : "nfe-nfc";
                     await downloadListedFilesZipWithCategory(items, zipSuffix, (p) => setDownloadProgress(p));

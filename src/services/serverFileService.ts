@@ -250,6 +250,42 @@ export async function downloadServerFilesZip(filePaths: string[], suggestedName 
 
 const MAX_FILES_CLIENT_ZIP = 50000
 
+/** Alinha com server-api: pastas 55/65, ou nome só com 44 dígitos (chave.xml do robô), ou NFe+chave. */
+function inferNfeNfcModeloFromFilePath(filePath: string): "" | "55" | "65" {
+  const norm = filePath.replace(/\\/g, "/")
+  if (/\/65(\/|$)/i.test(norm) || /(^|\/|_)65(\/|_|\.)/i.test(norm)) return "65"
+  if (/\/55(\/|$)/i.test(norm) || /(^|\/|_)55(\/|_|\.)/i.test(norm)) return "55"
+
+  const tail = norm.match(/([^/]+\.xml)$/i)?.[1] ?? norm
+  const baseNoExt = tail.replace(/\.xml$/i, "").trim()
+
+  if (/^\d{44}$/.test(baseNoExt)) {
+    const mod = baseNoExt.slice(20, 22)
+    if (mod === "55" || mod === "65") return mod
+  }
+
+  const prefixed =
+    tail.match(/nfe[_-]?(\d{44})/i) || tail.match(/nfc[_-]?(\d{44})/i)
+  if (prefixed) {
+    const mod = prefixed[1].slice(20, 22)
+    if (mod === "55" || mod === "65") return mod
+  }
+
+  const tail44 = tail.match(/(\d{44})\.xml$/i)
+  if (tail44) {
+    const mod = tail44[1].slice(20, 22)
+    if (mod === "55" || mod === "65") return mod
+  }
+
+  const embedded = baseNoExt.match(/(\d{44})/)
+  if (embedded) {
+    const mod = embedded[1].slice(20, 22)
+    if (mod === "55" || mod === "65") return mod
+  }
+
+  return ""
+}
+
 /**
  * Download rápido: um único request ao servidor, que monta o ZIP em stream no disco.
  * Com dezenas de milhares de arquivos é muito mais rápido que N requests no cliente.
@@ -271,11 +307,18 @@ export async function downloadListedFilesZipWithCategory(
   const normalizedItems = items
     .map((it) => {
       const inner = String(it.zipInnerSegment ?? "").trim()
-      const zipInnerSegment = inner === "55" || inner === "65" ? inner : ""
+      let zipInnerSegment: "" | "55" | "65" = inner === "55" || inner === "65" ? inner : ""
+      const categoryNorm = String(it.category || "")
+        .toLowerCase()
+        .replace(/_/g, "-")
+      const fp = String(it.filePath || "").trim()
+      if (!zipInnerSegment && categoryNorm === "nfe-nfc") {
+        zipInnerSegment = inferNfeNfcModeloFromFilePath(fp)
+      }
       return {
         companyName: String(it.companyName || "EMPRESA").trim() || "EMPRESA",
         category: String(it.category || "outros").trim() || "outros",
-        filePath: String(it.filePath || "").trim(),
+        filePath: fp,
         zipInnerSegment,
       }
     })
@@ -328,7 +371,9 @@ export async function downloadListedFilesZipWithCategory(
       const { blob, filename } = await fetchServerFileByPath(filePath)
       const safeCompany = companyName.replace(INVALID_DOWNLOAD_NAME_PATTERN, "").replace(/\s+/g, " ").trim() || "EMPRESA"
       const safeCategory = category.replace(INVALID_DOWNLOAD_NAME_PATTERN, "").replace(/\s+/g, " ").trim() || "outros"
-      const inner = zipInnerSegment === "55" || zipInnerSegment === "65" ? zipInnerSegment : ""
+      const catNorm = safeCategory.toLowerCase().replace(/_/g, "-")
+      let inner = zipInnerSegment === "55" || zipInnerSegment === "65" ? zipInnerSegment : ""
+      if (!inner && catNorm === "nfe-nfc") inner = inferNfeNfcModeloFromFilePath(filePath)
       const inZip = inner
         ? `${safeCompany}/${safeCategory}/${inner}/${filename}`
         : `${safeCompany}/${safeCategory}/${filename}`

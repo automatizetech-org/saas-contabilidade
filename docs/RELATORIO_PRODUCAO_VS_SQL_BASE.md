@@ -15,12 +15,12 @@
 
 ## 2. O que está alinhado
 
-- **Tabelas:** Todas as tabelas usadas no app (profiles, companies, accountants, fiscal_documents, folder_structure_nodes, robots, execution_requests, schedule_rules, robot_display_config, company_robot_config, fiscal_pendencias, dp_checklist, dp_guias, financial_records, sync_events, documents, admin_settings, client_branding_settings, municipal_tax_debts, municipal_tax_collection_runs, ir_clients, ir_settings, tax_rule_versions, simple_national_*) existem no `schema_completo.sql`.
+- **Tabelas:** As tabelas usadas no app (profiles, companies, accountants, fiscal_documents, folder_structure_nodes, robots, execution_requests, schedule_rules, robot_display_config, company_robot_config, fiscal_pendencias, dp_checklist, dp_guias, financial_records, sync_events, office_branding, admin_settings, municipal_tax_debts, municipal_tax_collection_runs, ir_clients, ir_settings, tax_rule_versions, simple_national_*, etc.) existem no `schema_completo.sql`. A tabela `documents` existe no schema mas é legado em relação a `fiscal_documents` (ver seção 9).
 - **Tabela `nfs_stats`:** Existe no schema e é usada em `dashboardService.ts`; porém **não está tipada** em `src/types/database.ts`.
 - **Enum `document_status`:** Presente no schema e coerente com o uso (documentos, checklist, etc.).
-- **RLS e políticas:** Políticas para accountants, client_branding_settings, municipal_tax_*, tax_rule_versions e simple_national_* estão documentadas no schema.
+- **RLS e políticas:** Políticas para accountants, office_branding, municipal_tax_*, tax_rule_versions e simple_national_* estão documentadas no schema.
 - **Storage:** Bucket `branding-assets` e políticas em `storage.objects` estão no schema.
-- **Coluna `client_name`** em `client_branding_settings`: presente no schema e na migration `20260316100002_add_client_name_branding.sql`.
+- **Branding:** o app usa `office_branding` (`brandingService.ts`). Se existir migration antiga citando `client_branding_settings`, tratar como histórico — conferir schema atual.
 - **Colunas de cobrança IR (`ir_clients`):** Presentes no schema (payment_charge_*, payment_link, etc.); faltam apenas no **TypeScript** (`database.ts`).
 
 ---
@@ -67,7 +67,7 @@
 
 ## 5. Itens no SQL base não criados pelas migrations (ou criados em migrations antigas)
 
-- **company_memberships:** Está no schema; não há `.from("company_memberships")` no código atual — pode ser uso futuro ou backend.
+- **Nota:** não existe `company_memberships` no `schema_completo.sql` atual; o vínculo usuário–escritório é `office_memberships`.
 - **automation_data:** Está no schema; não há uso em `src/` — pode ser uso por robô/backend.
 - **documents:** Está no schema e em `database.ts`; não há `.from("documents")` no frontend — possivelmente usado por backend/VM.
 
@@ -104,3 +104,51 @@ Se você gerar o schema a partir do banco remoto com a CLI Supabase, o resultado
 - **`supabase db pull`** — gera uma **migration** (diff) para alinhar o projeto ao remoto, não um SQL único de referência como o `schema_completo.sql`.
 
 O `schema_completo.sql` do repositório serve como referência legível e alinhada às migrations; um dump da CLI confirma que o que está em produção bate com essa referência.
+
+---
+
+## 9. Auditoria de uso (março/2026) — tabelas e RPCs
+
+Escopo: busca em `src/`, `supabase/functions/`, `Servidor/server-api/` e robôs em `docs/fiscal/**` e `docs/paralegal/**` (Python). Objetivo: separar o que é **canônico**, o que é **só interno SQL** e o que parece **legado / sem uso no repo**.
+
+### 9.1 Tabelas usadas de ponta a ponta (não são “lixo”)
+
+| Área | Tabelas (exemplos) |
+|------|-------------------|
+| Auth / multi-tenant | `profiles`, `offices`, `office_memberships`, `office_branding` (o app usa `office_branding`; não `client_branding_settings` no `src/` atual) |
+| Servidor / robôs | `office_servers`, `office_server_credentials`, `robots`, `office_robot_configs`, `office_robot_runtime`, `robot_result_events`, `execution_requests`, `schedule_rules`, `company_robot_config`, `folder_structure_nodes`, `admin_settings` |
+| Fiscal / dashboard | `companies`, `fiscal_documents`, `nfs_stats`, `sync_events`, `fiscal_pendencias`, `dp_checklist`, `dp_guias`, `financial_records` |
+| IR / municipal / inteligência | `ir_clients`, `ir_settings`, `municipal_tax_debts`, `municipal_tax_collection_runs`, `tax_rule_versions`, `simple_national_*` |
+| Projeções / fila | `office_document_index`, `office_analytics_refresh_queue`, `office_dashboard_daily`, `office_fiscal_daily`, `office_ir_summary`, `office_municipal_tax_summary`, `office_certificate_summary`, `office_tax_intelligence_summary`, `office_operations_summary` — alimentadas por triggers/RPCs; lidas por `get_*_summary` no front; worker no `server-api` chama `process_office_refresh_queue` |
+| Outros | `accountants`, `ecac_mailbox_messages`, `robot_display_config` |
+
+### 9.2 Tabelas sem referência no código deste repositório (possível legado)
+
+| Tabela | Observação |
+|--------|------------|
+| `documents` | Modelo antigo (`arquivos text[]`); o fluxo atual é `fiscal_documents` + `file_path`. Nenhum `.from("documents")` em TS/JS/PY dos caminhos acima. |
+| `robot_schedules`, `robot_jobs`, `robot_job_logs` | Só em `schema_completo.sql` e tipos em `database.ts`; sem uso em app, edge, server-api ou robôs rastreados. Possível sistema de fila antigo, substituído por `execution_requests`. |
+| `folder_structure_templates` | Semente/políticas RLS no SQL; **nós** vivos em `folder_structure_nodes` são usados pelo server-api — os *templates* não são consultados no código de aplicação. |
+
+### 9.3 Tabelas usadas só fora do front (robôs / scripts)
+
+| Tabela | Onde |
+|--------|------|
+| `automation_data` | `docs/fiscal/nfe-nfc/Sefaz Xml/sefaz xml.py` (dados flexíveis do fluxo Sefaz) |
+
+### 9.4 RPCs definidas no banco mas não chamadas pelo front (mar/2026)
+
+Substituídas na prática por versões com **cursor**:
+
+- `get_document_rows_page` — app usa `get_document_rows_cursor`.
+- `get_fiscal_detail_documents_page` — app usa `get_fiscal_detail_documents_cursor`.
+- `get_certidoes_overview_summary` — tela de certidões usa `getCertidoesOverviewSummary` → `getCertidoesDocuments` (sem esta RPC).
+
+**Recomendação:** não dropar sem validar se algum cliente externo ou BI as chama. Podem permanecer como API legada ou ser removidas numa versão major após inventário em produção.
+
+### 9.5 O que foi feito no repositório para “arrumar” sem risco
+
+- Migration `20260324120000_table_comments_legacy_inventory.sql`: comentários `COMMENT ON TABLE` nas tabelas legadas/suspeitas, visíveis no Supabase Studio, para não haver dúvida do que é histórico.
+- Este relatório atualizado como fonte única da auditoria.
+
+**Importante:** remover tabela ou RPC do PostgreSQL com `DROP` só após backup, checagem de `pg_stat_user_tables` / uso real no projeto, e migração de dados se necessário.

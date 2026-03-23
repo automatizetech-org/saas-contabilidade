@@ -2778,6 +2778,65 @@ app.post(
 const MAX_FILES_ZIP_BY_PATHS = 50000;
 
 /**
+ * NF-e / NFC-e: pastas 55/65, ou nome só com 44 dígitos (como o robô grava: chave.xml), ou NFe+chave.
+ */
+function inferNfeNfcModeloFromRelativePath(relPath) {
+  const norm = String(relPath || "").replace(/\\/g, "/");
+  if (/\/65(\/|$)/i.test(norm) || /(^|\/|_)65(\/|_|\.)/i.test(norm)) return "65";
+  if (/\/55(\/|$)/i.test(norm) || /(^|\/|_)55(\/|_|\.)/i.test(norm)) return "55";
+
+  const xmlName = norm.match(/([^/]+\.xml)$/i);
+  const tail = xmlName ? xmlName[1] : norm;
+  const baseNoExt = tail.replace(/\.xml$/i, "").trim();
+
+  if (/^\d{44}$/.test(baseNoExt)) {
+    const mod = baseNoExt.slice(20, 22);
+    if (mod === "55" || mod === "65") return mod;
+  }
+
+  const prefixed =
+    tail.match(/nfe[_-]?(\d{44})/i) || tail.match(/nfc[_-]?(\d{44})/i);
+  if (prefixed) {
+    const chave = prefixed[1];
+    const mod = chave.slice(20, 22);
+    if (mod === "55" || mod === "65") return mod;
+  }
+
+  const tail44 = tail.match(/(\d{44})\.xml$/i);
+  if (tail44) {
+    const chave = tail44[1];
+    const mod = chave.slice(20, 22);
+    if (mod === "55" || mod === "65") return mod;
+  }
+
+  const embedded = baseNoExt.match(/(\d{44})/);
+  if (embedded) {
+    const chave = embedded[1];
+    const mod = chave.slice(20, 22);
+    if (mod === "55" || mod === "65") return mod;
+  }
+
+  return "";
+}
+
+/** Primeiros bytes do XML: tag <mod>55</mod> (NF-e / NFC-e). */
+function inferNfeNfcModeloFromXmlFile(realPath) {
+  try {
+    const buf = Buffer.alloc(24576);
+    const fd = fs.openSync(realPath, "r");
+    try {
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const snippet = buf.slice(0, n).toString("utf8");
+      const m = snippet.match(/<mod>\s*(\d{2})\s*<\/mod>/i);
+      if (m && (m[1] === "55" || m[1] === "65")) return m[1];
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (_) {}
+  return "";
+}
+
+/**
  * Handler: POST /api/documents/download-zip-by-paths (e /documents/download-zip-by-paths para compat com túnel).
  * Gera um ZIP com os arquivos indicados (paths relativos ao BASE_PATH).
  * Body: { items: [{ file_path, company_name?, category?, zip_inner_segment? ('55'|'65') }], filename_suffix?: string }
@@ -2836,8 +2895,17 @@ const handleDownloadZipByPaths = [
           typeof it?.zip_inner_segment === "string"
             ? it.zip_inner_segment.trim()
             : "";
-        const zipInner =
+        let zipInner =
           rawInner === "55" || rawInner === "65" ? rawInner : "";
+        const categoryNorm = String(category || "")
+          .toLowerCase()
+          .replace(/_/g, "-");
+        if (!zipInner && categoryNorm === "nfe-nfc") {
+          zipInner = inferNfeNfcModeloFromRelativePath(filePath) || "";
+        }
+        if (!zipInner && categoryNorm === "nfe-nfc") {
+          zipInner = inferNfeNfcModeloFromXmlFile(realPath) || "";
+        }
         const filename = path.basename(realPath);
         const zipPath = zipInner
           ? `${companyName}/${category}/${zipInner}/${filename}`

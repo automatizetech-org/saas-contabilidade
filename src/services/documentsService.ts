@@ -635,6 +635,34 @@ export type FiscalZipPathRow = {
   empresa: string
   /** NF-e 55 / NFC-e 65 — usado na pasta do ZIP (só NFE/NFC). */
   modelo?: string | null
+  /** NFE | NFC do banco — fallback se modelo vier vazio no JSON da RPC. */
+  doc_type?: string | null
+}
+
+function parseFiscalZipRpcRows(data: unknown): unknown[] {
+  if (data == null) return []
+  if (Array.isArray(data)) return data
+  if (typeof data === "string") {
+    try {
+      const p = JSON.parse(data) as unknown
+      return Array.isArray(p) ? p : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+/** Define pasta 55/65 para ZIP a partir da RPC ou do tipo do documento. */
+export function resolveNfeNfcZipSegment(row: FiscalZipPathRow): "55" | "65" | undefined {
+  const m = row.modelo != null ? String(row.modelo).trim() : ""
+  if (m === "55" || m === "65") return m
+  const dt = String(row.doc_type || "")
+    .trim()
+    .toUpperCase()
+  if (dt === "NFC") return "65"
+  if (dt === "NFE") return "55"
+  return undefined
 }
 
 const FISCAL_ZIP_RPC_LIMIT = 50000
@@ -665,12 +693,22 @@ export async function getFiscalDetailDocumentZipPathsRpc(
       limit_count: FISCAL_ZIP_RPC_LIMIT,
     })
     if (error) throw error
-    const arr = Array.isArray(data) ? data : (data != null && typeof data === "object" && "file_path" in (data as object) ? [data] : [])
+    const arr = parseFiscalZipRpcRows(data)
+    if (arr.length === 0 && data != null && typeof data === "object" && !Array.isArray(data) && "file_path" in (data as object)) {
+      arr.push(data)
+    }
     return (arr as any[])
       .map((row: any) => ({
         file_path: String(row?.file_path ?? "").trim(),
         empresa: String(row?.empresa ?? "").trim() || "EMPRESA",
-        modelo: row?.modelo != null && String(row.modelo).trim() !== "" ? String(row.modelo).trim() : null,
+        modelo: (() => {
+          const m = row?.modelo != null ? String(row.modelo).trim() : ""
+          return m === "55" || m === "65" ? m : null
+        })(),
+        doc_type:
+          row?.doc_type != null && String(row.doc_type).trim() !== ""
+            ? String(row.doc_type).trim().toUpperCase()
+            : null,
       }))
       .filter((r) => r.file_path.length > 0)
   } catch {
@@ -712,5 +750,13 @@ export async function getFiscalDetailDocumentPathsForZip(
     file_path,
     empresa: v.empresa,
     modelo: v.modelo,
+    doc_type:
+      filters.kind === "nfe-nfc"
+        ? v.modelo === "65"
+          ? "NFC"
+          : v.modelo === "55"
+            ? "NFE"
+            : null
+        : null,
   }))
 }

@@ -416,6 +416,7 @@ Deno.serve(async (req) => {
         file_path: string;
         company_name?: string;
         category?: string;
+        zip_inner_segment?: string;
       }> = [];
       const requestedPaths: string[] = [];
       for (const it of rawItems) {
@@ -424,6 +425,12 @@ Deno.serve(async (req) => {
             String(it?.file_path ?? "").trim(),
           );
           requestedPaths.push(file_path);
+          const rawInner =
+            typeof it?.zip_inner_segment === "string"
+              ? it.zip_inner_segment.trim()
+              : "";
+          const zip_inner_segment =
+            rawInner === "55" || rawInner === "65" ? rawInner : undefined;
           items.push({
             file_path,
             company_name:
@@ -432,6 +439,7 @@ Deno.serve(async (req) => {
                 : undefined,
             category:
               typeof it?.category === "string" ? it.category.trim() : undefined,
+            ...(zip_inner_segment ? { zip_inner_segment } : {}),
           });
         } catch {
           /* ignora item com path inválido */
