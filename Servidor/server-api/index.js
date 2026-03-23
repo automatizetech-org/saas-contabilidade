@@ -2165,7 +2165,7 @@ let ROBOTS_ROOT_PATH = ENV_ROBOTS_ROOT_PATH || "C:\\Users\\ROBO\\Documents\\ROBO
 let OFFICE_SERVER_ID = null;
 let OFFICE_ID = null;
 let OFFICE_NAME = null;
-const FISCAL_SYNC_VERSION = "2025-03-18-office-id-fix-v2";
+const FISCAL_SYNC_VERSION = "2026-03-24-fiscal-sync-ci-paths-nfs-placeholders";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -3559,6 +3559,41 @@ function walkDir(dir, baseDir) {
   return results;
 }
 
+/**
+ * Resolve subpasta ignorando maiúsculas (Linux após restore) e pequenas variações (nfe-nfc vs NFE-NFC).
+ * Retorna path absoluto ou null.
+ */
+function findChildDirCaseInsensitive(parentAbs, segmentName) {
+  if (!parentAbs || !segmentName) return null;
+  try {
+    if (!fs.existsSync(parentAbs) || !fs.statSync(parentAbs).isDirectory())
+      return null;
+    const want = String(segmentName).trim().toLowerCase();
+    const wantAlnum = want.replace(/[^a-z0-9]/g, "");
+    const entries = fs.readdirSync(parentAbs, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const n = e.name.toLowerCase();
+      if (n === want) return path.join(parentAbs, e.name);
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const alnum = e.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (alnum === wantAlnum) return path.join(parentAbs, e.name);
+    }
+  } catch (_) {}
+  return null;
+}
+
+function relativePathFromBase(absPath) {
+  if (!absPath) return "";
+  try {
+    return path.relative(BASE_PATH, absPath).replace(/\\/g, "/");
+  } catch (_) {
+    return "";
+  }
+}
+
 function parseJsonLike(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
@@ -3800,6 +3835,101 @@ async function clearMissingNfsStats(supabase, effectiveOfficeId, result) {
 }
 
 /**
+ * Garante uma linha em nfs_stats por (empresa, período) onde já existem NFS no disco,
+ * para o dashboard não ficar sem valores/ranking após restore (zeros até o robô NFS reenviar totais reais).
+ */
+async function ensureNfsStatsPlaceholders(supabase, effectiveOfficeId, result) {
+  const nfsDocs = await fetchAllRows(() =>
+    supabase
+      .from("fiscal_documents")
+      .select("company_id, periodo")
+      .eq("office_id", effectiveOfficeId)
+      .eq("type", "NFS")
+      .not("file_path", "is", null),
+  );
+
+  const needed = new Set();
+  for (const row of nfsDocs || []) {
+    const cid = String(row.company_id || "").trim();
+    const p = String(row.periodo || "").trim().slice(0, 7);
+    if (!cid || !/^\d{4}-\d{2}$/.test(p)) continue;
+    needed.add(`${cid}\t${p}`);
+  }
+  if (needed.size === 0) return 0;
+
+  const existingRows = await fetchAllRows(() =>
+    supabase
+      .from("nfs_stats")
+      .select("company_id, period")
+      .eq("office_id", effectiveOfficeId),
+  );
+  const existing = new Set(
+    (existingRows || []).map(
+      (r) =>
+        `${String(r.company_id || "").trim()}\t${String(r.period || "").trim().slice(0, 7)}`,
+    ),
+  );
+
+  const toInsert = [];
+  for (const key of needed) {
+    if (existing.has(key)) continue;
+    const [company_id, period] = key.split("\t");
+    toInsert.push({
+      office_id: String(effectiveOfficeId),
+      company_id,
+      period,
+      qty_emitidas: 0,
+      qty_recebidas: 0,
+      valor_emitidas: 0,
+      valor_recebidas: 0,
+      service_codes: [],
+      service_codes_emitidas: [],
+      service_codes_recebidas: [],
+    });
+  }
+
+  let added = 0;
+  const chunkSize = 200;
+  for (let i = 0; i < toInsert.length; i += chunkSize) {
+    const chunk = toInsert.slice(i, i + chunkSize);
+    const { error } = await supabase.from("nfs_stats").insert(chunk);
+    if (error) {
+      if (error.code === "23505") continue;
+      result.errors.push({
+        file: "nfs_stats_placeholder",
+        error: error.message,
+      });
+    } else {
+      added += chunk.length;
+    }
+  }
+  return added;
+}
+
+async function refreshOfficeDocumentIndexAfterFiscalSync(
+  supabase,
+  effectiveOfficeId,
+  result,
+) {
+  try {
+    const { error } = await supabase.rpc("refresh_office_document_index", {
+      p_office_id: effectiveOfficeId,
+    });
+    if (error) {
+      result.errors.push({
+        file: "refresh_office_document_index",
+        error: error.message,
+      });
+    }
+  } catch (err) {
+    result.errors.push({
+      file: "refresh_office_document_index",
+      error: err?.message || String(err),
+    });
+  }
+}
+
+/**
  * Executa a sincronização completa EMPRESAS -> fiscal_documents.
  * Inclui remoção: registros cujo arquivo não existe mais na pasta são removidos do banco.
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase - Cliente Supabase (JWT do usuário ou service role)
@@ -3871,6 +4001,19 @@ async function runFiscalSyncAll(supabase, officeId = null) {
       result,
       allPathsOnDisk,
     );
+    await clearMissingNfsStats(supabase, effectiveOfficeId, result);
+    const phEarly = await ensureNfsStatsPlaceholders(
+      supabase,
+      effectiveOfficeId,
+      result,
+    );
+    if (result.inserted > 0 || result.deleted > 0 || phEarly > 0) {
+      await refreshOfficeDocumentIndexAfterFiscalSync(
+        supabase,
+        effectiveOfficeId,
+        result,
+      );
+    }
     return result;
   }
 
@@ -3885,112 +4028,122 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     const pathsOnDisk = pathsOnDiskByCompany.get(companyId);
     if (!pathsOnDisk) continue;
 
-    for (const sub of ["Recebidas", "Emitidas"]) {
-      const segment = path
-        .join(companyName, "FISCAL", "NFS", sub)
-        .replace(/\\/g, "/");
-      const files = walkDir(segment, BASE_PATH);
-      for (const fileRel of files) {
-        pathsOnDisk.add(fileRel);
-        const chave = path.basename(fileRel, path.extname(fileRel));
-        const parts = fileRel.split(/[/\\]/);
-        let periodo = new Date().toISOString().slice(0, 7);
-        const y = parts.find((p) => /^\d{4}$/.test(p));
-        const m = parts.find(
-          (p) =>
-            /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
-        );
-        if (y && m) periodo = `${y}-${m}`;
-        const { data: existingRows } = await supabase
-          .from("fiscal_documents")
-          .select("id")
-          .eq("company_id", companyId)
-          .eq("file_path", fileRel)
-          .limit(1);
-        if (existingRows && existingRows.length > 0) {
-          result.skipped++;
-          continue;
-        }
-        const row = {
-          office_id: String(effectiveOfficeId),
-          company_id: companyId,
-          type: "NFS",
-          chave,
-          periodo,
-          status: "novo",
-          file_path: fileRel,
-        };
-        if (result.inserted + result.skipped === 0)
-          console.log(
-            "[fiscal-watcher] Primeiro insert NFS payload:",
-            JSON.stringify(row),
+    const companyAbs = path.join(BASE_PATH, companyName);
+    const fiscalAbs = findChildDirCaseInsensitive(companyAbs, "FISCAL");
+    if (!fiscalAbs) continue;
+
+    const nfsRootAbs = findChildDirCaseInsensitive(fiscalAbs, "NFS");
+    if (nfsRootAbs) {
+      for (const sub of ["Recebidas", "Emitidas"]) {
+        const subAbs = findChildDirCaseInsensitive(nfsRootAbs, sub);
+        if (!subAbs) continue;
+        const segment = relativePathFromBase(subAbs);
+        if (!segment) continue;
+        const files = walkDir(segment, BASE_PATH);
+        for (const fileRel of files) {
+          pathsOnDisk.add(fileRel);
+          const chave = path.basename(fileRel, path.extname(fileRel));
+          const parts = fileRel.split(/[/\\]/);
+          let periodo = new Date().toISOString().slice(0, 7);
+          const y = parts.find((p) => /^\d{4}$/.test(p));
+          const m = parts.find(
+            (p) =>
+              /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
           );
-        const { error } = await supabase.from("fiscal_documents").insert(row);
-        if (error) {
-          if (error.code === "23505") {
+          if (y && m) periodo = `${y}-${m}`;
+          const { data: existingRows } = await supabase
+            .from("fiscal_documents")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("file_path", fileRel)
+            .limit(1);
+          if (existingRows && existingRows.length > 0) {
             result.skipped++;
-          } else {
-            result.errors.push({ file: fileRel, error: error.message });
+            continue;
           }
-        } else {
-          result.inserted++;
+          const row = {
+            office_id: String(effectiveOfficeId),
+            company_id: companyId,
+            type: "NFS",
+            chave,
+            periodo,
+            status: "novo",
+            file_path: fileRel,
+          };
+          if (result.inserted + result.skipped === 0)
+            console.log(
+              "[fiscal-watcher] Primeiro insert NFS payload:",
+              JSON.stringify(row),
+            );
+          const { error } = await supabase.from("fiscal_documents").insert(row);
+          if (error) {
+            if (error.code === "23505") {
+              result.skipped++;
+            } else {
+              result.errors.push({ file: fileRel, error: error.message });
+            }
+          } else {
+            result.inserted++;
+          }
         }
       }
     }
 
-    // NFE-NFC: árvore completa sob FISCAL/NFE-NFC (robô usa Notas Fiscais de Entrada/Saída/Ano/Mês/55|65/…)
-    const nfeNfcRoot = path
-      .join(companyName, "FISCAL", "NFE-NFC")
-      .replace(/\\/g, "/");
-    const nfeFiles = walkDir(nfeNfcRoot, BASE_PATH);
-    for (const fileRel of nfeFiles) {
-      pathsOnDisk.add(fileRel);
-      const baseName = path.basename(fileRel, path.extname(fileRel));
-      const nameLower = baseName.toLowerCase();
-      const pathLower = fileRel.replace(/\\/g, "/").toLowerCase();
-      const docType =
-        nameLower.includes("nfc") ||
-        nameLower.includes("65") ||
-        /(^|[/\\])65([/\\]|$)/.test(pathLower)
-          ? "NFC"
-          : "NFE";
-      const chave = baseName;
-      const parts = fileRel.split(/[/\\]/);
-      let periodo = new Date().toISOString().slice(0, 7);
-      const y = parts.find((p) => /^\d{4}$/.test(p));
-      const m = parts.find(
-        (p) =>
-          /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
-      );
-      if (y && m) periodo = `${y}-${m}`;
-      const { data: existingRows } = await supabase
-        .from("fiscal_documents")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("file_path", fileRel)
-        .limit(1);
-      if (existingRows && existingRows.length > 0) {
-        result.skipped++;
-        continue;
-      }
-      const row = {
-        office_id: String(effectiveOfficeId),
-        company_id: companyId,
-        type: docType,
-        chave,
-        periodo,
-        status: "novo",
-        file_path: fileRel,
-      };
-      const { error } = await supabase.from("fiscal_documents").insert(row);
-      if (error) {
-        if (error.code === "23505") {
-          result.skipped++;
-        } else {
-          result.errors.push({ file: fileRel, error: error.message });
+    const nfeRootAbs = findChildDirCaseInsensitive(fiscalAbs, "NFE-NFC");
+    if (nfeRootAbs) {
+      const nfeSegment = relativePathFromBase(nfeRootAbs);
+      if (nfeSegment) {
+        const nfeFiles = walkDir(nfeSegment, BASE_PATH);
+        for (const fileRel of nfeFiles) {
+          pathsOnDisk.add(fileRel);
+          const baseName = path.basename(fileRel, path.extname(fileRel));
+          const nameLower = baseName.toLowerCase();
+          const pathLower = fileRel.replace(/\\/g, "/").toLowerCase();
+          const docType =
+            nameLower.includes("nfc") ||
+            nameLower.includes("65") ||
+            /(^|[/\\])65([/\\]|$)/.test(pathLower)
+              ? "NFC"
+              : "NFE";
+          const chave = baseName;
+          const parts = fileRel.split(/[/\\]/);
+          let periodo = new Date().toISOString().slice(0, 7);
+          const y = parts.find((p) => /^\d{4}$/.test(p));
+          const m = parts.find(
+            (p) =>
+              /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+          );
+          if (y && m) periodo = `${y}-${m}`;
+          const { data: existingRows } = await supabase
+            .from("fiscal_documents")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("file_path", fileRel)
+            .limit(1);
+          if (existingRows && existingRows.length > 0) {
+            result.skipped++;
+            continue;
+          }
+          const row = {
+            office_id: String(effectiveOfficeId),
+            company_id: companyId,
+            type: docType,
+            chave,
+            periodo,
+            status: "novo",
+            file_path: fileRel,
+          };
+          const { error } = await supabase.from("fiscal_documents").insert(row);
+          if (error) {
+            if (error.code === "23505") {
+              result.skipped++;
+            } else {
+              result.errors.push({ file: fileRel, error: error.message });
+            }
+          } else {
+            result.inserted++;
+          }
         }
-      } else {
-        result.inserted++;
       }
     }
   }
@@ -4033,6 +4186,19 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     allPathsOnDisk,
   );
   await clearMissingNfsStats(supabase, effectiveOfficeId, result);
+  const ph = await ensureNfsStatsPlaceholders(
+    supabase,
+    effectiveOfficeId,
+    result,
+  );
+
+  if (result.inserted > 0 || result.deleted > 0 || ph > 0) {
+    await refreshOfficeDocumentIndexAfterFiscalSync(
+      supabase,
+      effectiveOfficeId,
+      result,
+    );
+  }
 
   return result;
 }
@@ -4270,8 +4436,8 @@ function startFiscalWatcher() {
   };
 
   try {
-    fs.watch(empresasPath, { recursive: true }, (eventType, filename) => {
-      if (!filename || !/\.(xml|pdf)$/i.test(filename)) return;
+    fs.watch(empresasPath, { recursive: true }, () => {
+      // Windows muitas vezes não informa `filename`; restore em massa precisa disparar sync mesmo assim.
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;

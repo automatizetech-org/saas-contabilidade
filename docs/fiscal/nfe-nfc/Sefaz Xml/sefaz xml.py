@@ -1129,6 +1129,9 @@ CDP_PORT = _pick_cdp_port()
 # Proxy opcional (ex.: http://127.0.0.1:8889 para mitmproxy)
 SEFAZ_PROXY = os.getenv("SEFAZ_PROXY", "").strip()
 DEFAULT_TIMEOUT_MS = 30_000  # 30s
+# Portal SEFAZ costuma demorar ou oscilar; login usa timeouts/retries próprios (override por env).
+SEFAZ_PORTAL_NAV_TIMEOUT_MS = int(os.environ.get("SEFAZ_PORTAL_NAV_TIMEOUT_MS", "120000"))
+SEFAZ_PORTAL_GOTO_RETRIES = max(1, int(os.environ.get("SEFAZ_PORTAL_GOTO_RETRIES", "5")))
 try:
     DOWNLOAD_HISTORY_TIMEOUT_SECONDS = max(
         120,
@@ -4857,8 +4860,63 @@ def _get_current_login_cpf() -> str:
     return cpf_somente_digitos(CURRENT_LOGIN_CPF or "")
 
 
-def login_portal(page, cpf: str | None = None, senha: str | None = None):
-    page.goto(URL_PORTAL, wait_until="load")
+def login_portal(
+    page,
+    cpf: str | None = None,
+    senha: str | None = None,
+    log_fn: Callable[..., Any] | None = None,
+):
+    def _log(msg: str) -> None:
+        if callable(log_fn):
+            try:
+                log_fn(msg)
+            except Exception:
+                pass
+
+    last_err: Exception | None = None
+    for attempt in range(1, SEFAZ_PORTAL_GOTO_RETRIES + 1):
+        try:
+            _log(
+                f"[INFO] Portal SEFAZ: carregando login "
+                f"(tentativa {attempt}/{SEFAZ_PORTAL_GOTO_RETRIES}, "
+                f"timeout {SEFAZ_PORTAL_NAV_TIMEOUT_MS // 1000}s)..."
+            )
+            # "domcontentloaded" costuma bastar e evita travar no evento "load" do gov.
+            page.goto(
+                URL_PORTAL,
+                wait_until="domcontentloaded",
+                timeout=SEFAZ_PORTAL_NAV_TIMEOUT_MS,
+            )
+            try:
+                page.wait_for_load_state(
+                    "load",
+                    timeout=min(90_000, SEFAZ_PORTAL_NAV_TIMEOUT_MS),
+                )
+            except Exception:
+                _log(
+                    "[WARN] ⚠️ Evento 'load' completo não ocorreu a tempo; "
+                    "seguindo se a página de login estiver utilizável."
+                )
+            break
+        except PlaywrightTimeoutError as e:
+            last_err = e
+            _log(f"[WARN] ⚠️ Timeout ao abrir portal SEFAZ (tentativa {attempt}): {e}")
+        except Exception as e:
+            last_err = e
+            _log(f"[WARN] ⚠️ Falha ao abrir portal SEFAZ (tentativa {attempt}): {e}")
+        if attempt >= SEFAZ_PORTAL_GOTO_RETRIES:
+            raise RuntimeError(
+                f"Falha no login do portal SEFAZ após {SEFAZ_PORTAL_GOTO_RETRIES} tentativas "
+                f"de navegação: {last_err}"
+            ) from last_err
+        backoff = min(120, 8 * attempt)
+        _log(f"[INFO] Aguardando {backoff}s antes de tentar abrir o portal novamente...")
+        time.sleep(float(backoff))
+        try:
+            page.goto("about:blank", wait_until="domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
+
     fechar_popup_certificado(page)
 
     if not cpf or not senha:
@@ -4875,7 +4933,19 @@ def login_portal(page, cpf: str | None = None, senha: str | None = None):
     wait_and_fill(page, '//*[@id="username"]', cpf)
     wait_and_fill(page, '//*[@id="password"]', senha)
     wait_and_click(page, '//*[@id="btnAuthenticate"]')
-    page.wait_for_load_state("networkidle")
+    try:
+        page.wait_for_load_state(
+            "networkidle",
+            timeout=min(90_000, SEFAZ_PORTAL_NAV_TIMEOUT_MS),
+        )
+    except Exception:
+        try:
+            page.wait_for_load_state("load", timeout=45_000)
+        except Exception:
+            _log(
+                "[WARN] ⚠️ Pós-login: networkidle/load não confirmados; "
+                "continuando (portal pode estar lento)."
+            )
     fechar_popup_certificado(page)
     _set_current_login_cpf(cpf)
 
@@ -8782,7 +8852,20 @@ class AutomationWorker(QThread):
                 self._log("[OK] ✅ Playwright/Chrome inicializados e conectados com sucesso.")
 
                 self._log("[INFO] 🔐 Acessando portal SEFAZ e realizando login...")
-                login_portal(page, cpf=cpf_use, senha=senha_use)
+                try:
+                    login_portal(page, cpf=cpf_use, senha=senha_use, log_fn=self._log)
+                except Exception as e:
+                    self._log(
+                        f"[WARN] ⚠️ Login do portal falhou ({e}). Aguardando 12s e tentando novamente uma vez..."
+                    )
+                    time.sleep(12)
+                    try:
+                        login_portal(
+                            page, cpf=cpf_use, senha=senha_use, log_fn=self._log
+                        )
+                    except Exception as e2:
+                        self._log(f"[ERRO] ❌ Falha no login do portal SEFAZ: {e2}")
+                        return False
                 self._log("[OK] ✅ Login no portal SEFAZ concluído.")
                 current_login_cpf = _get_current_login_cpf()
 
@@ -8846,10 +8929,19 @@ class AutomationWorker(QThread):
 
                 self.pw, self.browser, self.page = pw, browser, page
                 try:
-                    login_portal(page, cpf=cpf_use, senha=senha_use)
+                    login_portal(page, cpf=cpf_use, senha=senha_use, log_fn=self._log)
                 except Exception as e:
-                    self._log(f"[ERRO] Falha ao refazer login do portal no restart: {e}")
-                    return False
+                    self._log(
+                        f"[WARN] ⚠️ Login após restart falhou ({e}). Nova tentativa em 12s..."
+                    )
+                    time.sleep(12)
+                    try:
+                        login_portal(
+                            page, cpf=cpf_use, senha=senha_use, log_fn=self._log
+                        )
+                    except Exception as e2:
+                        self._log(f"[ERRO] Falha ao refazer login do portal no restart: {e2}")
+                        return False
 
                 current_login_cpf = _get_current_login_cpf()
 
