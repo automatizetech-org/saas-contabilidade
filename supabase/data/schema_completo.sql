@@ -35,12 +35,6 @@ begin
 exception when duplicate_object then null;
 end $$;
 
-do $$
-begin
-  create type public.robot_job_status as enum ('pending', 'claimed', 'running', 'completed', 'failed', 'cancelled', 'timed_out');
-exception when duplicate_object then null;
-end $$;
-
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -921,531 +915,6 @@ begin
 exception when others then
   return '{}'::jsonb;
 end;
-$$;
-
-create or replace function public.get_document_rows_page(
-  company_ids uuid[] default null,
-  category_filter text default null,
-  file_kind text default null,
-  search_text text default null,
-  date_from date default null,
-  date_to date default null,
-  page_number integer default 1,
-  page_size integer default 25
-)
-returns table (
-  id uuid,
-  company_id uuid,
-  empresa text,
-  cnpj text,
-  source text,
-  category_key text,
-  type text,
-  origem text,
-  status text,
-  periodo text,
-  document_date date,
-  created_at timestamptz,
-  file_path text,
-  chave text,
-  total_count integer
-)
-language sql
-stable
-security definer
-set search_path = public
-as $$
-with params as (
-  select
-    public.current_office_id() as office_id,
-    coalesce(company_ids, '{}'::uuid[]) as company_ids,
-    coalesce(array_length(company_ids, 1), 0) as company_count,
-    lower(coalesce(nullif(btrim(category_filter), ''), 'todos')) as category_filter,
-    lower(coalesce(nullif(btrim(file_kind), ''), 'todos')) as file_kind,
-    lower(btrim(coalesce(search_text, ''))) as search_text,
-    least(date_from, date_to) as date_from,
-    greatest(date_from, date_to) as date_to,
-    greatest(coalesce(page_number, 1), 1) as page_number,
-    least(greatest(coalesce(page_size, 25), 1), 200) as page_size
-),
-fiscal_rows as (
-  select
-    fd.id,
-    fd.company_id,
-    c.name as empresa,
-    c.document as cnpj,
-    'fiscal'::text as source,
-    case
-      when fd.type = 'NFS' then 'nfs'
-      when fd.type in ('NFE', 'NFC') then 'nfe_nfc'
-      else 'fiscal_outros'
-    end as category_key,
-    fd.type,
-    case
-      when fd.file_path ilike '%/Recebidas/%' then 'recebidas'
-      when fd.file_path ilike '%/Emitidas/%' then 'emitidas'
-      else null
-    end as origem,
-    fd.status::text as status,
-    fd.periodo,
-    coalesce(fd.document_date, fd.created_at::date) as document_date,
-    fd.created_at,
-    fd.file_path,
-    fd.chave
-  from public.fiscal_documents fd
-  join params p on p.office_id = fd.office_id
-  join public.companies c
-    on c.id = fd.company_id
-   and c.office_id = fd.office_id
-  where p.company_count = 0 or fd.company_id = any (p.company_ids)
-),
-certs_raw as (
-  select
-    se.id,
-    se.company_id,
-    se.created_at,
-    public.try_parse_jsonb(se.payload) as payload
-  from public.sync_events se
-  join params p on p.office_id = se.office_id
-  where se.tipo = 'certidao_resultado'
-    and (p.company_count = 0 or se.company_id = any (p.company_ids))
-),
-certs_latest as (
-  select distinct on (company_id, coalesce(payload ->> 'tipo_certidao', ''))
-    id,
-    company_id,
-    created_at,
-    payload
-  from certs_raw
-  where coalesce(payload ->> 'tipo_certidao', '') <> ''
-  order by company_id, coalesce(payload ->> 'tipo_certidao', ''), created_at desc
-),
-cert_rows as (
-  select
-    cl.id,
-    cl.company_id,
-    c.name as empresa,
-    c.document as cnpj,
-    'certidoes'::text as source,
-    'certidoes'::text as category_key,
-    ('CERTIDÃO - ' ||
-      case lower(coalesce(cl.payload ->> 'tipo_certidao', ''))
-        when 'federal' then 'Federal'
-        when 'fgts' then 'FGTS'
-        when 'estadual_go' then 'Estadual (GO)'
-        else coalesce(cl.payload ->> 'tipo_certidao', 'Outra')
-      end
-    ) as type,
-    null::text as origem,
-    case
-      when lower(coalesce(cl.payload ->> 'status', '')) in ('regular', 'negativa') then 'negativa'
-      when lower(coalesce(cl.payload ->> 'status', '')) = 'positiva' then 'positiva'
-      else 'irregular'
-    end as status,
-    nullif(btrim(coalesce(cl.payload ->> 'periodo', '')), '') as periodo,
-    coalesce(nullif(cl.payload ->> 'document_date', ''), nullif(cl.payload ->> 'data_consulta', ''))::date as document_date,
-    cl.created_at,
-    nullif(btrim(coalesce(cl.payload ->> 'arquivo_pdf', '')), '') as file_path,
-    null::text as chave
-  from certs_latest cl
-  join params p on true
-  join public.companies c
-    on c.id = cl.company_id
-   and c.office_id = p.office_id
-),
-dp_rows as (
-  select
-    g.id,
-    g.company_id,
-    c.name as empresa,
-    c.document as cnpj,
-    'dp_guias'::text as source,
-    'taxas_impostos'::text as category_key,
-    'GUIA - ' || coalesce(g.tipo, 'OUTROS') as type,
-    null::text as origem,
-    null::text as status,
-    left(coalesce(g.data::text, ''), 7) as periodo,
-    g.data::date as document_date,
-    g.created_at,
-    g.file_path,
-    null::text as chave
-  from public.dp_guias g
-  join params p on p.office_id = g.office_id
-  join public.companies c
-    on c.id = g.company_id
-   and c.office_id = g.office_id
-  where p.company_count = 0 or g.company_id = any (p.company_ids)
-),
-municipal_rows as (
-  select
-    m.id,
-    m.company_id,
-    c.name as empresa,
-    c.document as cnpj,
-    'municipal_taxes'::text as source,
-    'taxas_impostos'::text as category_key,
-    'IMPOSTO/TAXA - ' || coalesce(m.tributo, 'OUTROS') as type,
-    null::text as origem,
-    case
-      when coalesce(m.valor, 0) = 0 then 'regular'
-      when m.data_vencimento is null then 'regular'
-      when m.data_vencimento < current_date then 'vencido'
-      when m.data_vencimento <= current_date + 30 then 'a_vencer'
-      else 'regular'
-    end as status,
-    left(coalesce(m.data_vencimento::text, ''), 7) as periodo,
-    m.data_vencimento as document_date,
-    coalesce(m.fetched_at, m.created_at) as created_at,
-    m.guia_pdf_path as file_path,
-    null::text as chave
-  from public.municipal_tax_debts m
-  join params p on p.office_id = m.office_id
-  join public.companies c
-    on c.id = m.company_id
-   and c.office_id = m.office_id
-  where p.company_count = 0 or m.company_id = any (p.company_ids)
-),
-rows_union as (
-  select * from fiscal_rows
-  union all
-  select * from cert_rows
-  union all
-  select * from dp_rows
-  union all
-  select * from municipal_rows
-),
-filtered as (
-  select *
-  from rows_union r
-  join params p on true
-  where coalesce(btrim(r.file_path), '') <> ''
-    and (p.category_filter = 'todos' or r.category_key = p.category_filter)
-    and (
-      p.file_kind = 'todos'
-      or (p.file_kind = 'xml' and lower(r.file_path) like '%.xml')
-      or (p.file_kind = 'pdf' and lower(r.file_path) like '%.pdf')
-    )
-    and (p.date_from is null or coalesce(r.document_date, r.created_at::date) >= p.date_from)
-    and (p.date_to is null or coalesce(r.document_date, r.created_at::date) <= p.date_to)
-    and (
-      p.search_text = ''
-      or lower(concat_ws(' ', r.empresa, r.cnpj, r.type, r.status, r.periodo, r.file_path, r.chave, r.origem)) like '%' || p.search_text || '%'
-      or public.only_digits(coalesce(r.cnpj, '')) like '%' || public.only_digits(p.search_text) || '%'
-      or coalesce(r.chave, '') like '%' || btrim(coalesce(search_text, '')) || '%'
-    )
-),
-ordered as (
-  select
-    f.*,
-    count(*) over ()::int as total_count,
-    row_number() over (
-      order by coalesce(f.document_date, f.created_at::date) desc, f.created_at desc, f.id desc
-    )::int as row_num
-  from filtered f
-)
-select
-  id,
-  company_id,
-  empresa,
-  cnpj,
-  source,
-  category_key,
-  type,
-  origem,
-  status,
-  periodo,
-  document_date,
-  created_at,
-  file_path,
-  chave,
-  total_count
-from ordered
-join params p on true
-where ordered.row_num > (p.page_number - 1) * p.page_size
-  and ordered.row_num <= p.page_number * p.page_size
-order by ordered.row_num;
-$$;
-
-create or replace function public.get_fiscal_detail_documents_page(
-  detail_kind text,
-  company_ids uuid[] default null,
-  search_text text default null,
-  date_from date default null,
-  date_to date default null,
-  file_kind text default null,
-  origem_filter text default null,
-  modelo_filter text default null,
-  certidao_tipo_filter text default null,
-  page_number integer default 1,
-  page_size integer default 25
-)
-returns table (
-  id uuid,
-  company_id uuid,
-  empresa text,
-  cnpj text,
-  type text,
-  chave text,
-  periodo text,
-  status text,
-  document_date date,
-  created_at timestamptz,
-  file_path text,
-  origem text,
-  modelo text,
-  tipo_certidao text,
-  total_count integer
-)
-language sql
-stable
-security definer
-set search_path = public
-as $$
-with params as (
-  select
-    public.current_office_id() as office_id,
-    upper(coalesce(detail_kind, 'NFS')) as detail_kind,
-    coalesce(company_ids, '{}'::uuid[]) as company_ids,
-    coalesce(array_length(company_ids, 1), 0) as company_count,
-    lower(btrim(coalesce(search_text, ''))) as search_text,
-    least(date_from, date_to) as date_from,
-    greatest(date_from, date_to) as date_to,
-    lower(coalesce(nullif(btrim(file_kind), ''), 'all')) as file_kind,
-    lower(coalesce(nullif(btrim(origem_filter), ''), 'all')) as origem_filter,
-    lower(coalesce(nullif(btrim(modelo_filter), ''), 'all')) as modelo_filter,
-    lower(coalesce(nullif(btrim(certidao_tipo_filter), ''), 'all')) as certidao_tipo_filter,
-    greatest(coalesce(page_number, 1), 1) as page_number,
-    least(greatest(coalesce(page_size, 25), 1), 200) as page_size
-),
-fiscal_rows as (
-  select
-    fd.id,
-    fd.company_id,
-    c.name as empresa,
-    c.document as cnpj,
-    fd.type,
-    fd.chave,
-    fd.periodo,
-    fd.status::text as status,
-    coalesce(fd.document_date, fd.created_at::date) as document_date,
-    fd.created_at,
-    fd.file_path,
-    case
-      when fd.file_path ilike '%/Recebidas/%' then 'recebidas'
-      when fd.file_path ilike '%/Emitidas/%' then 'emitidas'
-      else null
-    end as origem,
-    case
-      when fd.type = 'NFE' then '55'
-      when fd.type = 'NFC' then '65'
-      else null
-    end as modelo,
-    null::text as tipo_certidao
-  from public.fiscal_documents fd
-  join params p on p.office_id = fd.office_id
-  join public.companies c
-    on c.id = fd.company_id
-   and c.office_id = fd.office_id
-  where p.detail_kind in ('NFS', 'NFE', 'NFC', 'NFE_NFC')
-    and (
-      (p.detail_kind = 'NFS' and fd.type = 'NFS')
-      or (p.detail_kind = 'NFE' and fd.type = 'NFE')
-      or (p.detail_kind = 'NFC' and fd.type = 'NFC')
-      or (p.detail_kind = 'NFE_NFC' and fd.type in ('NFE', 'NFC'))
-    )
-    and (p.company_count = 0 or fd.company_id = any (p.company_ids))
-),
-certs_raw as (
-  select
-    se.id,
-    se.company_id,
-    se.created_at,
-    public.try_parse_jsonb(se.payload) as payload
-  from public.sync_events se
-  join params p on p.office_id = se.office_id
-  where p.detail_kind = 'CERTIDOES'
-    and se.tipo = 'certidao_resultado'
-    and (p.company_count = 0 or se.company_id = any (p.company_ids))
-),
-certs_latest as (
-  select distinct on (company_id, coalesce(payload ->> 'tipo_certidao', ''))
-    id,
-    company_id,
-    created_at,
-    payload
-  from certs_raw
-  where coalesce(payload ->> 'tipo_certidao', '') <> ''
-  order by company_id, coalesce(payload ->> 'tipo_certidao', ''), created_at desc
-),
-cert_rows as (
-  select
-    cl.id,
-    cl.company_id,
-    c.name as empresa,
-    c.document as cnpj,
-    ('CERTIDÃO - ' ||
-      case lower(coalesce(cl.payload ->> 'tipo_certidao', ''))
-        when 'federal' then 'Federal'
-        when 'fgts' then 'FGTS'
-        when 'estadual_go' then 'Estadual (GO)'
-        else coalesce(cl.payload ->> 'tipo_certidao', 'Outra')
-      end
-    ) as type,
-    null::text as chave,
-    nullif(btrim(coalesce(cl.payload ->> 'periodo', '')), '') as periodo,
-    case
-      when lower(coalesce(cl.payload ->> 'status', '')) in ('regular', 'negativa') then 'negativa'
-      when lower(coalesce(cl.payload ->> 'status', '')) = 'positiva' then 'positiva'
-      else 'irregular'
-    end as status,
-    coalesce(nullif(cl.payload ->> 'document_date', ''), nullif(cl.payload ->> 'data_consulta', ''))::date as document_date,
-    cl.created_at,
-    nullif(btrim(coalesce(cl.payload ->> 'arquivo_pdf', '')), '') as file_path,
-    null::text as origem,
-    null::text as modelo,
-    lower(coalesce(cl.payload ->> 'tipo_certidao', '')) as tipo_certidao
-  from certs_latest cl
-  join params p on true
-  join public.companies c
-    on c.id = cl.company_id
-   and c.office_id = p.office_id
-),
-rows_union as (
-  select * from fiscal_rows
-  union all
-  select * from cert_rows
-),
-filtered as (
-  select *
-  from rows_union r
-  join params p on true
-  where coalesce(btrim(r.file_path), '') <> ''
-    and (p.date_from is null or coalesce(r.document_date, r.created_at::date) >= p.date_from)
-    and (p.date_to is null or coalesce(r.document_date, r.created_at::date) <= p.date_to)
-    and (
-      p.search_text = ''
-      or lower(concat_ws(' ', r.empresa, r.cnpj, r.type, r.chave, r.status, r.tipo_certidao)) like '%' || p.search_text || '%'
-      or public.only_digits(coalesce(r.cnpj, '')) like '%' || public.only_digits(p.search_text) || '%'
-      or coalesce(r.chave, '') like '%' || btrim(coalesce(search_text, '')) || '%'
-    )
-    and (
-      p.file_kind = 'all'
-      or (p.file_kind = 'xml' and lower(r.file_path) like '%.xml')
-      or (p.file_kind = 'pdf' and lower(r.file_path) like '%.pdf')
-    )
-    and (
-      p.origem_filter = 'all'
-      or p.detail_kind <> 'NFS'
-      or coalesce(r.origem, '') = p.origem_filter
-    )
-    and (
-      p.modelo_filter = 'all'
-      or p.detail_kind <> 'NFE_NFC'
-      or coalesce(r.modelo, '') = p.modelo_filter
-    )
-    and (
-      p.certidao_tipo_filter = 'all'
-      or p.detail_kind <> 'CERTIDOES'
-      or coalesce(r.tipo_certidao, '') = p.certidao_tipo_filter
-    )
-),
-ordered as (
-  select
-    f.*,
-    count(*) over ()::int as total_count,
-    row_number() over (
-      order by coalesce(f.document_date, f.created_at::date) desc, f.created_at desc, f.id desc
-    )::int as row_num
-  from filtered f
-)
-select
-  id,
-  company_id,
-  empresa,
-  cnpj,
-  type,
-  chave,
-  periodo,
-  status,
-  document_date,
-  created_at,
-  file_path,
-  origem,
-  modelo,
-  tipo_certidao,
-  total_count
-from ordered
-join params p on true
-where ordered.row_num > (p.page_number - 1) * p.page_size
-  and ordered.row_num <= p.page_number * p.page_size
-order by ordered.row_num;
-$$;
-
-create or replace function public.get_certidoes_overview_summary(company_ids uuid[] default null)
-returns jsonb
-language sql
-stable
-security definer
-set search_path = public
-as $$
-with params as (
-  select
-    public.current_office_id() as office_id,
-    coalesce(company_ids, '{}'::uuid[]) as company_ids,
-    coalesce(array_length(company_ids, 1), 0) as company_count
-),
-certs_raw as (
-  select
-    se.id,
-    se.company_id,
-    se.created_at,
-    public.try_parse_jsonb(se.payload) as payload
-  from public.sync_events se
-  join params p on p.office_id = se.office_id
-  where se.tipo = 'certidao_resultado'
-    and (p.company_count = 0 or se.company_id = any (p.company_ids))
-),
-certs_latest as (
-  select distinct on (company_id, coalesce(payload ->> 'tipo_certidao', ''))
-    id,
-    company_id,
-    created_at,
-    payload
-  from certs_raw
-  where coalesce(payload ->> 'tipo_certidao', '') <> ''
-  order by company_id, coalesce(payload ->> 'tipo_certidao', ''), created_at desc
-),
-normalized as (
-  select
-    id,
-    company_id,
-    case
-      when lower(coalesce(payload ->> 'status', '')) in ('regular', 'negativa') then 'negativa'
-      when lower(coalesce(payload ->> 'status', '')) = 'positiva' then 'positiva'
-      else 'irregular'
-    end as status
-  from certs_latest
-),
-summary as (
-  select
-    count(*)::int as total,
-    count(*) filter (where status = 'negativa')::int as negativas,
-    count(*) filter (where status <> 'negativa')::int as irregulares
-  from normalized
-)
-select jsonb_build_object(
-  'cards',
-  jsonb_build_object(
-    'total', coalesce((select total from summary), 0),
-    'negativas', coalesce((select negativas from summary), 0),
-    'irregulares', coalesce((select irregulares from summary), 0)
-  ),
-  'chartData',
-  jsonb_build_array(
-    jsonb_build_object('name', 'Negativas', 'value', coalesce((select negativas from summary), 0)),
-    jsonb_build_object('name', 'Irregulares', 'value', coalesce((select irregulares from summary), 0))
-  )
-);
 $$;
 
 create or replace function public.get_fiscal_detail_summary(
@@ -2378,17 +1847,6 @@ create table if not exists public.robots (
   global_logins jsonb not null default '[]'::jsonb
 );
 
-create table if not exists public.folder_structure_templates (
-  id uuid primary key default gen_random_uuid(),
-  parent_id uuid references public.folder_structure_templates(id) on delete cascade,
-  name text not null,
-  slug text,
-  date_rule text check (date_rule in ('year', 'year_month', 'year_month_day')),
-  position integer not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
 create table if not exists public.folder_structure_nodes (
   id uuid primary key default gen_random_uuid(),
   office_id uuid not null default public.current_office_id() references public.offices(id) on delete cascade,
@@ -2508,19 +1966,6 @@ create table if not exists public.robot_display_config (
   notes_mode text,
   updated_at timestamptz not null default now(),
   primary key (office_id, robot_technical_id)
-);
-
-create table if not exists public.documents (
-  id uuid primary key default gen_random_uuid(),
-  office_id uuid not null default public.current_office_id() references public.offices(id) on delete cascade,
-  company_id uuid not null references public.companies(id) on delete cascade,
-  tipo text not null check (tipo in ('NFS', 'NFE', 'NFC')),
-  periodo text not null,
-  status public.document_status not null default 'novo',
-  origem text not null default 'Automacao',
-  document_date date,
-  arquivos text[] default '{}',
-  created_at timestamptz not null default now()
 );
 
 create table if not exists public.fiscal_documents (
@@ -2927,52 +2372,6 @@ create table if not exists public.simple_national_revenue_segments (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists public.robot_schedules (
-  id uuid primary key default gen_random_uuid(),
-  office_id uuid not null default public.current_office_id() references public.offices(id) on delete cascade,
-  robot_technical_id text not null references public.robots(technical_id) on delete cascade,
-  company_ids uuid[] not null default '{}',
-  run_at_time time not null,
-  run_daily boolean not null default true,
-  run_at_date date,
-  execution_mode text not null default 'sequential',
-  notes_mode text,
-  status text not null default 'active' check (status in ('active', 'paused', 'completed')),
-  created_by uuid references public.profiles(id),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists public.robot_jobs (
-  id uuid primary key default gen_random_uuid(),
-  office_id uuid not null default public.current_office_id() references public.offices(id) on delete cascade,
-  robot_schedule_id uuid references public.robot_schedules(id) on delete set null,
-  robot_technical_id text not null references public.robots(technical_id) on delete cascade,
-  company_ids uuid[] not null default '{}',
-  status public.robot_job_status not null default 'pending',
-  attempt_count integer not null default 0,
-  claimed_at timestamptz,
-  claimed_by_server_id uuid references public.office_servers(id) on delete set null,
-  timeout_at timestamptz,
-  last_error text,
-  result_payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  completed_at timestamptz
-);
-
-create index if not exists robot_jobs_office_status_idx on public.robot_jobs (office_id, status, created_at desc);
-
-create table if not exists public.robot_job_logs (
-  id uuid primary key default gen_random_uuid(),
-  office_id uuid not null default public.current_office_id() references public.offices(id) on delete cascade,
-  robot_job_id uuid not null references public.robot_jobs(id) on delete cascade,
-  level text not null default 'info',
-  message text not null,
-  payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
 create or replace function public.copy_default_folder_structure(target_office_id uuid)
 returns void
 language plpgsql
@@ -2980,21 +2379,33 @@ security definer
 set search_path = public
 as $$
 declare
-  row record;
-  inserted_id uuid;
-  id_map jsonb := '{}'::jsonb;
-  mapped_parent uuid;
+  id_fiscal uuid;
+  id_dp uuid;
+  id_par uuid;
 begin
-  for row in
-    select * from public.folder_structure_templates
-    order by coalesce(parent_id::text, ''), position, created_at
-  loop
-    mapped_parent := case when row.parent_id is null then null else (id_map ->> row.parent_id::text)::uuid end;
-    insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
-    values (target_office_id, mapped_parent, row.name, row.slug, row.date_rule, row.position)
-    returning id into inserted_id;
-    id_map := id_map || jsonb_build_object(row.id::text, inserted_id::text);
-  end loop;
+  insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
+  values (target_office_id, null, 'Fiscal', 'fiscal', null, 1)
+  returning id into id_fiscal;
+
+  insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
+  values
+    (target_office_id, id_fiscal, 'NFS', 'nfs', 'year_month_day', 1),
+    (target_office_id, id_fiscal, 'NFE-NFC', 'nfe-nfc', 'year_month_day', 2),
+    (target_office_id, id_fiscal, 'Certidoes', 'certidoes', 'year_month_day', 3);
+
+  insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
+  values (target_office_id, null, 'Departamento Pessoal', 'dp', null, 2)
+  returning id into id_dp;
+
+  insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
+  values (target_office_id, id_dp, 'Guias', 'guias', 'year_month_day', 1);
+
+  insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
+  values (target_office_id, null, 'Paralegal', 'paralegal', null, 3)
+  returning id into id_par;
+
+  insert into public.folder_structure_nodes (office_id, parent_id, name, slug, date_rule, position)
+  values (target_office_id, id_par, 'Taxas e Impostos', 'taxas-impostos', 'year_month_day', 1);
 end;
 $$;
 
@@ -3015,12 +2426,12 @@ do $$
 declare
   tables text[] := array[
     'profiles','offices','office_memberships','office_servers','office_server_credentials','office_branding','robots',
-    'folder_structure_templates','folder_structure_nodes','admin_settings','accountants','companies',
+    'folder_structure_nodes','admin_settings','accountants','companies',
     'company_robot_config','schedule_rules','execution_requests','fiscal_documents','financial_records',
     'ir_settings','ir_clients','municipal_tax_collection_runs','municipal_tax_debts','nfs_stats',
     'tax_rule_versions','simple_national_periods','simple_national_entries','simple_national_calculations',
     'simple_national_historical_revenue_allocations','simple_national_payroll_compositions',
-    'simple_national_revenue_segments','robot_schedules','robot_jobs'
+    'simple_national_revenue_segments'
   ];
   tbl text;
 begin
@@ -3043,18 +2454,17 @@ alter table public.office_server_credentials enable row level security;
 alter table public.offices enable row level security;
 alter table public.profiles enable row level security;
 alter table public.robots enable row level security;
-alter table public.folder_structure_templates enable row level security;
 
 do $$
 declare
   office_tables text[] := array[
     'folder_structure_nodes','admin_settings','accountants','companies','company_robot_config',
-    'schedule_rules','execution_requests','robot_display_config','documents','fiscal_documents',
+    'schedule_rules','execution_requests','robot_display_config','fiscal_documents',
     'fiscal_pendencias','dp_checklist','dp_guias','financial_records','automation_data','ir_settings',
     'ir_clients','municipal_tax_collection_runs','municipal_tax_debts','nfs_stats','sync_events',
     'simple_national_periods','simple_national_entries','simple_national_calculations',
     'simple_national_historical_revenue_allocations','simple_national_payroll_compositions',
-    'simple_national_revenue_segments','robot_schedules','robot_jobs','robot_job_logs'
+    'simple_national_revenue_segments'
   ];
   tbl text;
 begin
@@ -3139,17 +2549,6 @@ create policy robots_select on public.robots
 
 drop policy if exists robots_write on public.robots;
 create policy robots_write on public.robots
-  for all to authenticated
-  using (public.is_platform_super_admin())
-  with check (public.is_platform_super_admin());
-
-drop policy if exists folder_structure_templates_select on public.folder_structure_templates;
-create policy folder_structure_templates_select on public.folder_structure_templates
-  for select to authenticated
-  using (public.is_platform_super_admin());
-
-drop policy if exists folder_structure_templates_write on public.folder_structure_templates;
-create policy folder_structure_templates_write on public.folder_structure_templates
   for all to authenticated
   using (public.is_platform_super_admin())
   with check (public.is_platform_super_admin());
@@ -3264,23 +2663,5 @@ on conflict (technical_id) do update
       date_execution_mode = excluded.date_execution_mode,
       is_fiscal_notes_robot = excluded.is_fiscal_notes_robot,
       fiscal_notes_kind = excluded.fiscal_notes_kind,
-      updated_at = now();
-
-insert into public.folder_structure_templates (id, parent_id, name, slug, date_rule, position)
-values
-  ('00000000-0000-0000-0000-000000000101', null, 'Fiscal', 'fiscal', null, 1),
-  ('00000000-0000-0000-0000-000000000102', '00000000-0000-0000-0000-000000000101', 'NFS', 'nfs', 'year_month_day', 1),
-  ('00000000-0000-0000-0000-000000000103', '00000000-0000-0000-0000-000000000101', 'NFE-NFC', 'nfe-nfc', 'year_month_day', 2),
-  ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000101', 'Certidoes', 'certidoes', 'year_month_day', 3),
-  ('00000000-0000-0000-0000-000000000105', null, 'Departamento Pessoal', 'dp', null, 2),
-  ('00000000-0000-0000-0000-000000000106', '00000000-0000-0000-0000-000000000105', 'Guias', 'guias', 'year_month_day', 1),
-  ('00000000-0000-0000-0000-000000000107', null, 'Paralegal', 'paralegal', null, 3),
-  ('00000000-0000-0000-0000-000000000108', '00000000-0000-0000-0000-000000000107', 'Taxas e Impostos', 'taxas-impostos', 'year_month_day', 1)
-on conflict (id) do update
-  set parent_id = excluded.parent_id,
-      name = excluded.name,
-      slug = excluded.slug,
-      date_rule = excluded.date_rule,
-      position = excluded.position,
       updated_at = now();
 

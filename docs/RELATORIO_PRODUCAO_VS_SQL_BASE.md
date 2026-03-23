@@ -146,9 +146,16 @@ Substituídas na prática por versões com **cursor**:
 
 **Recomendação:** não dropar sem validar se algum cliente externo ou BI as chama. Podem permanecer como API legada ou ser removidas numa versão major após inventário em produção.
 
-### 9.5 O que foi feito no repositório para “arrumar” sem risco
+### 9.5 Remoção alinhada ao app (migration `20260324180000_drop_legacy_tables_and_unused_rpcs.sql`)
 
-- Migration `20260324120000_table_comments_legacy_inventory.sql`: comentários `COMMENT ON TABLE` nas tabelas legadas/suspeitas, visíveis no Supabase Studio, para não haver dúvida do que é histórico.
-- Este relatório atualizado como fonte única da auditoria.
+Aplicada no projeto ligado via Supabase CLI. **Remove dados** das tabelas abaixo e RPCs legadas; `copy_default_folder_structure` passou a inserir a árvore padrão direto em `folder_structure_nodes` (edge `primeiro-escritório` continua válida).
 
-**Importante:** remover tabela ou RPC do PostgreSQL com `DROP` só após backup, checagem de `pg_stat_user_tables` / uso real no projeto, e migração de dados se necessário.
+**Tabelas removidas:** `documents`, `folder_structure_templates`, `robot_schedules`, `robot_jobs`, `robot_job_logs`.
+
+**Tipo removido:** `robot_job_status`.
+
+**RPCs removidas:** `get_document_rows_page`, `get_fiscal_detail_documents_page`, `get_certidoes_overview_summary` (o app já usa cursor + `getCertidoesOverviewSummary` no TS).
+
+**Mantido de propósito:** `automation_data` (robô Sefaz XML), `fiscal_documents`, projeções `office_*`, etc.
+
+O ficheiro `supabase/data/schema_completo.sql` e `src/types/database.ts` foram atualizados para refletir o mesmo modelo.

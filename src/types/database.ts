@@ -25,15 +25,6 @@ export type OfficeServerStatus =
   | "offline"
   | "error"
   | "disabled";
-export type RobotJobStatus =
-  | "pending"
-  | "claimed"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "timed_out";
-
 type TableDef<Row, Insert = Partial<Row>, Update = Partial<Row>> = {
   Row: Row;
   Insert: Insert;
@@ -289,18 +280,6 @@ export type Database = {
         period_end: string | null;
         notes_mode: RobotNotesMode | null;
         updated_at: string;
-      }>;
-      documents: TableDef<{
-        id: string;
-        office_id: string;
-        company_id: string;
-        tipo: string;
-        periodo: string;
-        status: string;
-        origem: string;
-        document_date: string | null;
-        arquivos: string[];
-        created_at: string;
       }>;
       fiscal_documents: TableDef<{
         id: string;
@@ -600,47 +579,6 @@ export type Database = {
         created_at: string;
         updated_at: string;
       }>;
-      robot_schedules: TableDef<{
-        id: string;
-        office_id: string;
-        robot_technical_id: string;
-        company_ids: string[];
-        run_at_time: string;
-        run_daily: boolean;
-        run_at_date: string | null;
-        execution_mode: RobotExecutionMode | null;
-        notes_mode: RobotNotesMode | null;
-        status: string;
-        created_by: string | null;
-        created_at: string;
-        updated_at: string;
-      }>;
-      robot_jobs: TableDef<{
-        id: string;
-        office_id: string;
-        robot_schedule_id: string | null;
-        robot_technical_id: string;
-        company_ids: string[];
-        status: RobotJobStatus;
-        attempt_count: number;
-        claimed_at: string | null;
-        claimed_by_server_id: string | null;
-        timeout_at: string | null;
-        last_error: string | null;
-        result_payload: Json;
-        created_at: string;
-        updated_at: string;
-        completed_at: string | null;
-      }>;
-      robot_job_logs: TableDef<{
-        id: string;
-        office_id: string;
-        robot_job_id: string;
-        level: string;
-        message: string;
-        payload: Json;
-        created_at: string;
-      }>;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -758,10 +696,6 @@ export type Database = {
         };
         Returns: Json;
       };
-      get_certidoes_overview_summary: {
-        Args: { company_ids?: string[] | null };
-        Returns: Json;
-      };
       get_fiscal_detail_summary: {
         Args: {
           detail_kind?: string | null;
@@ -770,38 +704,6 @@ export type Database = {
           date_to?: string | null;
         };
         Returns: Json;
-      };
-      get_fiscal_detail_documents_page: {
-        Args: {
-          detail_kind?: string | null;
-          company_ids?: string[] | null;
-          search_text?: string | null;
-          date_from?: string | null;
-          date_to?: string | null;
-          file_kind?: string | null;
-          origem_filter?: string | null;
-          modelo_filter?: string | null;
-          certidao_tipo_filter?: string | null;
-          page_number?: number | null;
-          page_size?: number | null;
-        };
-        Returns: Array<{
-          id: string;
-          company_id: string;
-          empresa: string;
-          cnpj: string | null;
-          type: string;
-          chave: string | null;
-          periodo: string | null;
-          status: string | null;
-          document_date: string | null;
-          created_at: string;
-          file_path: string | null;
-          origem: string | null;
-          modelo: string | null;
-          tipo_certidao: string | null;
-          total_count: number;
-        }>;
       };
       get_fiscal_detail_documents_cursor: {
         Args: {
@@ -820,35 +722,6 @@ export type Database = {
           limit_count?: number | null;
         };
         Returns: Json;
-      };
-      get_document_rows_page: {
-        Args: {
-          company_ids?: string[] | null;
-          category_filter?: string | null;
-          file_kind?: string | null;
-          search_text?: string | null;
-          date_from?: string | null;
-          date_to?: string | null;
-          page_number?: number | null;
-          page_size?: number | null;
-        };
-        Returns: Array<{
-          id: string;
-          company_id: string;
-          empresa: string;
-          cnpj: string | null;
-          source: string;
-          category_key: string;
-          type: string;
-          origem: string | null;
-          status: string | null;
-          periodo: string | null;
-          document_date: string | null;
-          created_at: string;
-          file_path: string | null;
-          chave: string | null;
-          total_count: number;
-        }>;
       };
       get_document_rows_cursor: {
         Args: {
