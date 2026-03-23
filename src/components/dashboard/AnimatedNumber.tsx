@@ -63,6 +63,18 @@ function RollingDigit({
   );
 }
 
+/** Só interpreta como número strings puramente numéricas (evita "501/0" virar 5010 ao remover a barra). */
+function parseAnimatedNumericInput(value: number | string): number {
+  if (typeof value === "number") return value;
+  const s = String(value).trim();
+  if (s === "" || s === "—" || s === "-") return Number.NaN;
+  if (s.includes("/")) return Number.NaN;
+  const compact = s.replace(/\s/g, "");
+  if (/^-?\d+$/.test(compact)) return parseInt(compact, 10);
+  if (/^-?\d+[.,]\d+$/.test(compact)) return parseFloat(compact.replace(",", "."));
+  return Number.NaN;
+}
+
 export function AnimatedNumber({
   value,
   format = (n) => n.toLocaleString("pt-BR"),
@@ -70,8 +82,7 @@ export function AnimatedNumber({
   variant = "roll",
   className,
 }: AnimatedNumberProps) {
-  const numericValue =
-    typeof value === "number" ? value : parseFloat(String(value).replace(/[^\d.,-]/g, "").replace(",", "."));
+  const numericValue = parseAnimatedNumericInput(value);
 
   const prevFormattedRef = useRef<string>("");
   const target = Number.isFinite(numericValue) ? Math.round(numericValue) : 0;

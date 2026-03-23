@@ -7122,6 +7122,28 @@ def sincronizar_fiscal_documents_nfe_nfc(
             log_fn("[WARN] ⚠️ BASE_PATH não configurado; fiscal_documents de NFE/NFC não serão sincronizados.")
         return result
 
+    office_id_for_row = ""
+    if supabase_client:
+        try:
+            cr = _supabase_retry_execute(
+                lambda cid=company_id: supabase_client.table("companies")
+                .select("office_id")
+                .eq("id", cid)
+                .limit(1)
+                .execute(),
+                log_fn=log_fn,
+            )
+            row0 = (getattr(cr, "data", None) or [None])[0]
+            if isinstance(row0, dict):
+                office_id_for_row = str(row0.get("office_id") or "").strip()
+        except Exception:
+            pass
+    if not office_id_for_row and callable(log_fn):
+        log_fn(
+            "[WARN] ⚠️ office_id não resolvido para fiscal_documents (NFE/NFC). "
+            "O painel do SaaS pode ficar zerado até o office_id ser gravado nas linhas."
+        )
+
     seen_docs: Set[Tuple[str, str]] = set()
 
     for zip_path in zip_paths:
@@ -7179,6 +7201,8 @@ def sincronizar_fiscal_documents_nfe_nfc(
                             "document_date": dt_emi.isoformat(),
                             "file_path": relative_file_path,
                         }
+                        if office_id_for_row:
+                            payload["office_id"] = office_id_for_row
 
                         if using_json_runtime:
                             pending_rows.append(payload)

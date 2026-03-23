@@ -5,7 +5,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { CursorPagination } from "@/components/common/CursorPagination";
 import { useParams } from "react-router-dom";
 import { FileText, FileDown, CalendarDays, Download, AlertCircle, FileArchive, DollarSign, Calendar, Medal } from "lucide-react";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
@@ -441,6 +441,17 @@ export default function FiscalDetailPage() {
     refetchIntervalInBackground: true,
   });
 
+  const totalDocumentsForPaging = detailSummary?.cards?.totalDocuments;
+  useLayoutEffect(() => {
+    if (!isNfs && !isNfeNfc) return;
+    if (typeof totalDocumentsForPaging !== "number" || totalDocumentsForPaging < 0) return;
+    const maxPage = Math.max(1, Math.ceil(totalDocumentsForPaging / pageSize));
+    if (currentPage > maxPage) {
+      setCurrentPage(1);
+      setCursorHistory([null]);
+    }
+  }, [isNfs, isNfeNfc, totalDocumentsForPaging, pageSize, currentPage]);
+
   const nfsStatsQuery = useQuery({
     queryKey: ["nfs-stats", companyFilter, resolvedDateFrom, resolvedDateTo],
     queryFn: () => getNfsStatsByDateRange(companyFilter, resolvedDateFrom, resolvedDateTo),
@@ -578,7 +589,15 @@ export default function FiscalDetailPage() {
             <StatsCard title="Total" value={String(summaryCards.totalDocuments)} icon={FileText} />
             <StatsCard title="Disponiveis" value={String(summaryCards.availableDocuments)} icon={FileDown} changeType="positive" />
             <StatsCard title="Este mes" value={String(summaryCards.thisMonth)} icon={CalendarDays} changeType="neutral" />
-            {isNfeNfc ? <StatsCard title="NFE / NFC" value={`${summaryCards.nfeCount}/${summaryCards.nfcCount}`} icon={FileText} /> : null}
+            {isNfeNfc ? (
+              <StatsCard
+                title="Por modelo"
+                value={`${summaryCards.nfeCount.toLocaleString("pt-BR")} NF-e (mod. 55)`}
+                description={`${summaryCards.nfcCount.toLocaleString("pt-BR")} NFC-e (mod. 65)`}
+                icon={FileText}
+                animateValue={false}
+              />
+            ) : null}
           </>
         )}
       </div>
@@ -747,6 +766,7 @@ export default function FiscalDetailPage() {
             pageSize={pageSize}
             shownItems={pageItems.length}
             hasMore={hasMore}
+            totalApprox={isNfs || isNfeNfc ? summaryCards.totalDocuments : null}
             onFirst={() => {
               setCurrentPage(1);
               setCursorHistory([null]);

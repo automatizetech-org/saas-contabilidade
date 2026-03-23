@@ -1810,6 +1810,7 @@ function isFiscalNotesRobot(robot) {
       robot.fiscal_notes_kind ||
       robot.notes_mode ||
       segmentPath.includes("FISCAL/NFS") ||
+      segmentPath.includes("FISCAL/NFE-NFC") ||
       segmentPath.includes("FISCAL/NFE") ||
       segmentPath.includes("FISCAL/NFC"),
   );
@@ -3456,6 +3457,7 @@ app.post(
  * POST /api/fiscal-sync-all
  * Escaneia BASE_PATH, associa cada pasta de empresa ao company_id pelo nome da empresa,
  * e sincroniza arquivos XML/PDF de FISCAL/NFS/Recebidas e FISCAL/NFS/Emitidas para fiscal_documents.
+ * NFE/NFC: todo o diretório FISCAL/NFE-NFC (recursivo), incluindo Notas Fiscais de Entrada/Saída, 55/65, etc.
  * Requer Authorization: Bearer <jwt>.
  * Normaliza nomes (remove acentos/cedilha) para casar pasta "SERVICOS" com empresa "SERVIÇOS".
  */
@@ -3864,56 +3866,59 @@ async function runFiscalSyncAll(supabase, officeId = null) {
       }
     }
 
-    // NFE-NFC: FISCAL/NFE-NFC/Recebidas e FISCAL/NFE-NFC/Emitidas (tipo NFE ou NFC por nome do arquivo)
-    for (const sub of ["Recebidas", "Emitidas"]) {
-      const segment = path
-        .join(companyName, "FISCAL", "NFE-NFC", sub)
-        .replace(/\\/g, "/");
-      const files = walkDir(segment, BASE_PATH);
-      for (const fileRel of files) {
-        pathsOnDisk.add(fileRel);
-        const baseName = path.basename(fileRel, path.extname(fileRel));
-        const nameLower = baseName.toLowerCase();
-        const docType =
-          nameLower.includes("nfc") || nameLower.includes("65") ? "NFC" : "NFE";
-        const chave = baseName;
-        const parts = fileRel.split(/[/\\]/);
-        let periodo = new Date().toISOString().slice(0, 7);
-        const y = parts.find((p) => /^\d{4}$/.test(p));
-        const m = parts.find(
-          (p) =>
-            /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
-        );
-        if (y && m) periodo = `${y}-${m}`;
-        const { data: existingRows } = await supabase
-          .from("fiscal_documents")
-          .select("id")
-          .eq("company_id", companyId)
-          .eq("file_path", fileRel)
-          .limit(1);
-        if (existingRows && existingRows.length > 0) {
+    // NFE-NFC: árvore completa sob FISCAL/NFE-NFC (robô usa Notas Fiscais de Entrada/Saída/Ano/Mês/55|65/…)
+    const nfeNfcRoot = path
+      .join(companyName, "FISCAL", "NFE-NFC")
+      .replace(/\\/g, "/");
+    const nfeFiles = walkDir(nfeNfcRoot, BASE_PATH);
+    for (const fileRel of nfeFiles) {
+      pathsOnDisk.add(fileRel);
+      const baseName = path.basename(fileRel, path.extname(fileRel));
+      const nameLower = baseName.toLowerCase();
+      const pathLower = fileRel.replace(/\\/g, "/").toLowerCase();
+      const docType =
+        nameLower.includes("nfc") ||
+        nameLower.includes("65") ||
+        /(^|[/\\])65([/\\]|$)/.test(pathLower)
+          ? "NFC"
+          : "NFE";
+      const chave = baseName;
+      const parts = fileRel.split(/[/\\]/);
+      let periodo = new Date().toISOString().slice(0, 7);
+      const y = parts.find((p) => /^\d{4}$/.test(p));
+      const m = parts.find(
+        (p) =>
+          /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+      );
+      if (y && m) periodo = `${y}-${m}`;
+      const { data: existingRows } = await supabase
+        .from("fiscal_documents")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("file_path", fileRel)
+        .limit(1);
+      if (existingRows && existingRows.length > 0) {
+        result.skipped++;
+        continue;
+      }
+      const row = {
+        office_id: String(effectiveOfficeId),
+        company_id: companyId,
+        type: docType,
+        chave,
+        periodo,
+        status: "novo",
+        file_path: fileRel,
+      };
+      const { error } = await supabase.from("fiscal_documents").insert(row);
+      if (error) {
+        if (error.code === "23505") {
           result.skipped++;
-          continue;
-        }
-        const row = {
-          office_id: String(effectiveOfficeId),
-          company_id: companyId,
-          type: docType,
-          chave,
-          periodo,
-          status: "novo",
-          file_path: fileRel,
-        };
-        const { error } = await supabase.from("fiscal_documents").insert(row);
-        if (error) {
-          if (error.code === "23505") {
-            result.skipped++;
-          } else {
-            result.errors.push({ file: fileRel, error: error.message });
-          }
         } else {
-          result.inserted++;
+          result.errors.push({ file: fileRel, error: error.message });
         }
+      } else {
+        result.inserted++;
       }
     }
   }

@@ -427,10 +427,10 @@ export async function getFiscalDetailSummary(filters: Omit<FiscalDetailPageFilte
     return {
       cards: {
         totalDocuments: filteredDeduped.length,
-        availableDocuments: filtered.filter((row) => row.file_path).length,
+        availableDocuments: filteredDeduped.filter((row) => row.file_path).length,
         thisMonth: filteredDeduped.filter((row) => String(row.periodo ?? "").slice(0, 7) === currentMonth).length,
-        nfeCount: filtered.filter((row) => row.type === "NFE").length,
-        nfcCount: filtered.filter((row) => row.type === "NFC").length,
+        nfeCount: filteredDeduped.filter((row) => row.type === "NFE").length,
+        nfcCount: filteredDeduped.filter((row) => row.type === "NFC").length,
       },
       byMonth: buildMonthSeries(filtered.map((row) => ({
         ...row,

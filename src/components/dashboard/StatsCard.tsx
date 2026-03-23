@@ -16,10 +16,13 @@ interface StatsCardProps {
 }
 
 function isNumericValue(v: string | number): boolean {
-  if (typeof v === "number") return true;
+  if (typeof v === "number") return Number.isFinite(v);
   const s = String(v).trim();
   if (s === "" || s === "—" || s === "-") return false;
-  return /^-?\d[\d.,\s]*$/.test(s) || (!Number.isNaN(parseFloat(s)) && !/[R$%kM]/.test(s));
+  if (s.includes("/")) return false;
+  if (/[R$%kM]/.test(s)) return false;
+  const compact = s.replace(/\s/g, "");
+  return /^-?\d+$/.test(compact) || /^-?\d+[.,]\d+$/.test(compact);
 }
 
 export function StatsCard({ title, value, change, changeType = "neutral", icon: Icon, description, className, delay = 0, animateValue = true }: StatsCardProps) {
