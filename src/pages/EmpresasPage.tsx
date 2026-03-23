@@ -1,12 +1,22 @@
 import { useState, useMemo, useRef, useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useSearchParams } from "react-router-dom"
-import { getCompaniesForUser, updateCompany, deleteCompany, getCompanyRobotConfigs, upsertCompanyRobotConfig, type RobotCompanyConfigInput } from "@/services/companiesService"
+import {
+  getCompaniesForUser,
+  updateCompany,
+  updateCompaniesContadorBatch,
+  deleteCompany,
+  deleteCompaniesBatch,
+  getCompanyRobotConfigs,
+  upsertCompanyRobotConfig,
+  type RobotCompanyConfigInput,
+} from "@/services/companiesService"
 import { supabase } from "@/services/supabaseClient"
 import { findAccountantByCpf, formatCpf, getAccountants, createAccountant, updateAccountant, deleteAccountant } from "@/services/accountantsService"
 import type { Company } from "@/services/profilesService"
 import { GlassCard } from "@/components/dashboard/GlassCard"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -27,6 +37,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
   SelectContent,
@@ -34,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Search, Pencil, Plus, Building2, Loader2, Upload, Users, ArrowRightLeft, Trash2 } from "lucide-react"
+import { Search, Pencil, Plus, Building2, Loader2, Upload, Users, ArrowRightLeft, Trash2, Copy } from "lucide-react"
 import { cn } from "@/utils"
 import { getPfxInfo } from "@/lib/validatePfxPassword"
 import { toast } from "sonner"
@@ -47,10 +58,19 @@ import type { IbgeCity } from "@/services/ibgeLocationsService"
 import { DataPagination } from "@/components/common/DataPagination"
 import { Progress } from "@/components/ui/progress"
 import { createCompany } from "@/services/companiesService"
-import { fetchCnpjPublica } from "@/services/cnpjPublicaService"
+import { fetchCnpjPublicaWithRetries } from "@/services/cnpjPublicaService"
+import type { CnpjFormData } from "@/services/cnpjPublicaService"
 import * as XLSX from "xlsx"
 
-const BULK_API_DELAY_MS = 1800
+/** Pausa extra entre tentativas falhas (além das filas por API no serviço). */
+const BULK_CNPJ_RETRY_DELAY_MS = 800
+/** Tentativas por rodada ao consultar CNPJ na importação em lote. */
+const BULK_FETCH_FIRST_ATTEMPTS = 4
+const BULK_FETCH_SECOND_ATTEMPTS = 4
+/** Pausa entre a 1ª e a 2ª rodada de consultas (falhas transitórias). */
+const BULK_FETCH_RETRY_PAUSE_MS = 4000
+/** Consultas CNPJ em paralelo (cada uma respeita as filas BrasilAPI + CNPJ.ws no serviço). */
+const BULK_FETCH_CONCURRENCY = 5
 
 type FilterStatus = "active" | "inactive" | "all"
 
@@ -70,6 +90,68 @@ function formatCnpjDigits(d: string) {
   return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
 }
 
+function BulkCnpjBlock({
+  title,
+  subtitle,
+  lines,
+  copyLines,
+  variant = "default",
+}: {
+  title: string
+  subtitle?: string
+  lines: string[]
+  /** Se definido, o botão Copiar usa isto (ex.: só dígitos do CNPJ). */
+  copyLines?: string[]
+  variant?: "default" | "success" | "warning" | "destructive"
+}) {
+  const border =
+    variant === "success"
+      ? "border-emerald-500/30 bg-emerald-500/5"
+      : variant === "warning"
+        ? "border-amber-500/30 bg-amber-500/5"
+        : variant === "destructive"
+          ? "border-destructive/30 bg-destructive/5"
+          : "border-border bg-muted/20"
+
+  const copyText = (copyLines ?? lines).join("\n")
+
+  return (
+    <div className={cn("rounded-lg border p-3 space-y-2", border)}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">{title}</p>
+          {subtitle ? <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p> : null}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 shrink-0 text-xs"
+          disabled={lines.length === 0}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(copyText)
+              toast.success(`${(copyLines ?? lines).length} linha(s) copiada(s).`)
+            } catch {
+              toast.error("Não foi possível copiar. Selecione o texto manualmente.")
+            }
+          }}
+        >
+          <Copy className="h-3.5 w-3.5" />
+          Copiar lista
+        </Button>
+      </div>
+      {lines.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Nenhum.</p>
+      ) : (
+        <ScrollArea className="h-[min(220px,40vh)] w-full rounded-md border border-border/60 bg-background/50">
+          <pre className="p-2 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all">{copyText}</pre>
+        </ScrollArea>
+      )}
+    </div>
+  )
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -86,6 +168,10 @@ function fileToBase64(file: File): Promise<string> {
     reader.readAsArrayBuffer(file)
   })
 }
+
+/** Origem fictícia no fluxo "mover responsabilidade" (valor do Select, não é CPF). */
+const MOVE_SOURCE_SEM_CONTADOR = "__move_sem_contador__"
+const MOVE_SOURCE_TODAS_EMPRESAS = "__move_todas_empresas__"
 
 const BULK_CSV_HEADERS = ["nome", "cnpj", "ie", "cae", "estado", "municipio", "ativo", "contador_cpf"] as const
 /** Primeira linha de exemplo no modelo CSV (após o cabeçalho) para o cliente saber como preencher. */
@@ -221,6 +307,21 @@ function bulkRowToCompanyPayload(row: Record<string, string>): BulkCompanyPayloa
   }
 }
 
+function applyCnpjApiToBulkPayload(p: BulkCompanyPayload, data: CnpjFormData): void {
+  if (!p.name?.trim()) p.name = data.razao_social?.trim() || data.nome_fantasia?.trim() || ""
+  if (!p.state_registration?.trim() && data.inscricao_estadual) p.state_registration = data.inscricao_estadual.trim()
+  if (!p.state_code?.trim() && data.state_code) p.state_code = data.state_code.trim().toUpperCase().slice(0, 2)
+  if (!p.city_name?.trim() && data.city_name) p.city_name = data.city_name.trim()
+}
+
+function payloadNeedsCnpjApiFetch(p: BulkCompanyPayload): boolean {
+  return !!(
+    p.document &&
+    String(p.document).length === 14 &&
+    (!p.name?.trim() || !p.state_code?.trim() || !p.city_name?.trim())
+  )
+}
+
 export default function EmpresasPage() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -236,6 +337,9 @@ export default function EmpresasPage() {
   const [editActive, setEditActive] = useState(true)
   const [companyExcludeId, setCompanyExcludeId] = useState<string | null>(null)
   const [companyDeleting, setCompanyDeleting] = useState(false)
+  const [bulkDeleteIds, setBulkDeleteIds] = useState<Set<string>>(() => new Set())
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false)
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false)
   const [editUseCertificate, setEditUseCertificate] = useState(false)
   const [editCertReplacing, setEditCertReplacing] = useState(false)
   const [editCertFile, setEditCertFile] = useState<File | null>(null)
@@ -259,7 +363,17 @@ export default function EmpresasPage() {
     messages: string[]
     duplicates: Array<{ cnpj: string; name?: string }>
     cnpjNotFound: string[]
+    /** API instável / rede após várias tentativas e 2ª rodada — não cadastrados (evita nome genérico). */
+    cnpjFetchFailed: Array<{ cnpj: string; detail: string }>
     cpfContadorNotCadastrado: Array<{ cpf: string; empresa: string }>
+    /** CNPJs 14 dígitos gravados com sucesso */
+    successCnpjs: string[]
+    /** Valor informado na planilha com CNPJ inválido (linha ignorada) */
+    invalidCnpjValues: string[]
+    /** Tinha CNPJ mas CPF do contador inválido (linha ignorada) */
+    blockedByInvalidContadorCpf: string[]
+    /** Falha no createCompany após passar validações */
+    insertFailed: Array<{ cnpj?: string; detail: string }>
   } | null>(null)
   const [bulkProgress, setBulkProgress] = useState<{
     current: number
@@ -336,12 +450,8 @@ export default function EmpresasPage() {
       (company) => onlyDigits((company as CompanyWithCert).contador_cpf ?? "") === previousCpfDigits
     )
 
-    for (const company of linkedCompanies) {
-      await updateCompany(company.id, {
-        contador_cpf: nextCpf,
-        contador_nome: nextName,
-      })
-    }
+    const ids = linkedCompanies.map((c) => c.id)
+    await updateCompaniesContadorBatch(ids, nextCpf, nextName)
   }
 
   useEffect(() => {
@@ -383,6 +493,7 @@ export default function EmpresasPage() {
 
   useEffect(() => {
     setTablePage(1)
+    setBulkDeleteIds(new Set())
   }, [filter, search])
 
   const openEdit = async (c: Company, options?: { focusCertificate?: boolean; renewMode?: boolean }) => {
@@ -557,7 +668,23 @@ export default function EmpresasPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold font-display tracking-tight">Empresas</h1>
+          <h1 className="text-2xl font-bold font-display tracking-tight flex flex-wrap items-center gap-2 sm:gap-3">
+            Empresas
+            {!isLoading && (
+              <span
+                className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-sm font-semibold tabular-nums text-muted-foreground"
+                title={
+                  filter === "active"
+                    ? "Total de empresas ativas"
+                    : filter === "inactive"
+                      ? "Total de empresas inativas"
+                      : "Total de empresas (todas)"
+                }
+              >
+                {companies.length.toLocaleString("pt-BR")}
+              </span>
+            )}
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">Lista de empresas que você gerencia</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -612,6 +739,73 @@ export default function EmpresasPage() {
               ))}
             </div>
           </div>
+          {!isLoading && filtered.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-border/70">
+              <span className="text-xs text-muted-foreground shrink-0">Exclusão em lote:</span>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="empresas-select-page"
+                  checked={
+                    tablePagination.list.length > 0 && tablePagination.list.every((c) => bulkDeleteIds.has(c.id))
+                      ? true
+                      : tablePagination.list.some((c) => bulkDeleteIds.has(c.id))
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={(checked) => {
+                    setBulkDeleteIds((prev) => {
+                      const next = new Set(prev)
+                      if (checked === true) {
+                        tablePagination.list.forEach((c) => next.add(c.id))
+                      } else {
+                        tablePagination.list.forEach((c) => next.delete(c.id))
+                      }
+                      return next
+                    })
+                  }}
+                  disabled={companyDeleting || bulkDeleteLoading}
+                />
+                <label htmlFor="empresas-select-page" className="text-xs cursor-pointer select-none">
+                  Página atual ({tablePagination.list.length})
+                </label>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={companyDeleting || bulkDeleteLoading}
+                onClick={() => setBulkDeleteIds(new Set(filtered.map((c) => c.id)))}
+              >
+                Marcar todos do resultado ({filtered.length})
+              </Button>
+              {bulkDeleteIds.size > 0 && (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-xs"
+                    disabled={companyDeleting || bulkDeleteLoading}
+                    onClick={() => setBulkDeleteIds(new Set())}
+                  >
+                    Limpar seleção
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="h-8 text-xs gap-1.5"
+                    disabled={companyDeleting || bulkDeleteLoading}
+                    onClick={() => setBulkDeleteDialogOpen(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Excluir {bulkDeleteIds.size} selecionada(s)
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="divide-y divide-border">
           {isLoading ? (
@@ -629,6 +823,20 @@ export default function EmpresasPage() {
                 className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-muted/30 transition-colors"
               >
                 <div className="flex items-center gap-3 min-w-0">
+                  <Checkbox
+                    className="shrink-0"
+                    checked={bulkDeleteIds.has(emp.id)}
+                    onCheckedChange={(checked) => {
+                      setBulkDeleteIds((prev) => {
+                        const next = new Set(prev)
+                        if (checked === true) next.add(emp.id)
+                        else next.delete(emp.id)
+                        return next
+                      })
+                    }}
+                    disabled={companyDeleting || bulkDeleteLoading}
+                    aria-label={`Selecionar ${emp.name} para exclusão em lote`}
+                  />
                   <div className="rounded-lg bg-primary/10 p-2 flex-shrink-0">
                     <Building2 className="h-4 w-4 text-primary-icon" />
                   </div>
@@ -667,7 +875,7 @@ export default function EmpresasPage() {
                     size="sm"
                     className="gap-1.5 text-destructive hover:text-destructive"
                     onClick={() => setCompanyExcludeId(emp.id)}
-                    disabled={companyDeleting}
+                    disabled={companyDeleting || bulkDeleteLoading}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Excluir
@@ -1046,51 +1254,104 @@ export default function EmpresasPage() {
           {bulkResult && !bulkProgress && (
             <>
               <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-3">
-                <p className="font-medium">{bulkResult.created} empresa(s) criada(s) — adicionadas à sua lista (a importação não substitui o que já existe).</p>
-                {bulkResult.errors > 0 && (
-                  <>
-                    <p className="text-destructive">{bulkResult.errors} erro(s) ao cadastrar:</p>
-                    <ul className="list-disc list-inside text-muted-foreground">
-                      {bulkResult.messages.slice(0, 10).map((m, i) => (
-                        <li key={i}>{m}</li>
-                      ))}
-                      {bulkResult.messages.length > 10 && <li>… e mais {bulkResult.messages.length - 10}.</li>}
-                    </ul>
-                  </>
-                )}
-                {bulkResult.duplicates.length > 0 && (
-                  <>
-                    <p className="text-amber-600 dark:text-amber-500 font-medium">Duplicadas (não importadas — CNPJ já cadastrado):</p>
-                    <ul className="list-disc list-inside text-muted-foreground">
-                      {bulkResult.duplicates.slice(0, 15).map((d, i) => (
-                        <li key={i}>{d.name ? `${d.name} — ` : ""}CNPJ {d.cnpj}</li>
-                      ))}
-                      {bulkResult.duplicates.length > 15 && <li>… e mais {bulkResult.duplicates.length - 15}.</li>}
-                    </ul>
-                  </>
-                )}
-                {bulkResult.cnpjNotFound.length > 0 && (
-                  <>
-                    <p className="text-amber-600 dark:text-amber-500 font-medium">CNPJ não encontrado na Receita/APIs (empresa criada com nome genérico):</p>
-                    <ul className="list-disc list-inside text-muted-foreground">
-                      {bulkResult.cnpjNotFound.slice(0, 15).map((cnpj, i) => (
-                        <li key={i}>{cnpj}</li>
-                      ))}
-                      {bulkResult.cnpjNotFound.length > 15 && <li>… e mais {bulkResult.cnpjNotFound.length - 15}.</li>}
-                    </ul>
-                  </>
-                )}
-                {bulkResult.cpfContadorNotCadastrado.length > 0 && (
-                  <>
-                    <p className="text-amber-600 dark:text-amber-500 font-medium">CPF de contador não cadastrado (empresa importada; vincule o contador depois em Editar):</p>
-                    <ul className="list-disc list-inside text-muted-foreground">
-                      {bulkResult.cpfContadorNotCadastrado.slice(0, 10).map((x, i) => (
-                        <li key={i}>CPF {x.cpf} — {x.empresa || "—"}</li>
-                      ))}
-                      {bulkResult.cpfContadorNotCadastrado.length > 10 && <li>… e mais {bulkResult.cpfContadorNotCadastrado.length - 10}.</li>}
-                    </ul>
-                  </>
-                )}
+                <p className="font-medium">
+                  {bulkResult.created} empresa(s) criada(s) — adicionadas à sua lista (a importação não substitui o que já existe).
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Listas completas abaixo (role para ver tudo). Use &quot;Copiar lista&quot; para colar em planilha ou bloco de notas.
+                </p>
+
+                {(() => {
+                  const uniqCnpj = (xs: string[]) => {
+                    const seen = new Set<string>()
+                    const out: string[] = []
+                    for (const x of xs) {
+                      const d = onlyDigits(x)
+                      if (d.length !== 14 || seen.has(d)) continue
+                      seen.add(d)
+                      out.push(d)
+                    }
+                    return out
+                  }
+                  const succ = uniqCnpj(bulkResult.successCnpjs ?? [])
+                  const dupDigits = uniqCnpj(bulkResult.duplicates.map((d) => d.cnpj))
+                  const notFound = uniqCnpj(bulkResult.cnpjNotFound)
+                  const fetchFailed = bulkResult.cnpjFetchFailed ?? []
+                  const fetchFailedLines = fetchFailed.map((f) => {
+                    const d = onlyDigits(f.cnpj)
+                    return d.length === 14 ? `${formatCnpjDigits(d)} — ${f.detail}` : `${f.cnpj} — ${f.detail}`
+                  })
+                  const invalid = bulkResult.invalidCnpjValues ?? []
+                  const blockedCpf = uniqCnpj(bulkResult.blockedByInvalidContadorCpf ?? [])
+                  const insertLines = (bulkResult.insertFailed ?? []).map((f) =>
+                    f.cnpj && onlyDigits(f.cnpj).length === 14
+                      ? `${formatCnpjDigits(onlyDigits(f.cnpj))} — ${f.detail}`
+                      : f.detail,
+                  )
+
+                  return (
+                    <div className="space-y-3">
+                      <BulkCnpjBlock
+                        variant="success"
+                        title={`CNPJ importados com sucesso (${succ.length})`}
+                        subtitle="Empresas novas gravadas nesta execução (14 dígitos)."
+                        lines={succ.map(formatCnpjDigits)}
+                        copyLines={succ}
+                      />
+                      <BulkCnpjBlock
+                        variant="destructive"
+                        title={`CNPJ inválido na planilha (${invalid.length})`}
+                        subtitle="Linhas ignoradas — conferir dígitos e dígito verificador."
+                        lines={invalid}
+                        copyLines={invalid}
+                      />
+                      <BulkCnpjBlock
+                        variant="warning"
+                        title={`CNPJ duplicado — já cadastrado (${dupDigits.length})`}
+                        subtitle="Não importados de novo."
+                        lines={dupDigits.map(formatCnpjDigits)}
+                        copyLines={dupDigits}
+                      />
+                      <BulkCnpjBlock
+                        variant="warning"
+                        title={`CNPJ inexistente na consulta pública (${notFound.length})`}
+                        subtitle="Não foram cadastrados sem razão social na planilha."
+                        lines={notFound.map(formatCnpjDigits)}
+                        copyLines={notFound}
+                      />
+                      <BulkCnpjBlock
+                        variant="destructive"
+                        title={`Consulta falhou após várias tentativas — não cadastrados (${fetchFailedLines.length})`}
+                        subtitle="Rede ou API instável; importe de novo só com esses CNPJs ou preencha o nome na planilha."
+                        lines={fetchFailedLines}
+                      />
+                      <BulkCnpjBlock
+                        variant="destructive"
+                        title={`Falha ao cadastrar (${insertLines.length})`}
+                        subtitle="Erro do servidor ou regra do banco após validação."
+                        lines={insertLines}
+                      />
+                      <BulkCnpjBlock
+                        variant="destructive"
+                        title={`CNPJ com CPF do contador inválido (${blockedCpf.length})`}
+                        subtitle="Linha ignorada — corrija o CPF do contador na planilha e importe de novo."
+                        lines={blockedCpf.map(formatCnpjDigits)}
+                        copyLines={blockedCpf}
+                      />
+                      <BulkCnpjBlock
+                        variant="warning"
+                        title={`CPF de contador não cadastrado (${bulkResult.cpfContadorNotCadastrado.length})`}
+                        subtitle="Empresa importada; vincule o contador depois em Editar."
+                        lines={bulkResult.cpfContadorNotCadastrado.map(
+                          (x) => `${formatCpfInput(x.cpf)} — ${x.empresa || "—"}`,
+                        )}
+                        copyLines={bulkResult.cpfContadorNotCadastrado.map(
+                          (x) => `${onlyDigits(x.cpf)}\t${x.empresa || ""}`,
+                        )}
+                      />
+                    </div>
+                  )
+                })()}
               </div>
               <DialogFooter>
                 <Button type="button" onClick={() => setBulkOpen(false)}>Fechar</Button>
@@ -1100,7 +1361,7 @@ export default function EmpresasPage() {
           {bulkRows.length > 0 && !bulkResult && !bulkProgress && (
             <>
               <p className="text-sm text-muted-foreground">
-                Preview ({bulkRows.length} linha(s)). A importação adiciona à lista (não substitui). Empresas com CNPJ já cadastrado serão ignoradas. CPF e CNPJ podem ser só dígitos; município aceita com ou sem acento.
+                Preview ({bulkRows.length} linha(s)). A importação adiciona à lista (não substitui). Empresas com CNPJ já cadastrado serão ignoradas. CPF e CNPJ podem ser só dígitos; município aceita com ou sem acento. As consultas usam BrasilAPI e CNPJ.ws em filas independentes (o limite lento da publica não bloqueia a fila da BrasilAPI) e rodam em paralelo; ainda assim, muitos CNPJs só na CNPJ.ws demoram. Retentativas e 2ª rodada em falhas transitórias; sem nome na planilha, não cadastramos com nome genérico.
               </p>
               <div className="border rounded-lg overflow-auto max-h-48">
                 <table className="w-full text-xs">
@@ -1153,16 +1414,27 @@ export default function EmpresasPage() {
                     const messages: string[] = []
                     const duplicates: Array<{ cnpj: string; name?: string }> = []
                     const cnpjNotFound: string[] = []
+                    const cnpjFetchFailed: Array<{ cnpj: string; detail: string }> = []
                     const cpfContadorNotCadastrado: Array<{ cpf: string; empresa: string }> = []
+                    const successCnpjs: string[] = []
+                    const invalidCnpjValues: string[] = []
+                    const blockedByInvalidContadorCpf: string[] = []
+                    const insertFailed: Array<{ cnpj?: string; detail: string }> = []
 
-                    const delay = () => new Promise((r) => setTimeout(r, BULK_API_DELAY_MS))
                     const ibgeCitiesByState = new Map<string, IbgeCity[]>()
+
+                    const skippedIndices = new Set<number>()
+                    type BulkFetchFailure = "not_found" | { transient: string }
+                    const fetchFailureByIndex = new Map<number, BulkFetchFailure>()
 
                     for (let i = 0; i < payloads.length; i++) {
                       const p = payloads[i]
                       const docDigits = p.document ? onlyDigits(p.document) : ""
 
                       if (docDigits && !isValidCnpj(docDigits)) {
+                        skippedIndices.add(i)
+                        const raw = (p.document ?? "").trim() || docDigits || `Linha ${i + 1}`
+                        invalidCnpjValues.push(raw)
                         const msg = `${p.name?.trim() || p.document || `Linha ${i + 1}`}: CNPJ inválido.`
                         messages.push(msg)
                         setBulkProgress((prev) =>
@@ -1172,49 +1444,153 @@ export default function EmpresasPage() {
                       }
 
                       if (docDigits && existingCnpjSet.has(docDigits)) {
+                        skippedIndices.add(i)
                         duplicates.push({ cnpj: p.document!, name: p.name || undefined })
                         setBulkProgress((prev) =>
                           prev ? { ...prev, current: i + 1, phase: "inserting", log: [...prev.log, { type: "error" as const, msg: `Duplicado (já cadastrado): CNPJ ${p.document}` }] } : prev
                         )
                         continue
                       }
+                    }
 
-                      const needsFetch =
-                        p.document &&
-                        String(p.document).length === 14 &&
-                        (!p.name?.trim() || !p.state_code?.trim() || !p.city_name?.trim())
+                    const fetchTaskIndices = payloads
+                      .map((_, i) => i)
+                      .filter((i) => !skippedIndices.has(i) && payloadNeedsCnpjApiFetch(payloads[i]))
+
+                    if (fetchTaskIndices.length > 0) {
+                      setBulkProgress((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              phase: "fetching",
+                              current: 0,
+                              total: fetchTaskIndices.length,
+                              log: [
+                                ...prev.log,
+                                {
+                                  type: "ok" as const,
+                                  msg: `Consultando ${fetchTaskIndices.length} CNPJ em paralelo (BrasilAPI + CNPJ.ws, filas independentes)…`,
+                                },
+                              ],
+                            }
+                          : prev
+                      )
+
+                      const fetchLogs: Array<{ type: "ok" | "error"; msg: string }> = []
+                      let fetchCompleted = 0
+
+                      const runOneCnpjFetch = async (i: number) => {
+                        const p = payloads[i]
+                        const doc = p.document!
+                        const runFetchRound = (attempts: number, delayBase: number, label: string) =>
+                          fetchCnpjPublicaWithRetries(doc, {
+                            multiSourceBulk: true,
+                            maxAttempts: attempts,
+                            delayMs: delayBase,
+                            onRetry: ({ attempt, maxAttempts, lastMessage }) => {
+                              fetchLogs.push({
+                                type: "ok",
+                                msg: `${doc}: ${label} — nova tentativa (${attempt + 1}/${maxAttempts})… ${lastMessage.slice(0, 64)}`,
+                              })
+                            },
+                          })
+
+                        let apiResult = await runFetchRound(BULK_FETCH_FIRST_ATTEMPTS, BULK_CNPJ_RETRY_DELAY_MS, "1ª rodada")
+
+                        if (!apiResult.ok && apiResult.kind === "transient") {
+                          fetchLogs.push({ type: "ok", msg: `${doc}: pausa e 2ª rodada de consultas (falha transitória)…` })
+                          await new Promise((r) => setTimeout(r, BULK_FETCH_RETRY_PAUSE_MS))
+                          apiResult = await runFetchRound(
+                            BULK_FETCH_SECOND_ATTEMPTS,
+                            Math.round(BULK_CNPJ_RETRY_DELAY_MS * 1.5),
+                            "2ª rodada",
+                          )
+                        }
+
+                        if (apiResult.ok) {
+                          applyCnpjApiToBulkPayload(p, apiResult.data)
+                          fetchLogs.push({ type: "ok", msg: `${doc}: ${p.name?.trim() || "(sem nome)"}` })
+                        } else if (apiResult.kind === "not_found") {
+                          fetchFailureByIndex.set(i, "not_found")
+                          fetchLogs.push({
+                            type: "error",
+                            msg: `CNPJ ${doc}: ${apiResult.message} — não cadastrado sem nome na planilha.`,
+                          })
+                        } else {
+                          fetchFailureByIndex.set(i, { transient: apiResult.message })
+                          fetchLogs.push({
+                            type: "error",
+                            msg: `CNPJ ${doc}: ${apiResult.message} (falha após várias tentativas).`,
+                          })
+                        }
+
+                        fetchCompleted++
+                        setBulkProgress((prev) =>
+                          prev && prev.phase === "fetching" ? { ...prev, current: fetchCompleted } : prev
+                        )
+                      }
+
+                      const conc = Math.min(BULK_FETCH_CONCURRENCY, fetchTaskIndices.length)
+                      let taskCursor = 0
+                      await Promise.all(
+                        Array.from({ length: conc }, async () => {
+                          while (true) {
+                            const k = taskCursor++
+                            if (k >= fetchTaskIndices.length) break
+                            await runOneCnpjFetch(fetchTaskIndices[k])
+                          }
+                        }),
+                      )
+
+                      setBulkProgress((prev) =>
+                        prev ? { ...prev, log: [...prev.log, ...fetchLogs].slice(-250) } : prev
+                      )
+                    }
+
+                    setBulkProgress((prev) =>
+                      prev ? { ...prev, phase: "inserting", current: 0, total: payloads.length } : prev
+                    )
+
+                    for (let i = 0; i < payloads.length; i++) {
+                      if (skippedIndices.has(i)) {
+                        setBulkProgress((prev) => (prev ? { ...prev, current: i + 1 } : prev))
+                        continue
+                      }
+
+                      const p = payloads[i]
+                      const docDigits = p.document ? onlyDigits(p.document) : ""
+
+                      const needsFetch = payloadNeedsCnpjApiFetch(p)
 
                       if (needsFetch) {
+                        const fe = fetchFailureByIndex.get(i)
+                        if (fe === "not_found") {
+                          cnpjNotFound.push(p.document!)
+                          setBulkProgress((prev) => (prev ? { ...prev, current: i + 1 } : prev))
+                          continue
+                        }
+                        if (fe && typeof fe === "object") {
+                          cnpjFetchFailed.push({ cnpj: p.document!, detail: fe.transient })
+                          setBulkProgress((prev) => (prev ? { ...prev, current: i + 1 } : prev))
+                          continue
+                        }
+                      }
+
+                      if (needsFetch && !p.name?.trim()) {
+                        if (!cnpjNotFound.includes(docDigits) && !cnpjFetchFailed.some((f) => f.cnpj === docDigits)) {
+                          cnpjFetchFailed.push({
+                            cnpj: docDigits,
+                            detail: "Consulta não preencheu o nome e a planilha não tinha razão social.",
+                          })
+                        }
+                        const skipMsg = `CNPJ ${docDigits}: não cadastrado — falta nome (preencha na planilha ou importe de novo).`
+                        messages.push(skipMsg)
                         setBulkProgress((prev) =>
                           prev
-                            ? {
-                                ...prev,
-                                current: i + 1,
-                                phase: "fetching",
-                                log: [...prev.log, { type: "ok" as const, msg: `Buscando CNPJ ${p.document}...` }],
-                              }
+                            ? { ...prev, current: i + 1, phase: "inserting", log: [...prev.log, { type: "error" as const, msg: skipMsg }] }
                             : prev
                         )
-                        await delay()
-                        try {
-                          const data = await fetchCnpjPublica(p.document!)
-                          if (data) {
-                            if (!p.name?.trim()) p.name = data.razao_social?.trim() || data.nome_fantasia?.trim() || ""
-                            if (!p.state_registration?.trim() && data.inscricao_estadual) p.state_registration = data.inscricao_estadual.trim()
-                            if (!p.state_code?.trim() && data.state_code) p.state_code = data.state_code.trim().toUpperCase().slice(0, 2)
-                            if (!p.city_name?.trim() && data.city_name) p.city_name = data.city_name.trim()
-                            setBulkProgress((prev) =>
-                              prev ? { ...prev, log: [...prev.log, { type: "ok" as const, msg: `${p.document}: ${p.name || "(sem nome)"}` }] } : prev
-                            )
-                          }
-                        } catch (e) {
-                          const msg = e instanceof Error ? e.message : String(e)
-                          cnpjNotFound.push(p.document!)
-                          setBulkProgress((prev) =>
-                            prev ? { ...prev, log: [...prev.log, { type: "error" as const, msg: `CNPJ ${p.document}: ${msg}` }] } : prev
-                          )
-                          if (!p.name?.trim()) p.name = `Empresa CNPJ ${p.document}`
-                        }
+                        continue
                       }
 
                       if (p.state_code?.trim() && p.city_name?.trim()) {
@@ -1232,6 +1608,7 @@ export default function EmpresasPage() {
                       }
 
                       if (p.contador_cpf && !isValidCpf(p.contador_cpf)) {
+                        if (docDigits) blockedByInvalidContadorCpf.push(docDigits)
                         const msg = `${p.name?.trim() || p.document || `Linha ${i + 1}`}: CPF do contador inválido.`
                         messages.push(msg)
                         setBulkProgress((prev) =>
@@ -1260,12 +1637,14 @@ export default function EmpresasPage() {
                           active: p.active ?? true,
                         })
                         created++
+                        if (docDigits) successCnpjs.push(docDigits)
                         existingCnpjSet.add(docDigits)
                         setBulkProgress((prev) =>
                           prev ? { ...prev, log: [...prev.log, { type: "ok" as const, msg: `Criada: ${nameToUse}` }] } : prev
                         )
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : String(e)
+                        insertFailed.push({ cnpj: p.document ?? undefined, detail: `${nameToUse}: ${msg}` })
                         messages.push(`${nameToUse}: ${msg}`)
                         setBulkProgress((prev) =>
                           prev ? { ...prev, log: [...prev.log, { type: "error" as const, msg: `${nameToUse}: ${msg}` }] } : prev
@@ -1279,7 +1658,12 @@ export default function EmpresasPage() {
                       messages,
                       duplicates,
                       cnpjNotFound,
+                      cnpjFetchFailed,
                       cpfContadorNotCadastrado,
+                      successCnpjs,
+                      invalidCnpjValues,
+                      blockedByInvalidContadorCpf,
+                      insertFailed,
                     })
                     setBulkLoading(false)
                     setBulkProgress(null)
@@ -1337,6 +1721,62 @@ export default function EmpresasPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !bulkDeleteLoading) setBulkDeleteDialogOpen(false)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir {bulkDeleteIds.size} empresa(s)?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>As empresas abaixo serão removidas deste escritório. Esta ação não pode ser desfeita.</p>
+                <ScrollArea className="h-[min(420px,70vh)] w-full rounded-md border border-border/60 p-2 text-left">
+                  <ul className="text-xs space-y-1 list-disc pl-4">
+                    {companies
+                      .filter((c) => bulkDeleteIds.has(c.id))
+                      .map((c) => (
+                        <li key={c.id}>
+                          <span className="text-foreground font-medium">{c.name}</span>
+                          {c.document ? <span className="text-muted-foreground"> — {c.document}</span> : null}
+                        </li>
+                      ))}
+                  </ul>
+                </ScrollArea>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleteLoading}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={bulkDeleteLoading}
+              onClick={async (e) => {
+                e.preventDefault()
+                const ids = [...bulkDeleteIds]
+                if (ids.length === 0) return
+                setBulkDeleteLoading(true)
+                try {
+                  await deleteCompaniesBatch(ids)
+                  queryClient.invalidateQueries({ queryKey: ["companies-list"] })
+                  setBulkDeleteIds(new Set())
+                  setBulkDeleteDialogOpen(false)
+                  toast.success(`${ids.length} empresa(s) excluída(s).`)
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Erro ao excluir empresas")
+                } finally {
+                  setBulkDeleteLoading(false)
+                }
+              }}
+            >
+              {bulkDeleteLoading ? "Excluindo…" : "Excluir definitivamente"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Dialog open={contadoresOpen} onOpenChange={(open) => {
         if (!contadorSaving && !moveSaving) {
           setContadoresOpen(open)
@@ -1354,12 +1794,23 @@ export default function EmpresasPage() {
             <>
               {moveStep === "source" && (
                 <>
-                  <p className="text-sm font-medium">Selecione o contador de origem</p>
+                  <p className="text-sm font-medium">De onde vêm as empresas?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Escolha um contador (só empresas já dele), ou &quot;sem contador&quot; / &quot;todas&quot; para vincular em lote ao destino.
+                  </p>
                   <Select value={moveSourceCpf ?? ""} onValueChange={setMoveSourceCpf}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="Contador de origem" /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Origem das empresas" /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={MOVE_SOURCE_SEM_CONTADOR}>
+                        Empresas sem contador vinculado
+                      </SelectItem>
+                      <SelectItem value={MOVE_SOURCE_TODAS_EMPRESAS}>
+                        Todas as empresas (reatribuir em lote)
+                      </SelectItem>
                       {accountantsAll.map((a) => (
-                        <SelectItem key={a.id} value={a.cpf}>{a.name} — {formatCpf(a.cpf)}</SelectItem>
+                        <SelectItem key={a.id} value={a.cpf}>
+                          {a.name} — {formatCpf(a.cpf)}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1370,7 +1821,15 @@ export default function EmpresasPage() {
                 </>
               )}
               {moveStep === "companies" && moveSourceCpf && (() => {
-                const companiesFromSource = companiesForMove.filter((c) => onlyDigits((c as CompanyWithCert).contador_cpf ?? "") === onlyDigits(moveSourceCpf))
+                const companiesFromSource =
+                  moveSourceCpf === MOVE_SOURCE_SEM_CONTADOR
+                    ? companiesForMove.filter((c) => !onlyDigits((c as CompanyWithCert).contador_cpf ?? ""))
+                    : moveSourceCpf === MOVE_SOURCE_TODAS_EMPRESAS
+                      ? companiesForMove
+                      : companiesForMove.filter(
+                          (c) =>
+                            onlyDigits((c as CompanyWithCert).contador_cpf ?? "") === onlyDigits(moveSourceCpf),
+                        )
                 const searchTerm = moveCompaniesSearch.trim()
                 const searchLower = searchTerm.toLowerCase()
                 const searchDigits = searchTerm.replace(/\D/g, "")
@@ -1382,12 +1841,42 @@ export default function EmpresasPage() {
                     })
                   : companiesFromSource
                 const sourceAcc = accountantsAll.find((a) => onlyDigits(a.cpf) === onlyDigits(moveSourceCpf))
+                const sourceTitle =
+                  moveSourceCpf === MOVE_SOURCE_SEM_CONTADOR
+                    ? "Empresas sem contador vinculado"
+                    : moveSourceCpf === MOVE_SOURCE_TODAS_EMPRESAS
+                      ? "Todas as empresas do escritório"
+                      : `Empresas sob responsabilidade de ${sourceAcc?.name ?? "—"}`
                 const allFilteredSelected = filteredCompanies.length > 0 && filteredCompanies.every((c) => moveSelectedIds.has(c.id))
                 const visibleIds = new Set(filteredCompanies.map((c) => c.id))
                 return (
                   <>
-                    <p className="text-sm font-medium">Empresas sob responsabilidade de {sourceAcc?.name ?? "—"}</p>
-                    <p className="text-xs text-muted-foreground">Selecione as empresas que deseja mover. Use Ctrl+A para selecionar todas (visíveis) e Shift+clique para intervalo.</p>
+                    <p className="text-sm font-medium">{sourceTitle}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Selecione as empresas e depois escolha o contador de destino. Use Ctrl+A na lista para marcar/desmarcar todas as visíveis; Shift+clique para intervalo.
+                    </p>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto p-0 text-xs"
+                        disabled={companiesFromSource.length === 0}
+                        onClick={() =>
+                          setMoveSelectedIds(new Set(companiesFromSource.map((c) => c.id)))
+                        }
+                      >
+                        Selecionar todas da origem ({companiesFromSource.length})
+                      </Button>
+                      <span className="text-muted-foreground">·</span>
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto p-0 text-xs text-muted-foreground"
+                        onClick={() => setMoveSelectedIds(new Set())}
+                      >
+                        Limpar seleção
+                      </Button>
+                    </div>
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
@@ -1427,7 +1916,13 @@ export default function EmpresasPage() {
                     >
                       {filteredCompanies.length === 0 ? (
                         <div className="px-4 py-3 text-sm text-muted-foreground">
-                          {companiesFromSource.length === 0 ? "Nenhuma empresa vinculada a este contador." : "Nenhuma empresa encontrada na busca."}
+                          {companiesFromSource.length === 0
+                            ? moveSourceCpf === MOVE_SOURCE_SEM_CONTADOR
+                              ? "Todas as empresas já têm contador vinculado."
+                              : moveSourceCpf === MOVE_SOURCE_TODAS_EMPRESAS
+                                ? "Nenhuma empresa cadastrada."
+                                : "Nenhuma empresa vinculada a este contador."
+                            : "Nenhuma empresa encontrada na busca."}
                         </div>
                       ) : (
                         filteredCompanies.map((emp, index) => (
@@ -1494,13 +1989,28 @@ export default function EmpresasPage() {
               })()}
               {moveStep === "dest" && moveSourceCpf && (
                 <>
-                  <p className="text-sm font-medium">Mover para qual contador?</p>
+                  <p className="text-sm font-medium">Vincular ao contador responsável</p>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    {moveSelectedIds.size} empresa(s) selecionada(s). O contador escolhido será gravado em cada uma.
+                  </p>
                   <Select value={moveDestCpf ?? ""} onValueChange={setMoveDestCpf}>
                     <SelectTrigger className="w-full"><SelectValue placeholder="Selecione o contador de destino" /></SelectTrigger>
                     <SelectContent>
-                      {accountantsAll.filter((a) => onlyDigits(a.cpf) !== onlyDigits(moveSourceCpf)).map((a) => (
-                        <SelectItem key={a.id} value={a.cpf}>{a.name} — {formatCpf(a.cpf)}</SelectItem>
-                      ))}
+                      {accountantsAll
+                        .filter((a) => {
+                          if (
+                            moveSourceCpf === MOVE_SOURCE_SEM_CONTADOR ||
+                            moveSourceCpf === MOVE_SOURCE_TODAS_EMPRESAS
+                          ) {
+                            return true
+                          }
+                          return onlyDigits(a.cpf) !== onlyDigits(moveSourceCpf)
+                        })
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.cpf}>
+                            {a.name} — {formatCpf(a.cpf)}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                   <DialogFooter>
@@ -1510,18 +2020,18 @@ export default function EmpresasPage() {
                       disabled={!moveDestCpf || moveSaving}
                       onClick={async () => {
                         const destAcc = accountantsAll.find((a) => onlyDigits(a.cpf) === onlyDigits(moveDestCpf!))
-                        if (!destAcc || moveSelectedIds.size === 0) return
+                        const n = moveSelectedIds.size
+                        if (!destAcc || n === 0) return
+                        const ids = [...moveSelectedIds]
                         setMoveSaving(true)
                         try {
-                          for (const companyId of moveSelectedIds) {
-                            await updateCompany(companyId, { contador_cpf: destAcc.cpf, contador_nome: destAcc.name })
-                          }
+                          await updateCompaniesContadorBatch(ids, destAcc.cpf, destAcc.name)
                           queryClient.invalidateQueries({ queryKey: ["companies-list"] })
                           setMoveStep(null)
                           setMoveSourceCpf(null)
                           setMoveSelectedIds(new Set())
                           setMoveDestCpf(null)
-                          toast.success(`${moveSelectedIds.size} empresa(s) movida(s) para ${destAcc.name}.`)
+                          toast.success(`${n} empresa(s) vinculada(s) a ${destAcc.name}.`)
                         } catch (e) {
                           toast.error(e instanceof Error ? e.message : "Erro ao mover")
                         } finally {

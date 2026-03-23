@@ -30,7 +30,7 @@ import {
   getAccountants,
   updateAccountant,
 } from "@/services/accountantsService"
-import { getCompaniesForUser, updateCompany } from "@/services/companiesService"
+import { getCompaniesForUser, updateCompaniesContadorBatch } from "@/services/companiesService"
 import { formatCpfInput, isValidCpf } from "@/lib/brazilDocuments"
 import type { Company } from "@/services/profilesService"
 
@@ -123,12 +123,8 @@ export function AccountantsManagerPanel({
       (company) => onlyDigits((company as CompanyWithCert).contador_cpf ?? "") === previousCpfDigits
     )
 
-    for (const company of linkedCompanies) {
-      await updateCompany(company.id, {
-        contador_cpf: nextCpf,
-        contador_nome: nextName,
-      })
-    }
+    const ids = linkedCompanies.map((c) => c.id)
+    await updateCompaniesContadorBatch(ids, nextCpf, nextName)
   }
 
   return (
@@ -289,18 +285,18 @@ export function AccountantsManagerPanel({
                   disabled={!moveDestCpf || moveSaving}
                   onClick={async () => {
                     const destAcc = accountantsAll.find((a) => onlyDigits(a.cpf) === onlyDigits(moveDestCpf ?? ""))
-                    if (!destAcc || moveSelectedIds.size === 0) return
+                    const n = moveSelectedIds.size
+                    if (!destAcc || n === 0) return
+                    const ids = [...moveSelectedIds]
                     setMoveSaving(true)
                     try {
-                      for (const companyId of moveSelectedIds) {
-                        await updateCompany(companyId, { contador_cpf: destAcc.cpf, contador_nome: destAcc.name })
-                      }
+                      await updateCompaniesContadorBatch(ids, destAcc.cpf, destAcc.name)
                       queryClient.invalidateQueries({ queryKey: ["companies-list"] })
                       setMoveStep(null)
                       setMoveSourceCpf(null)
                       setMoveSelectedIds(new Set())
                       setMoveDestCpf(null)
-                      toast.success(`${moveSelectedIds.size} empresa(s) movida(s) para ${destAcc.name}.`)
+                      toast.success(`${n} empresa(s) movida(s) para ${destAcc.name}.`)
                     } catch (error) {
                       toast.error(error instanceof Error ? error.message : "Erro ao mover")
                     } finally {

@@ -13,8 +13,7 @@
             "case_sensitive": false
         },
         "dashboard_busca_empresa_em_qualquer_pasta": true,
-        "dashboard_mostrar_quantidade_real_xml": true,
-        "dashboard_considerar_xml_duplicados": false
+        "dashboard_mostrar_quantidade_real_xml": true
     },
     "empresas": {
         "201570548": {

@@ -315,7 +315,54 @@ export async function updateCompany(
   return data as Company
 }
 
+const BATCH_CONTADOR_CHUNK = 200
+
+/** Atualiza contador responsável de várias empresas em poucas requisições (`.in("id", …)` por lote). */
+export async function updateCompaniesContadorBatch(
+  companyIds: string[],
+  contador_cpf: string,
+  contador_nome: string
+): Promise<void> {
+  if (companyIds.length === 0) return
+
+  const contadorCpf = onlyDigits(contador_cpf)
+  if (contadorCpf && !isValidCpf(contadorCpf)) {
+    throw new Error("Informe um CPF válido para o contador responsável.")
+  }
+
+  const payload = {
+    contador_cpf: contadorCpf || null,
+    contador_nome: contador_nome.trim() || null,
+  }
+
+  const chunks: string[][] = []
+  for (let i = 0; i < companyIds.length; i += BATCH_CONTADOR_CHUNK) {
+    chunks.push(companyIds.slice(i, i + BATCH_CONTADOR_CHUNK))
+  }
+
+  const results = await Promise.all(
+    chunks.map((ids) => supabase.from("companies").update(payload).in("id", ids))
+  )
+  for (const { error } of results) {
+    if (error) throw error
+  }
+}
+
 export async function deleteCompany(id: string): Promise<void> {
   const { error } = await supabase.from("companies").delete().eq("id", id)
   if (error) throw error
+}
+
+const BATCH_DELETE_CHUNK = 200
+
+export async function deleteCompaniesBatch(companyIds: string[]): Promise<void> {
+  if (companyIds.length === 0) return
+  const chunks: string[][] = []
+  for (let i = 0; i < companyIds.length; i += BATCH_DELETE_CHUNK) {
+    chunks.push(companyIds.slice(i, i + BATCH_DELETE_CHUNK))
+  }
+  const results = await Promise.all(chunks.map((ids) => supabase.from("companies").delete().in("id", ids)))
+  for (const { error } of results) {
+    if (error) throw error
+  }
 }
