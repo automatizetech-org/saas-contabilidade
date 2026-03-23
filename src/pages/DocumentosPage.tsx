@@ -101,7 +101,7 @@ export default function DocumentosPage() {
 
   const currentCursor = cursorHistory[currentPage - 1] ?? null;
 
-  const { data: documentsPage, isLoading } = useQuery({
+  const { data: documentsPage, isLoading, isPlaceholderData: hubDocumentsPageIsPlaceholder } = useQuery({
     queryKey: ["hub-documents-page", companyFilter, selectedCategoryKey, filterFileKind, search, dateFrom, dateTo, pageSize, currentPage, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
       getUnifiedDocumentsPage({
@@ -297,7 +297,9 @@ export default function DocumentosPage() {
           </div>
         </div>
 
-        {isLoading && pageDocuments.length === 0 ? (
+        {hubDocumentsPageIsPlaceholder ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">Carregando pagina...</div>
+        ) : isLoading && pageDocuments.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
         ) : (
           <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
@@ -316,7 +318,7 @@ export default function DocumentosPage() {
               </thead>
               <tbody>
                 {pageDocuments.map((doc) => (
-                  <tr key={doc.id} className="border-b border-border hover:bg-muted/30 active:bg-muted/50 transition-colors">
+                  <tr key={`${doc.id}-${doc.file_path ?? ""}`} className="border-b border-border hover:bg-muted/30 active:bg-muted/50 transition-colors">
                     <td className="px-3 sm:px-4 py-3 font-medium">{doc.empresa}</td>
                     <td className="px-3 sm:px-4 py-3 text-muted-foreground">{doc.cnpj ?? "—"}</td>
                     <td className="px-3 sm:px-4 py-3">
@@ -348,14 +350,14 @@ export default function DocumentosPage() {
           </div>
         )}
 
-        {!isLoading && pageDocuments.length === 0 && (
+        {!hubDocumentsPageIsPlaceholder && !isLoading && pageDocuments.length === 0 && (
           <div className="p-12 text-center">
             <FileText className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">Nenhum documento encontrado com os filtros aplicados.</p>
           </div>
         )}
 
-        {pageDocuments.length > 0 && (
+        {pageDocuments.length > 0 && !hubDocumentsPageIsPlaceholder && (
           <CursorPagination
             currentPage={currentPage}
             pageSize={pageSize}

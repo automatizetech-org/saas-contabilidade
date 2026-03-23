@@ -160,7 +160,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
     refetchIntervalInBackground: true,
   });
 
-  const { data: certidoesPage, isLoading: tableLoading } = useQuery({
+  const { data: certidoesPage, isLoading: tableLoading, isPlaceholderData: certidoesPageIsPlaceholder } = useQuery({
     queryKey: ["certidoes-page", companyFilter, search, tipoFiltro, pageSize, page, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
       getFiscalDetailDocumentsPage({
@@ -301,7 +301,9 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
           </div>
         </div>
         <div className="overflow-x-auto">
-          {tableLoading && items.length === 0 ? (
+          {certidoesPageIsPlaceholder ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Carregando pagina...</div>
+          ) : tableLoading && items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando certidoes...</div>
           ) : items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma certidao encontrada.</div>
@@ -319,7 +321,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
               </thead>
               <tbody>
                 {items.map((row) => (
-                  <tr key={row.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                  <tr key={`${row.id}-${row.file_path ?? ""}`} className="border-b border-border hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-medium">{row.empresa}</div>
                       <div className="text-muted-foreground">{row.cnpj || "—"}</div>
@@ -347,7 +349,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
             </table>
           )}
         </div>
-        {items.length > 0 && (
+        {items.length > 0 && !certidoesPageIsPlaceholder && (
           <CursorPagination
             currentPage={page}
             pageSize={pageSize}
@@ -449,7 +451,7 @@ export default function FiscalDetailPage() {
 
   const currentCursor = cursorHistory[currentPage - 1] ?? null;
 
-  const { data: documentsPage, isLoading: documentsLoading } = useQuery({
+  const { data: documentsPage, isLoading: documentsLoading, isPlaceholderData: fiscalDocumentsPageIsPlaceholder } = useQuery({
     queryKey: ["fiscal-detail-page", kind, companyFilter, search, resolvedDateFrom, resolvedDateTo, fileKind, origem, modelo, pageSize, currentPage, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
       getFiscalDetailDocumentsPage({
@@ -465,7 +467,7 @@ export default function FiscalDetailPage() {
         limit: pageSize,
       }),
     enabled: !isObrigacao,
-    // Mantém a tabela com os dados antigos durante refetch (polling), evitando "Carregando..."
+    // Mantém dados no polling (mesma queryKey); ao mudar pagina/cursor o placeholder seria a pagina antiga — escondemos ate chegar a resposta certa (isPlaceholderData).
     placeholderData: keepPreviousData,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
@@ -759,7 +761,9 @@ export default function FiscalDetailPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          {pageItems.length === 0 && documentsLoading ? (
+          {fiscalDocumentsPageIsPlaceholder ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Carregando pagina...</div>
+          ) : pageItems.length === 0 && documentsLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
           ) : pageItems.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhum documento encontrado.</div>
@@ -779,7 +783,7 @@ export default function FiscalDetailPage() {
               </thead>
               <tbody>
                 {pageItems.map((row) => (
-                  <tr key={row.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                  <tr key={`${row.id}-${row.file_path ?? ""}`} className="border-b border-border hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3 font-medium">{row.empresa}</td>
                     <td className="px-4 py-3 text-muted-foreground">{row.cnpj ?? "—"}</td>
                     <td className="px-4 py-3">{row.periodo ?? "—"}</td>
@@ -806,7 +810,7 @@ export default function FiscalDetailPage() {
             </table>
           )}
         </div>
-        {pageItems.length > 0 && (
+        {pageItems.length > 0 && !fiscalDocumentsPageIsPlaceholder && (
           <CursorPagination
             currentPage={currentPage}
             pageSize={pageSize}

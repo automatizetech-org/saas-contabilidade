@@ -2955,6 +2955,31 @@ function inferNfeNfcModeloFromXmlFile(realPath) {
 }
 
 /**
+ * NFE vs NFC no fiscal_documents: nunca usar "nome contém 65" — a chave de 44 dígitos pode ter "65" fora do modelo (pos. 20-22).
+ */
+function resolveNfeNfcDocType(fileRel, basePath) {
+  const abs = path.join(basePath, fileRel);
+  let mod = inferNfeNfcModeloFromRelativePath(fileRel);
+  const ext = path.extname(fileRel).toLowerCase();
+  if (!mod && ext === ".xml") {
+    try {
+      if (fs.existsSync(abs)) mod = inferNfeNfcModeloFromXmlFile(abs);
+    } catch (_) {}
+  }
+  if (mod === "65") return "NFC";
+  if (mod === "55") return "NFE";
+  const pathLower = String(fileRel).replace(/\\/g, "/").toLowerCase();
+  const baseName = path
+    .basename(fileRel, path.extname(fileRel))
+    .toLowerCase();
+  if (baseName.includes("nfc") || /(^|[/\\])65([/\\]|$)/.test(pathLower))
+    return "NFC";
+  if (baseName.includes("nfe") || /(^|[/\\])55([/\\]|$)/.test(pathLower))
+    return "NFE";
+  return "NFE";
+}
+
+/**
  * Handler: POST /api/documents/download-zip-by-paths (e /documents/download-zip-by-paths para compat com túnel).
  * Gera um ZIP com os arquivos indicados (paths relativos ao BASE_PATH).
  * Body: { items: [{ file_path, company_name?, category?, zip_inner_segment? ('55'|'65') }], filename_suffix?: string }
@@ -4098,10 +4123,10 @@ async function refreshOfficeDocumentIndexAfterFiscalSync(
  * Inclui remoção: registros cujo arquivo não existe mais na pasta são removidos do banco.
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase - Cliente Supabase (JWT do usuário ou service role)
  * @param {string | null} [officeId] - Se informado (ex.: watcher), usa nos inserts; senão usa current_office_id() do JWT.
- * @returns {{ inserted: number, skipped: number, deleted: number, errors: Array<{ file: string, error: string }> }}
+ * @returns {{ inserted: number, skipped: number, deleted: number, updated?: number, errors: Array<{ file: string, error: string }> }}
  */
 async function runFiscalSyncAll(supabase, officeId = null) {
-  const result = { inserted: 0, skipped: 0, deleted: 0, errors: [] };
+  const result = { inserted: 0, skipped: 0, deleted: 0, updated: 0, errors: [] };
   const effectiveOfficeId = officeId || OFFICE_ID || null;
   console.log(
     `[fiscal-watcher] runFiscalSyncAll effectiveOfficeId=${effectiveOfficeId} (officeId=${officeId}, OFFICE_ID=${OFFICE_ID})`,
@@ -4261,14 +4286,7 @@ async function runFiscalSyncAll(supabase, officeId = null) {
         for (const fileRel of nfeFiles) {
           pathsOnDisk.add(fileRel);
           const baseName = path.basename(fileRel, path.extname(fileRel));
-          const nameLower = baseName.toLowerCase();
-          const pathLower = fileRel.replace(/\\/g, "/").toLowerCase();
-          const docType =
-            nameLower.includes("nfc") ||
-            nameLower.includes("65") ||
-            /(^|[/\\])65([/\\]|$)/.test(pathLower)
-              ? "NFC"
-              : "NFE";
+          const docType = resolveNfeNfcDocType(fileRel, BASE_PATH);
           const chave = baseName;
           const parts = fileRel.split(/[/\\]/);
           let periodo = new Date().toISOString().slice(0, 7);
@@ -4284,12 +4302,25 @@ async function runFiscalSyncAll(supabase, officeId = null) {
           if (sniffedDate) periodo = sniffedDate.slice(0, 7);
           const { data: existingRows } = await supabase
             .from("fiscal_documents")
-            .select("id")
+            .select("id, type")
             .eq("company_id", companyId)
             .eq("file_path", fileRel)
             .limit(1);
           if (existingRows && existingRows.length > 0) {
-            result.skipped++;
+            const existing = existingRows[0];
+            if (existing.type !== docType) {
+              const { error: upErr } = await supabase
+                .from("fiscal_documents")
+                .update({ type: docType })
+                .eq("id", existing.id);
+              if (upErr) {
+                result.errors.push({ file: fileRel, error: upErr.message });
+              } else {
+                result.updated += 1;
+              }
+            } else {
+              result.skipped++;
+            }
             continue;
           }
           const row = {
@@ -4361,7 +4392,7 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     result,
   );
 
-  if (result.inserted > 0 || result.deleted > 0 || ph > 0) {
+  if (result.inserted > 0 || result.deleted > 0 || result.updated > 0 || ph > 0) {
     await refreshOfficeDocumentIndexAfterFiscalSync(
       supabase,
       effectiveOfficeId,
