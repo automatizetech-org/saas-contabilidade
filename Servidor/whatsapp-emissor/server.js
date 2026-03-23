@@ -694,6 +694,9 @@ const server = http.createServer(async (req, res) => {
     const forceRefresh =
       urlObj.searchParams.get("refresh") === "1" ||
       urlObj.searchParams.get("refresh") === "true";
+    const waitForRefresh =
+      urlObj.searchParams.get("wait") === "1" ||
+      urlObj.searchParams.get("wait") === "true";
     const useCache =
       !forceRefresh &&
       slot.groupsCache.list.length > 0 &&
@@ -703,6 +706,22 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (forceRefresh) clearGroupsCache(slot);
+    // Evita timeout em escritórios com muitos grupos: responde rápido e carrega em segundo plano.
+    if (!waitForRefresh) {
+      if (!slot.groupsLoadPromise) {
+        fetchGroupsForCache(slot).catch((e) => {
+          console.error(
+            "[ERRO] Prefetch de grupos:",
+            e && e.message ? e.message : e,
+          );
+        });
+      }
+      sendJson(res, 200, {
+        groups: slot.groupsCache.list.length ? slot.groupsCache.list : [],
+        loading: true,
+      });
+      return;
+    }
     try {
       const groups = await fetchGroupsForCache(slot);
       sendJson(res, 200, { groups });
