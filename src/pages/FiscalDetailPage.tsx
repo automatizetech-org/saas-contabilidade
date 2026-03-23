@@ -6,10 +6,19 @@ import { CursorPagination } from "@/components/common/CursorPagination";
 import { useParams } from "react-router-dom";
 import { FileText, FileDown, CalendarDays, Download, AlertCircle, FileArchive, DollarSign, Calendar, Medal } from "lucide-react";
 import { useState, useMemo, useEffect, useLayoutEffect } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getNfsStatsByDateRange } from "@/services/dashboardService";
-import { getCertidoesOverviewSummary, getFiscalDetailDocumentPathsForZip, getFiscalDetailDocumentZipPathsRpc, getFiscalDetailDocumentsPage, getFiscalDetailSummary, type CursorPageToken, type FiscalDetailKind } from "@/services/documentsService";
+import {
+  getCertidoesOverviewSummary,
+  getFiscalDetailDocumentPathsForZip,
+  getFiscalDetailDocumentZipPathsRpc,
+  getFiscalDetailDocumentsPage,
+  getFiscalDetailSummary,
+  type CursorPageToken,
+  type FiscalDetailKind,
+  type FiscalZipPathRow,
+} from "@/services/documentsService";
 import { downloadFiscalDocument, downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi, markFiscalDocumentDownloaded } from "@/services/serverFileService";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
@@ -382,6 +391,7 @@ export default function FiscalDetailPage() {
   const [cursorHistory, setCursorHistory] = useState<Array<CursorPageToken | null>>([null]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const queryClient = useQueryClient();
   const { selectedCompanyIds } = useSelectedCompanyIds();
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
   const kind = (type ?? "nfs") as FiscalDetailKind;
@@ -393,6 +403,43 @@ export default function FiscalDetailPage() {
   const resolvedDateFrom = isNfs || isNfeNfc ? (dateFrom || periodDefaults.first) : dateFrom;
   const resolvedDateTo = isNfs || isNfeNfc ? (dateTo || periodDefaults.last) : dateTo;
   const canDownload = hasServerApi();
+
+  const zipRpcFilters = useMemo(
+    () => ({
+      kind,
+      companyIds: companyFilter ?? undefined,
+      search: search || undefined,
+      dateFrom: resolvedDateFrom || undefined,
+      dateTo: resolvedDateTo || undefined,
+      fileKind,
+      origem: isNfs ? origem : undefined,
+      modelo: isNfeNfc ? modelo : undefined,
+    }),
+    [kind, companyFilter, search, resolvedDateFrom, resolvedDateTo, fileKind, origem, modelo, isNfs, isNfeNfc],
+  );
+
+  const fiscalZipListQueryKey = useMemo(
+    () =>
+      [
+        "fiscal-detail-zip-paths",
+        zipRpcFilters.kind,
+        zipRpcFilters.companyIds?.length ? [...zipRpcFilters.companyIds].sort().join(",") : null,
+        zipRpcFilters.search ?? "",
+        zipRpcFilters.dateFrom ?? "",
+        zipRpcFilters.dateTo ?? "",
+        zipRpcFilters.fileKind,
+        zipRpcFilters.origem ?? "_",
+        zipRpcFilters.modelo ?? "_",
+      ] as const,
+    [zipRpcFilters],
+  );
+
+  useQuery({
+    queryKey: fiscalZipListQueryKey,
+    queryFn: () => getFiscalDetailDocumentZipPathsRpc(zipRpcFilters),
+    enabled: !isObrigacao && (isNfs || isNfeNfc),
+    staleTime: 120_000,
+  });
 
   useEffect(() => {
     setCurrentPage(1);
@@ -666,21 +713,15 @@ export default function FiscalDetailPage() {
                   setDownloadingZip(true);
                   setDownloadProgress(0);
                   try {
-                    const filters = {
-                      kind,
-                      companyIds: companyFilter ?? undefined,
-                      search: search || undefined,
-                      dateFrom: resolvedDateFrom || undefined,
-                      dateTo: resolvedDateTo || undefined,
-                      fileKind,
-                      origem: isNfs ? origem : undefined,
-                      modelo: isNfeNfc ? modelo : undefined,
-                    };
-                    let zipPaths: Array<{ file_path: string; empresa: string }>;
+                    let zipPaths: FiscalZipPathRow[];
                     try {
-                      zipPaths = await getFiscalDetailDocumentZipPathsRpc(filters);
+                      zipPaths = await queryClient.fetchQuery({
+                        queryKey: fiscalZipListQueryKey,
+                        queryFn: () => getFiscalDetailDocumentZipPathsRpc(zipRpcFilters),
+                        staleTime: 120_000,
+                      });
                     } catch {
-                      zipPaths = await getFiscalDetailDocumentPathsForZip(filters);
+                      zipPaths = await getFiscalDetailDocumentPathsForZip(zipRpcFilters);
                     }
 
                     if (zipPaths.length === 0) {
@@ -693,6 +734,8 @@ export default function FiscalDetailPage() {
                       companyName: r.empresa || "EMPRESA",
                       category,
                       filePath: r.file_path,
+                      zipInnerSegment:
+                        kind === "nfe-nfc" && (r.modelo === "55" || r.modelo === "65") ? r.modelo : undefined,
                     }));
 
                     const zipSuffix = kind === "nfs" ? "nfs" : "nfe-nfc";

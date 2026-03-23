@@ -255,17 +255,30 @@ const MAX_FILES_CLIENT_ZIP = 50000
  * Com dezenas de milhares de arquivos é muito mais rápido que N requests no cliente.
  * onProgress(0-100) opcional para barra de progresso.
  */
+export type ZipDownloadItem = {
+  companyName: string
+  category: string
+  filePath: string
+  /** Subpasta opcional dentro de category (ex.: 55 / 65 para NF-e e NFC-e). */
+  zipInnerSegment?: string | null
+}
+
 export async function downloadListedFilesZipWithCategory(
-  items: Array<{ companyName: string; category: string; filePath: string }>,
+  items: ZipDownloadItem[],
   suggestedName = "documentos",
   onProgress?: (percent: number) => void
 ): Promise<void> {
   const normalizedItems = items
-    .map((it) => ({
-      companyName: String(it.companyName || "EMPRESA").trim() || "EMPRESA",
-      category: String(it.category || "outros").trim() || "outros",
-      filePath: String(it.filePath || "").trim(),
-    }))
+    .map((it) => {
+      const inner = String(it.zipInnerSegment ?? "").trim()
+      const zipInnerSegment = inner === "55" || inner === "65" ? inner : ""
+      return {
+        companyName: String(it.companyName || "EMPRESA").trim() || "EMPRESA",
+        category: String(it.category || "outros").trim() || "outros",
+        filePath: String(it.filePath || "").trim(),
+        zipInnerSegment,
+      }
+    })
     .filter((it) => it.filePath.length > 0)
 
   if (normalizedItems.length === 0) throw new Error("Nenhum arquivo selecionado para baixar.")
@@ -283,6 +296,7 @@ export async function downloadListedFilesZipWithCategory(
           file_path: it.filePath,
           company_name: it.companyName,
           category: it.category,
+          ...(it.zipInnerSegment ? { zip_inner_segment: it.zipInnerSegment } : {}),
         })),
         filename_suffix: suggestedName !== "documentos" ? suggestedName.replace(/[^a-z0-9-]/gi, "-").slice(0, 32) : undefined,
       }),
@@ -310,11 +324,15 @@ export async function downloadListedFilesZipWithCategory(
   }
 
   await Promise.all(
-    normalizedItems.map(async ({ companyName, category, filePath }) => {
+    normalizedItems.map(async ({ companyName, category, filePath, zipInnerSegment }) => {
       const { blob, filename } = await fetchServerFileByPath(filePath)
       const safeCompany = companyName.replace(INVALID_DOWNLOAD_NAME_PATTERN, "").replace(/\s+/g, " ").trim() || "EMPRESA"
       const safeCategory = category.replace(INVALID_DOWNLOAD_NAME_PATTERN, "").replace(/\s+/g, " ").trim() || "outros"
-      zip.file(makeUniqueZipPath(`${safeCompany}/${safeCategory}/${filename}`), blob)
+      const inner = zipInnerSegment === "55" || zipInnerSegment === "65" ? zipInnerSegment : ""
+      const inZip = inner
+        ? `${safeCompany}/${safeCategory}/${inner}/${filename}`
+        : `${safeCompany}/${safeCategory}/${filename}`
+      zip.file(makeUniqueZipPath(inZip), blob)
       completedFiles += 1
       if (onProgress) {
         onProgress(Math.min(90, Math.round((completedFiles / normalizedItems.length) * 90)))

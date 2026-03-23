@@ -2780,7 +2780,7 @@ const MAX_FILES_ZIP_BY_PATHS = 50000;
 /**
  * Handler: POST /api/documents/download-zip-by-paths (e /documents/download-zip-by-paths para compat com túnel).
  * Gera um ZIP com os arquivos indicados (paths relativos ao BASE_PATH).
- * Body: { items: [{ file_path, company_name?, category? }], filename_suffix?: string }
+ * Body: { items: [{ file_path, company_name?, category?, zip_inner_segment? ('55'|'65') }], filename_suffix?: string }
  */
 const handleDownloadZipByPaths = [
   requireConnectorSecret,
@@ -2832,8 +2832,16 @@ const handleDownloadZipByPaths = [
         const { realPath } = ensureSafeExistingFile(resolved);
         const companyName = safeFolder(it.company_name || "EMPRESA");
         const category = safeFolder(it.category || "outros");
+        const rawInner =
+          typeof it?.zip_inner_segment === "string"
+            ? it.zip_inner_segment.trim()
+            : "";
+        const zipInner =
+          rawInner === "55" || rawInner === "65" ? rawInner : "";
         const filename = path.basename(realPath);
-        const zipPath = `${companyName}/${category}/${filename}`;
+        const zipPath = zipInner
+          ? `${companyName}/${category}/${zipInner}/${filename}`
+          : `${companyName}/${category}/${filename}`;
         toAdd.push({
           fullPath: realPath,
           zipPath,
@@ -2870,17 +2878,13 @@ const handleDownloadZipByPaths = [
       } catch (_) {}
     });
     archive.pipe(res);
-    const BATCH = 200;
-    for (let i = 0; i < toAdd.length; i += BATCH) {
-      const batch = toAdd.slice(i, i + BATCH);
-      const buffers = await Promise.all(
-        batch.map(({ fullPath }) =>
-          fs.promises.readFile(fullPath).catch(() => null),
-        ),
-      );
-      for (let j = 0; j < batch.length; j++) {
-        if (buffers[j])
-          archive.append(buffers[j], { name: batch[j].nameInZip });
+    for (const entry of toAdd) {
+      try {
+        archive.append(fs.createReadStream(entry.fullPath), {
+          name: entry.nameInZip,
+        });
+      } catch (_) {
+        /* stream inválido */
       }
     }
     archive.finalize();
