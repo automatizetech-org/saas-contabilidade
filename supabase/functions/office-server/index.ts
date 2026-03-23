@@ -309,10 +309,6 @@ async function readError(response: Response) {
   }
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function proxyJson(
   server: OfficeServer,
   connectorSecretHash: string,
@@ -942,8 +938,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    const doFetch = () =>
-      fetch(`${server.public_base_url}${pathWithQuery}`, {
+    const response = await fetch(
+      `${server.public_base_url}${pathWithQuery}`,
+      {
         method,
         headers: {
           Authorization: `Bearer ${connectorSecretHash}`,
@@ -952,19 +949,8 @@ Deno.serve(async (req) => {
           "ngrok-skip-browser-warning": "1",
         },
         body: postBody,
-      });
-
-    let response = await doFetch();
-    // Transiente de gateway/edge (conta com muitos grupos): uma segunda tentativa curta.
-    if (
-      call === "groups" &&
-      (response.status === 502 ||
-        response.status === 503 ||
-        response.status === 504)
-    ) {
-      await sleep(700);
-      response = await doFetch();
-    }
+      },
+    );
 
     const text = await response.text().catch(() => "");
     return new Response(text, {
