@@ -7,28 +7,18 @@
 
 import path from "path";
 import { fileURLToPath } from "url";
-import fs from "fs";
 import dotenv from "dotenv";
 import { createHash, randomUUID, timingSafeEqual } from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Preferir Servidor/.env (PM2); fallback Servidor/server-api/.env (dev no repo).
-const envPathServer = path.resolve(__dirname, "..", ".env");
-const envPathApi = path.join(__dirname, ".env");
-// Por padrão NÃO usar override: no PM2 o CONNECTOR_SECRET costuma vir do ecosystem;
-// override com .env de dev quebra o hash e OFFICE_ID fica null (robôs falham).
-// Para forçar .env sobre o ambiente: DOTENV_CONFIG_OVERRIDE=1
-dotenv.config({
-  path: fs.existsSync(envPathServer) ? envPathServer : envPathApi,
-  ...(String(process.env.DOTENV_CONFIG_OVERRIDE || "").trim() === "1"
-    ? { override: true }
-    : {}),
-});
+// Único .env: pasta Servidor (um nível acima). Path absoluto para PM2/Windows.
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import fs from "fs";
 import os from "os";
 import archiver from "archiver";
 import { createProxyMiddleware } from "http-proxy-middleware";
@@ -1820,7 +1810,6 @@ function isFiscalNotesRobot(robot) {
       robot.fiscal_notes_kind ||
       robot.notes_mode ||
       segmentPath.includes("FISCAL/NFS") ||
-      segmentPath.includes("FISCAL/NFE-NFC") ||
       segmentPath.includes("FISCAL/NFE") ||
       segmentPath.includes("FISCAL/NFC"),
   );
@@ -2175,17 +2164,10 @@ let ROBOTS_ROOT_PATH = ENV_ROBOTS_ROOT_PATH || "C:\\Users\\ROBO\\Documents\\ROBO
 let OFFICE_SERVER_ID = null;
 let OFFICE_ID = null;
 let OFFICE_NAME = null;
-const FISCAL_SYNC_VERSION = "2026-03-24-fiscal-sync-ci-paths-nfs-placeholders";
+const FISCAL_SYNC_VERSION = "2025-03-18-office-id-fix-v2";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isUuidString(value) {
-  const s = String(value ?? "").trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    s,
-  );
 }
 
 function isTransientSupabaseError(error) {
@@ -2247,60 +2229,6 @@ function createConfiguredSupabaseClient(supabaseUrl, key) {
   });
 }
 
-async function applyOfficeIdFromEnvFallback(supabase) {
-  if (OFFICE_ID && OFFICE_SERVER_ID) return;
-  const envOid = String(process.env.OFFICE_ID || "").trim();
-  if (!isUuidString(envOid)) return;
-
-  OFFICE_ID = envOid;
-  const envOsid = String(process.env.OFFICE_SERVER_ID || "").trim();
-  if (isUuidString(envOsid)) {
-    OFFICE_SERVER_ID = envOsid;
-  } else {
-    const { data: os, error: osErr } = await supabase
-      .from("office_servers")
-      .select("id, office_id, base_path, robots_root_path")
-      .eq("office_id", OFFICE_ID)
-      .eq("is_active", true)
-      .maybeSingle();
-    if (osErr) {
-      console.error(
-        "[fiscal-watcher] Fallback OFFICE_ID: erro ao buscar office_server:",
-        osErr.message,
-      );
-      return;
-    }
-    if (os?.id) {
-      OFFICE_SERVER_ID = os.id;
-      if (
-        !ENV_BASE_PATH &&
-        os.base_path &&
-        String(os.base_path).trim()
-      ) {
-        BASE_PATH = String(os.base_path).trim();
-      }
-      if (
-        !ENV_ROBOTS_ROOT_PATH &&
-        os.robots_root_path &&
-        String(os.robots_root_path).trim()
-      ) {
-        ROBOTS_ROOT_PATH = String(os.robots_root_path).trim();
-      }
-    }
-  }
-
-  const { data: office } = await supabase
-    .from("offices")
-    .select("name")
-    .eq("id", OFFICE_ID)
-    .maybeSingle();
-  OFFICE_NAME = office?.name ?? null;
-
-  console.warn(
-    "[fiscal-watcher] OFFICE_ID/OFFICE_SERVER_ID resolvido via env OFFICE_ID (fallback). Ideal: CONNECTOR_SECRET alinhado a office_server_credentials para não depender disto.",
-  );
-}
-
 async function loadBasePathFromSupabase() {
   const url = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -2312,8 +2240,6 @@ async function loadBasePathFromSupabase() {
   }
   try {
     const supabase = createConfiguredSupabaseClient(url, serviceKey);
-    let resolvedByCredential = false;
-
     if (CONNECTOR_SECRET_HASH) {
       const hashPreview = CONNECTOR_SECRET_HASH.slice(0, 8) + "...";
       const { data: credential, error: credError } = await supabase
@@ -2326,55 +2252,54 @@ async function loadBasePathFromSupabase() {
           "[fiscal-watcher] Erro ao buscar credential:",
           credError.message,
         );
-      } else if (!credential?.office_server_id) {
+        return;
+      }
+      if (!credential?.office_server_id) {
         console.warn(
           "[fiscal-watcher] Nenhum credential com hash",
           hashPreview,
-          "no Supabase. O secret_hash em office_server_credentials deve ser SHA-256 (UTF-8) do CONNECTOR_SECRET desta VM. Alinhe com: npm run sync:office-credential (E2E_SUPABASE_EMAIL / E2E_SUPABASE_PASSWORD + SUPABASE_SERVICE_ROLE_KEY no Servidor/server-api/.env).",
+          "no Supabase. Verifique CONNECTOR_SECRET no .env e office_server_credentials (secret_hash).",
         );
-      } else {
-        const { data: officeServer, error: osError } = await supabase
-          .from("office_servers")
-          .select("id, office_id, base_path, robots_root_path")
-          .eq("id", credential.office_server_id)
+        return;
+      }
+      const { data: officeServer, error: osError } = await supabase
+        .from("office_servers")
+        .select("id, office_id, base_path, robots_root_path")
+        .eq("id", credential.office_server_id)
+        .maybeSingle();
+      if (osError) {
+        console.error(
+          "[fiscal-watcher] Erro ao buscar office_server:",
+          osError.message,
+        );
+        return;
+      }
+      if (officeServer?.id) {
+        OFFICE_SERVER_ID = officeServer.id;
+        OFFICE_ID = officeServer.office_id ?? null;
+        const { data: office } = await supabase
+          .from("offices")
+          .select("name")
+          .eq("id", OFFICE_ID)
           .maybeSingle();
-        if (osError) {
-          console.error(
-            "[fiscal-watcher] Erro ao buscar office_server:",
-            osError.message,
-          );
-        } else if (officeServer?.id) {
-          OFFICE_SERVER_ID = officeServer.id;
-          OFFICE_ID = officeServer.office_id ?? null;
-          const { data: office } = await supabase
-            .from("offices")
-            .select("name")
-            .eq("id", OFFICE_ID)
-            .maybeSingle();
-          OFFICE_NAME = office?.name ?? null;
-          if (
-            !ENV_BASE_PATH &&
-            officeServer?.base_path &&
-            String(officeServer.base_path).trim()
-          ) {
-            BASE_PATH = String(officeServer.base_path).trim();
-          }
-          if (
-            !ENV_ROBOTS_ROOT_PATH &&
-            officeServer?.robots_root_path &&
-            String(officeServer.robots_root_path).trim()
-          ) {
-            ROBOTS_ROOT_PATH = String(officeServer.robots_root_path).trim();
-          }
-          resolvedByCredential = true;
+        OFFICE_NAME = office?.name ?? null;
+        if (
+          !ENV_BASE_PATH &&
+          officeServer?.base_path &&
+          String(officeServer.base_path).trim()
+        ) {
+          BASE_PATH = String(officeServer.base_path).trim();
         }
+        if (
+          !ENV_ROBOTS_ROOT_PATH &&
+          officeServer?.robots_root_path &&
+          String(officeServer.robots_root_path).trim()
+        ) {
+          ROBOTS_ROOT_PATH = String(officeServer.robots_root_path).trim();
+        }
+        return;
       }
     }
-
-    if (!resolvedByCredential) {
-      await applyOfficeIdFromEnvFallback(supabase);
-    }
-
     if (!ENV_BASE_PATH) {
       const { data } = await supabase
         .from("admin_settings")
@@ -2623,11 +2548,7 @@ function requireConnectorSecret(req, res, next) {
     .replace(/^Bearer\s+/i, "")
     .trim();
   if (!providedHash || !safeTokenEqual(CONNECTOR_SECRET_HASH, providedHash)) {
-    return res.status(401).json({
-      error: "Conector não autorizado",
-      detail:
-        "O hash Bearer deve coincidir com SHA-256 (UTF-8) do CONNECTOR_SECRET desta VM. Alinhe office_server_credentials.secret_hash no Supabase (npm run sync:office-credential no repo).",
-    });
+    return res.status(401).json({ error: "Conector não autorizado" });
   }
   return next();
 }
@@ -2896,93 +2817,9 @@ app.post(
 const MAX_FILES_ZIP_BY_PATHS = 50000;
 
 /**
- * NF-e / NFC-e: pastas 55/65, ou nome só com 44 dígitos (como o robô grava: chave.xml), ou NFe+chave.
- */
-function inferNfeNfcModeloFromRelativePath(relPath) {
-  const norm = String(relPath || "").replace(/\\/g, "/");
-  if (/\/65(\/|$)/i.test(norm) || /(^|\/|_)65(\/|_|\.)/i.test(norm)) return "65";
-  if (/\/55(\/|$)/i.test(norm) || /(^|\/|_)55(\/|_|\.)/i.test(norm)) return "55";
-
-  const xmlName = norm.match(/([^/]+\.xml)$/i);
-  const tail = xmlName ? xmlName[1] : norm;
-  const baseNoExt = tail.replace(/\.xml$/i, "").trim();
-
-  if (/^\d{44}$/.test(baseNoExt)) {
-    const mod = baseNoExt.slice(20, 22);
-    if (mod === "55" || mod === "65") return mod;
-  }
-
-  const prefixed =
-    tail.match(/nfe[_-]?(\d{44})/i) || tail.match(/nfc[_-]?(\d{44})/i);
-  if (prefixed) {
-    const chave = prefixed[1];
-    const mod = chave.slice(20, 22);
-    if (mod === "55" || mod === "65") return mod;
-  }
-
-  const tail44 = tail.match(/(\d{44})\.xml$/i);
-  if (tail44) {
-    const chave = tail44[1];
-    const mod = chave.slice(20, 22);
-    if (mod === "55" || mod === "65") return mod;
-  }
-
-  const embedded = baseNoExt.match(/(\d{44})/);
-  if (embedded) {
-    const chave = embedded[1];
-    const mod = chave.slice(20, 22);
-    if (mod === "55" || mod === "65") return mod;
-  }
-
-  return "";
-}
-
-/** Primeiros bytes do XML: tag <mod>55</mod> (NF-e / NFC-e). */
-function inferNfeNfcModeloFromXmlFile(realPath) {
-  try {
-    const buf = Buffer.alloc(24576);
-    const fd = fs.openSync(realPath, "r");
-    try {
-      const n = fs.readSync(fd, buf, 0, buf.length, 0);
-      const snippet = buf.slice(0, n).toString("utf8");
-      const m = snippet.match(/<mod>\s*(\d{2})\s*<\/mod>/i);
-      if (m && (m[1] === "55" || m[1] === "65")) return m[1];
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch (_) {}
-  return "";
-}
-
-/**
- * NFE vs NFC no fiscal_documents: nunca usar "nome contém 65" — a chave de 44 dígitos pode ter "65" fora do modelo (pos. 20-22).
- */
-function resolveNfeNfcDocType(fileRel, basePath) {
-  const abs = path.join(basePath, fileRel);
-  let mod = inferNfeNfcModeloFromRelativePath(fileRel);
-  const ext = path.extname(fileRel).toLowerCase();
-  if (!mod && ext === ".xml") {
-    try {
-      if (fs.existsSync(abs)) mod = inferNfeNfcModeloFromXmlFile(abs);
-    } catch (_) {}
-  }
-  if (mod === "65") return "NFC";
-  if (mod === "55") return "NFE";
-  const pathLower = String(fileRel).replace(/\\/g, "/").toLowerCase();
-  const baseName = path
-    .basename(fileRel, path.extname(fileRel))
-    .toLowerCase();
-  if (baseName.includes("nfc") || /(^|[/\\])65([/\\]|$)/.test(pathLower))
-    return "NFC";
-  if (baseName.includes("nfe") || /(^|[/\\])55([/\\]|$)/.test(pathLower))
-    return "NFE";
-  return "NFE";
-}
-
-/**
  * Handler: POST /api/documents/download-zip-by-paths (e /documents/download-zip-by-paths para compat com túnel).
  * Gera um ZIP com os arquivos indicados (paths relativos ao BASE_PATH).
- * Body: { items: [{ file_path, company_name?, category?, zip_inner_segment? ('55'|'65') }], filename_suffix?: string }
+ * Body: { items: [{ file_path, company_name?, category? }], filename_suffix?: string }
  */
 const handleDownloadZipByPaths = [
   requireConnectorSecret,
@@ -3034,25 +2871,8 @@ const handleDownloadZipByPaths = [
         const { realPath } = ensureSafeExistingFile(resolved);
         const companyName = safeFolder(it.company_name || "EMPRESA");
         const category = safeFolder(it.category || "outros");
-        const rawInner =
-          typeof it?.zip_inner_segment === "string"
-            ? it.zip_inner_segment.trim()
-            : "";
-        let zipInner =
-          rawInner === "55" || rawInner === "65" ? rawInner : "";
-        const categoryNorm = String(category || "")
-          .toLowerCase()
-          .replace(/_/g, "-");
-        if (!zipInner && categoryNorm === "nfe-nfc") {
-          zipInner = inferNfeNfcModeloFromRelativePath(filePath) || "";
-        }
-        if (!zipInner && categoryNorm === "nfe-nfc") {
-          zipInner = inferNfeNfcModeloFromXmlFile(realPath) || "";
-        }
         const filename = path.basename(realPath);
-        const zipPath = zipInner
-          ? `${companyName}/${category}/${zipInner}/${filename}`
-          : `${companyName}/${category}/${filename}`;
+        const zipPath = `${companyName}/${category}/${filename}`;
         toAdd.push({
           fullPath: realPath,
           zipPath,
@@ -3089,13 +2909,17 @@ const handleDownloadZipByPaths = [
       } catch (_) {}
     });
     archive.pipe(res);
-    for (const entry of toAdd) {
-      try {
-        archive.append(fs.createReadStream(entry.fullPath), {
-          name: entry.nameInZip,
-        });
-      } catch (_) {
-        /* stream inválido */
+    const BATCH = 200;
+    for (let i = 0; i < toAdd.length; i += BATCH) {
+      const batch = toAdd.slice(i, i + BATCH);
+      const buffers = await Promise.all(
+        batch.map(({ fullPath }) =>
+          fs.promises.readFile(fullPath).catch(() => null),
+        ),
+      );
+      for (let j = 0; j < batch.length; j++) {
+        if (buffers[j])
+          archive.append(buffers[j], { name: batch[j].nameInZip });
       }
     }
     archive.finalize();
@@ -3672,7 +3496,6 @@ app.post(
  * POST /api/fiscal-sync-all
  * Escaneia BASE_PATH, associa cada pasta de empresa ao company_id pelo nome da empresa,
  * e sincroniza arquivos XML/PDF de FISCAL/NFS/Recebidas e FISCAL/NFS/Emitidas para fiscal_documents.
- * NFE/NFC: todo o diretório FISCAL/NFE-NFC (recursivo), incluindo Notas Fiscais de Entrada/Saída, 55/65, etc.
  * Requer Authorization: Bearer <jwt>.
  * Normaliza nomes (remove acentos/cedilha) para casar pasta "SERVICOS" com empresa "SERVIÇOS".
  */
@@ -3700,87 +3523,6 @@ function walkDir(dir, baseDir) {
     }
   }
   return results;
-}
-
-/**
- * Resolve subpasta ignorando maiúsculas (Linux após restore) e pequenas variações (nfe-nfc vs NFE-NFC).
- * Retorna path absoluto ou null.
- */
-function findChildDirCaseInsensitive(parentAbs, segmentName) {
-  if (!parentAbs || !segmentName) return null;
-  try {
-    if (!fs.existsSync(parentAbs) || !fs.statSync(parentAbs).isDirectory())
-      return null;
-    const want = String(segmentName).trim().toLowerCase();
-    const wantAlnum = want.replace(/[^a-z0-9]/g, "");
-    const entries = fs.readdirSync(parentAbs, { withFileTypes: true });
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const n = e.name.toLowerCase();
-      if (n === want) return path.join(parentAbs, e.name);
-    }
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const alnum = e.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (alnum === wantAlnum) return path.join(parentAbs, e.name);
-    }
-  } catch (_) {}
-  return null;
-}
-
-function relativePathFromBase(absPath) {
-  if (!absPath) return "";
-  try {
-    return path.relative(BASE_PATH, absPath).replace(/\\/g, "/");
-  } catch (_) {
-    return "";
-  }
-}
-
-/** Lê só o início do XML (leve) e devolve YYYY-MM-DD de dhEmi/dEmi, se existir. */
-function sniffNfeNfcDocumentDateIso(absPath, maxBytes = 65536) {
-  if (!absPath || !fs.existsSync(absPath)) return null;
-  let fd;
-  try {
-    fd = fs.openSync(absPath, "r");
-    const st = fs.fstatSync(fd);
-    const n = Math.min(maxBytes, st.size);
-    const buf = Buffer.allocUnsafe(n);
-    const read = fs.readSync(fd, buf, 0, n, 0);
-    const txt = buf.slice(0, read).toString("utf8");
-    let m = txt.match(/<[^>]*?:?dhEmi[^>]*>\s*([^<]+)/i);
-    if (!m) m = txt.match(/<[^>]*?:?dEmi[^>]*>\s*([^<]+)/i);
-    if (!m) return null;
-    const raw = String(m[1] || "").trim();
-    if (!raw) return null;
-    const iso = raw.includes("T") ? raw.split("T")[0] : raw.slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-    const digits = raw.replace(/\D/g, "");
-    if (digits.length >= 8) {
-      const y = digits.slice(0, 4);
-      const mo = digits.slice(4, 6);
-      const da = digits.slice(6, 8);
-      const nY = Number(y);
-      const nM = Number(mo);
-      const nD = Number(da);
-      if (
-        nY >= 1990 &&
-        nY <= 2100 &&
-        nM >= 1 &&
-        nM <= 12 &&
-        nD >= 1 &&
-        nD <= 31
-      )
-        return `${y}-${mo}-${da}`;
-    }
-    return null;
-  } catch (_) {
-    return null;
-  } finally {
-    try {
-      if (fd != null) fs.closeSync(fd);
-    } catch (_) {}
-  }
 }
 
 function parseJsonLike(value) {
@@ -4024,109 +3766,14 @@ async function clearMissingNfsStats(supabase, effectiveOfficeId, result) {
 }
 
 /**
- * Garante uma linha em nfs_stats por (empresa, período) onde já existem NFS no disco,
- * para o dashboard não ficar sem valores/ranking após restore (zeros até o robô NFS reenviar totais reais).
- */
-async function ensureNfsStatsPlaceholders(supabase, effectiveOfficeId, result) {
-  const nfsDocs = await fetchAllRows(() =>
-    supabase
-      .from("fiscal_documents")
-      .select("company_id, periodo")
-      .eq("office_id", effectiveOfficeId)
-      .eq("type", "NFS")
-      .not("file_path", "is", null),
-  );
-
-  const needed = new Set();
-  for (const row of nfsDocs || []) {
-    const cid = String(row.company_id || "").trim();
-    const p = String(row.periodo || "").trim().slice(0, 7);
-    if (!cid || !/^\d{4}-\d{2}$/.test(p)) continue;
-    needed.add(`${cid}\t${p}`);
-  }
-  if (needed.size === 0) return 0;
-
-  const existingRows = await fetchAllRows(() =>
-    supabase
-      .from("nfs_stats")
-      .select("company_id, period")
-      .eq("office_id", effectiveOfficeId),
-  );
-  const existing = new Set(
-    (existingRows || []).map(
-      (r) =>
-        `${String(r.company_id || "").trim()}\t${String(r.period || "").trim().slice(0, 7)}`,
-    ),
-  );
-
-  const toInsert = [];
-  for (const key of needed) {
-    if (existing.has(key)) continue;
-    const [company_id, period] = key.split("\t");
-    toInsert.push({
-      office_id: String(effectiveOfficeId),
-      company_id,
-      period,
-      qty_emitidas: 0,
-      qty_recebidas: 0,
-      valor_emitidas: 0,
-      valor_recebidas: 0,
-      service_codes: [],
-      service_codes_emitidas: [],
-      service_codes_recebidas: [],
-    });
-  }
-
-  let added = 0;
-  const chunkSize = 200;
-  for (let i = 0; i < toInsert.length; i += chunkSize) {
-    const chunk = toInsert.slice(i, i + chunkSize);
-    const { error } = await supabase.from("nfs_stats").insert(chunk);
-    if (error) {
-      if (error.code === "23505") continue;
-      result.errors.push({
-        file: "nfs_stats_placeholder",
-        error: error.message,
-      });
-    } else {
-      added += chunk.length;
-    }
-  }
-  return added;
-}
-
-async function refreshOfficeDocumentIndexAfterFiscalSync(
-  supabase,
-  effectiveOfficeId,
-  result,
-) {
-  try {
-    const { error } = await supabase.rpc("refresh_office_document_index", {
-      p_office_id: effectiveOfficeId,
-    });
-    if (error) {
-      result.errors.push({
-        file: "refresh_office_document_index",
-        error: error.message,
-      });
-    }
-  } catch (err) {
-    result.errors.push({
-      file: "refresh_office_document_index",
-      error: err?.message || String(err),
-    });
-  }
-}
-
-/**
  * Executa a sincronização completa EMPRESAS -> fiscal_documents.
  * Inclui remoção: registros cujo arquivo não existe mais na pasta são removidos do banco.
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase - Cliente Supabase (JWT do usuário ou service role)
  * @param {string | null} [officeId] - Se informado (ex.: watcher), usa nos inserts; senão usa current_office_id() do JWT.
- * @returns {{ inserted: number, skipped: number, deleted: number, updated?: number, errors: Array<{ file: string, error: string }> }}
+ * @returns {{ inserted: number, skipped: number, deleted: number, errors: Array<{ file: string, error: string }> }}
  */
 async function runFiscalSyncAll(supabase, officeId = null) {
-  const result = { inserted: 0, skipped: 0, deleted: 0, updated: 0, errors: [] };
+  const result = { inserted: 0, skipped: 0, deleted: 0, errors: [] };
   const effectiveOfficeId = officeId || OFFICE_ID || null;
   console.log(
     `[fiscal-watcher] runFiscalSyncAll effectiveOfficeId=${effectiveOfficeId} (officeId=${officeId}, OFFICE_ID=${OFFICE_ID})`,
@@ -4190,19 +3837,6 @@ async function runFiscalSyncAll(supabase, officeId = null) {
       result,
       allPathsOnDisk,
     );
-    await clearMissingNfsStats(supabase, effectiveOfficeId, result);
-    const phEarly = await ensureNfsStatsPlaceholders(
-      supabase,
-      effectiveOfficeId,
-      result,
-    );
-    if (result.inserted > 0 || result.deleted > 0 || phEarly > 0) {
-      await refreshOfficeDocumentIndexAfterFiscalSync(
-        supabase,
-        effectiveOfficeId,
-        result,
-      );
-    }
     return result;
   }
 
@@ -4217,132 +3851,108 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     const pathsOnDisk = pathsOnDiskByCompany.get(companyId);
     if (!pathsOnDisk) continue;
 
-    const companyAbs = path.join(BASE_PATH, companyName);
-    const fiscalAbs = findChildDirCaseInsensitive(companyAbs, "FISCAL");
-    if (!fiscalAbs) continue;
-
-    const nfsRootAbs = findChildDirCaseInsensitive(fiscalAbs, "NFS");
-    if (nfsRootAbs) {
-      for (const sub of ["Recebidas", "Emitidas"]) {
-        const subAbs = findChildDirCaseInsensitive(nfsRootAbs, sub);
-        if (!subAbs) continue;
-        const segment = relativePathFromBase(subAbs);
-        if (!segment) continue;
-        const files = walkDir(segment, BASE_PATH);
-        for (const fileRel of files) {
-          pathsOnDisk.add(fileRel);
-          const chave = path.basename(fileRel, path.extname(fileRel));
-          const parts = fileRel.split(/[/\\]/);
-          let periodo = new Date().toISOString().slice(0, 7);
-          const y = parts.find((p) => /^\d{4}$/.test(p));
-          const m = parts.find(
-            (p) =>
-              /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+    for (const sub of ["Recebidas", "Emitidas"]) {
+      const segment = path
+        .join(companyName, "FISCAL", "NFS", sub)
+        .replace(/\\/g, "/");
+      const files = walkDir(segment, BASE_PATH);
+      for (const fileRel of files) {
+        pathsOnDisk.add(fileRel);
+        const chave = path.basename(fileRel, path.extname(fileRel));
+        const parts = fileRel.split(/[/\\]/);
+        let periodo = new Date().toISOString().slice(0, 7);
+        const y = parts.find((p) => /^\d{4}$/.test(p));
+        const m = parts.find(
+          (p) =>
+            /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+        );
+        if (y && m) periodo = `${y}-${m}`;
+        const { data: existingRows } = await supabase
+          .from("fiscal_documents")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("file_path", fileRel)
+          .limit(1);
+        if (existingRows && existingRows.length > 0) {
+          result.skipped++;
+          continue;
+        }
+        const row = {
+          office_id: String(effectiveOfficeId),
+          company_id: companyId,
+          type: "NFS",
+          chave,
+          periodo,
+          status: "novo",
+          file_path: fileRel,
+        };
+        if (result.inserted + result.skipped === 0)
+          console.log(
+            "[fiscal-watcher] Primeiro insert NFS payload:",
+            JSON.stringify(row),
           );
-          if (y && m) periodo = `${y}-${m}`;
-          const { data: existingRows } = await supabase
-            .from("fiscal_documents")
-            .select("id")
-            .eq("company_id", companyId)
-            .eq("file_path", fileRel)
-            .limit(1);
-          if (existingRows && existingRows.length > 0) {
+        const { error } = await supabase.from("fiscal_documents").insert(row);
+        if (error) {
+          if (error.code === "23505") {
             result.skipped++;
-            continue;
-          }
-          const row = {
-            office_id: String(effectiveOfficeId),
-            company_id: companyId,
-            type: "NFS",
-            chave,
-            periodo,
-            status: "novo",
-            file_path: fileRel,
-          };
-          if (result.inserted + result.skipped === 0)
-            console.log(
-              "[fiscal-watcher] Primeiro insert NFS payload:",
-              JSON.stringify(row),
-            );
-          const { error } = await supabase.from("fiscal_documents").insert(row);
-          if (error) {
-            if (error.code === "23505") {
-              result.skipped++;
-            } else {
-              result.errors.push({ file: fileRel, error: error.message });
-            }
           } else {
-            result.inserted++;
+            result.errors.push({ file: fileRel, error: error.message });
           }
+        } else {
+          result.inserted++;
         }
       }
     }
 
-    const nfeRootAbs = findChildDirCaseInsensitive(fiscalAbs, "NFE-NFC");
-    if (nfeRootAbs) {
-      const nfeSegment = relativePathFromBase(nfeRootAbs);
-      if (nfeSegment) {
-        const nfeFiles = walkDir(nfeSegment, BASE_PATH);
-        for (const fileRel of nfeFiles) {
-          pathsOnDisk.add(fileRel);
-          const baseName = path.basename(fileRel, path.extname(fileRel));
-          const docType = resolveNfeNfcDocType(fileRel, BASE_PATH);
-          const chave = baseName;
-          const parts = fileRel.split(/[/\\]/);
-          let periodo = new Date().toISOString().slice(0, 7);
-          const y = parts.find((p) => /^\d{4}$/.test(p));
-          const m = parts.find(
-            (p) =>
-              /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
-          );
-          if (y && m) periodo = `${y}-${m}`;
-          const sniffedDate = sniffNfeNfcDocumentDateIso(
-            path.join(BASE_PATH, fileRel),
-          );
-          if (sniffedDate) periodo = sniffedDate.slice(0, 7);
-          const { data: existingRows } = await supabase
-            .from("fiscal_documents")
-            .select("id, type")
-            .eq("company_id", companyId)
-            .eq("file_path", fileRel)
-            .limit(1);
-          if (existingRows && existingRows.length > 0) {
-            const existing = existingRows[0];
-            if (existing.type !== docType) {
-              const { error: upErr } = await supabase
-                .from("fiscal_documents")
-                .update({ type: docType })
-                .eq("id", existing.id);
-              if (upErr) {
-                result.errors.push({ file: fileRel, error: upErr.message });
-              } else {
-                result.updated += 1;
-              }
-            } else {
-              result.skipped++;
-            }
-            continue;
-          }
-          const row = {
-            office_id: String(effectiveOfficeId),
-            company_id: companyId,
-            type: docType,
-            chave,
-            periodo,
-            status: "novo",
-            file_path: fileRel,
-            ...(sniffedDate ? { document_date: sniffedDate } : {}),
-          };
-          const { error } = await supabase.from("fiscal_documents").insert(row);
-          if (error) {
-            if (error.code === "23505") {
-              result.skipped++;
-            } else {
-              result.errors.push({ file: fileRel, error: error.message });
-            }
+    // NFE-NFC: FISCAL/NFE-NFC/Recebidas e FISCAL/NFE-NFC/Emitidas (tipo NFE ou NFC por nome do arquivo)
+    for (const sub of ["Recebidas", "Emitidas"]) {
+      const segment = path
+        .join(companyName, "FISCAL", "NFE-NFC", sub)
+        .replace(/\\/g, "/");
+      const files = walkDir(segment, BASE_PATH);
+      for (const fileRel of files) {
+        pathsOnDisk.add(fileRel);
+        const baseName = path.basename(fileRel, path.extname(fileRel));
+        const nameLower = baseName.toLowerCase();
+        const docType =
+          nameLower.includes("nfc") || nameLower.includes("65") ? "NFC" : "NFE";
+        const chave = baseName;
+        const parts = fileRel.split(/[/\\]/);
+        let periodo = new Date().toISOString().slice(0, 7);
+        const y = parts.find((p) => /^\d{4}$/.test(p));
+        const m = parts.find(
+          (p) =>
+            /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
+        );
+        if (y && m) periodo = `${y}-${m}`;
+        const { data: existingRows } = await supabase
+          .from("fiscal_documents")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("file_path", fileRel)
+          .limit(1);
+        if (existingRows && existingRows.length > 0) {
+          result.skipped++;
+          continue;
+        }
+        const row = {
+          office_id: String(effectiveOfficeId),
+          company_id: companyId,
+          type: docType,
+          chave,
+          periodo,
+          status: "novo",
+          file_path: fileRel,
+        };
+        const { error } = await supabase.from("fiscal_documents").insert(row);
+        if (error) {
+          if (error.code === "23505") {
+            result.skipped++;
           } else {
-            result.inserted++;
+            result.errors.push({ file: fileRel, error: error.message });
           }
+        } else {
+          result.inserted++;
         }
       }
     }
@@ -4386,19 +3996,6 @@ async function runFiscalSyncAll(supabase, officeId = null) {
     allPathsOnDisk,
   );
   await clearMissingNfsStats(supabase, effectiveOfficeId, result);
-  const ph = await ensureNfsStatsPlaceholders(
-    supabase,
-    effectiveOfficeId,
-    result,
-  );
-
-  if (result.inserted > 0 || result.deleted > 0 || result.updated > 0 || ph > 0) {
-    await refreshOfficeDocumentIndexAfterFiscalSync(
-      supabase,
-      effectiveOfficeId,
-      result,
-    );
-  }
 
   return result;
 }
@@ -4543,9 +4140,6 @@ const whatsappSecureProxy = createProxyMiddleware({
   },
   onProxyReq: (proxyReq) => {
     if (OFFICE_ID) proxyReq.setHeader("X-Office-Id", OFFICE_ID);
-    try {
-      proxyReq.removeHeader("authorization");
-    } catch (_) {}
     if (CONNECTOR_SECRET) {
       proxyReq.setHeader("Authorization", `Bearer ${CONNECTOR_SECRET}`);
     }
@@ -4677,8 +4271,8 @@ function startFiscalWatcher() {
   };
 
   try {
-    fs.watch(empresasPath, { recursive: true }, () => {
-      // Windows muitas vezes não informa `filename`; restore em massa precisa disparar sync mesmo assim.
+    fs.watch(empresasPath, { recursive: true }, (eventType, filename) => {
+      if (!filename || !/\.(xml|pdf)$/i.test(filename)) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;

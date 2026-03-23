@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "name": "servidor-vm",
+  "type": "commonjs",
+  "description": "Isola CommonJS dos wrappers PM2; evita herdar type:module do package.json do repo pai."
+}
