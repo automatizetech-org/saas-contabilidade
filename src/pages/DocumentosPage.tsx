@@ -3,7 +3,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { FileText, Download, Filter, Search, FileArchive } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { getUnifiedDocumentsPage, getUnifiedDocumentsZipPaths, type CursorPageToken } from "@/services/documentsService";
 import { downloadListedFilesZipWithCategory, downloadServerFileByPath, hasServerApi } from "@/services/serverFileService";
@@ -83,6 +83,7 @@ export default function DocumentosPage() {
   const [cursorHistory, setCursorHistory] = useState<Array<CursorPageToken | null>>([null]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const queryClient = useQueryClient();
   const { selectedCompanyIds } = useSelectedCompanyIds();
   const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
 
@@ -101,7 +102,7 @@ export default function DocumentosPage() {
 
   const currentCursor = cursorHistory[currentPage - 1] ?? null;
 
-  const { data: documentsPage, isLoading, isPlaceholderData: hubDocumentsPageIsPlaceholder } = useQuery({
+  const { data: documentsPage, isLoading } = useQuery({
     queryKey: ["hub-documents-page", companyFilter, selectedCategoryKey, filterFileKind, search, dateFrom, dateTo, pageSize, currentPage, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
       getUnifiedDocumentsPage({
@@ -119,6 +120,50 @@ export default function DocumentosPage() {
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
+
+  useEffect(() => {
+    if (!documentsPage?.nextCursor || !documentsPage?.hasMore) return;
+    void queryClient.prefetchQuery({
+      queryKey: [
+        "hub-documents-page",
+        companyFilter,
+        selectedCategoryKey,
+        filterFileKind,
+        search,
+        dateFrom,
+        dateTo,
+        pageSize,
+        currentPage + 1,
+        documentsPage.nextCursor.id ?? null,
+        documentsPage.nextCursor.createdAt ?? null,
+        documentsPage.nextCursor.sortDate ?? null,
+      ],
+      queryFn: () =>
+        getUnifiedDocumentsPage({
+          companyIds: companyFilter,
+          category: selectedCategoryKey,
+          fileKind: filterFileKind,
+          search,
+          dateFrom,
+          dateTo,
+          cursor: documentsPage.nextCursor,
+          limit: pageSize,
+        }),
+      staleTime: 20_000,
+    });
+  }, [
+    documentsPage?.nextCursor,
+    documentsPage?.hasMore,
+    queryClient,
+    companyFilter,
+    selectedCategoryKey,
+    filterFileKind,
+    search,
+    dateFrom,
+    dateTo,
+    pageSize,
+    currentPage,
+  ]);
 
   const pageDocuments = documentsPage?.items ?? [];
   const hasMore = documentsPage?.hasMore ?? false;
@@ -297,9 +342,7 @@ export default function DocumentosPage() {
           </div>
         </div>
 
-        {hubDocumentsPageIsPlaceholder ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">Carregando pagina...</div>
-        ) : isLoading && pageDocuments.length === 0 ? (
+        {isLoading && pageDocuments.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
         ) : (
           <div className="overflow-x-auto -webkit-overflow-scrolling-touch">
@@ -350,14 +393,14 @@ export default function DocumentosPage() {
           </div>
         )}
 
-        {!hubDocumentsPageIsPlaceholder && !isLoading && pageDocuments.length === 0 && (
+        {!isLoading && pageDocuments.length === 0 && (
           <div className="p-12 text-center">
             <FileText className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">Nenhum documento encontrado com os filtros aplicados.</p>
           </div>
         )}
 
-        {pageDocuments.length > 0 && !hubDocumentsPageIsPlaceholder && (
+        {pageDocuments.length > 0 && (
           <CursorPagination
             currentPage={currentPage}
             pageSize={pageSize}

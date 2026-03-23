@@ -145,6 +145,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
   const [cursorHistory, setCursorHistory] = useState<Array<CursorPageToken | null>>([null]);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     setPage(1);
@@ -160,7 +161,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
     refetchIntervalInBackground: true,
   });
 
-  const { data: certidoesPage, isLoading: tableLoading, isPlaceholderData: certidoesPageIsPlaceholder } = useQuery({
+  const { data: certidoesPage, isLoading: tableLoading } = useQuery({
     queryKey: ["certidoes-page", companyFilter, search, tipoFiltro, pageSize, page, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
       getFiscalDetailDocumentsPage({
@@ -175,6 +176,33 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
+
+  useEffect(() => {
+    if (!certidoesPage?.nextCursor || !certidoesPage?.hasMore) return;
+    void queryClient.prefetchQuery({
+      queryKey: [
+        "certidoes-page",
+        companyFilter,
+        search,
+        tipoFiltro,
+        pageSize,
+        page + 1,
+        certidoesPage.nextCursor.id ?? null,
+        certidoesPage.nextCursor.createdAt ?? null,
+        certidoesPage.nextCursor.sortDate ?? null,
+      ],
+      queryFn: () =>
+        getFiscalDetailDocumentsPage({
+          kind: "certidoes",
+          companyIds: companyFilter,
+          search,
+          certidaoTipo: tipoFiltro,
+          cursor: certidoesPage.nextCursor,
+          limit: pageSize,
+        }),
+      staleTime: 20_000,
+    });
+  }, [certidoesPage?.nextCursor, certidoesPage?.hasMore, queryClient, companyFilter, search, tipoFiltro, pageSize, page]);
 
   const chartData = (overview?.chartData ?? [
     { name: "Negativas", value: 0 },
@@ -301,9 +329,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
           </div>
         </div>
         <div className="overflow-x-auto">
-          {certidoesPageIsPlaceholder ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">Carregando pagina...</div>
-          ) : tableLoading && items.length === 0 ? (
+          {tableLoading && items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando certidoes...</div>
           ) : items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma certidao encontrada.</div>
@@ -349,7 +375,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
             </table>
           )}
         </div>
-        {items.length > 0 && !certidoesPageIsPlaceholder && (
+        {items.length > 0 && (
           <CursorPagination
             currentPage={page}
             pageSize={pageSize}
@@ -451,7 +477,7 @@ export default function FiscalDetailPage() {
 
   const currentCursor = cursorHistory[currentPage - 1] ?? null;
 
-  const { data: documentsPage, isLoading: documentsLoading, isPlaceholderData: fiscalDocumentsPageIsPlaceholder } = useQuery({
+  const { data: documentsPage, isLoading: documentsLoading } = useQuery({
     queryKey: ["fiscal-detail-page", kind, companyFilter, search, resolvedDateFrom, resolvedDateTo, fileKind, origem, modelo, pageSize, currentPage, currentCursor?.id ?? null, currentCursor?.createdAt ?? null, currentCursor?.sortDate ?? null],
     queryFn: () =>
       getFiscalDetailDocumentsPage({
@@ -467,11 +493,61 @@ export default function FiscalDetailPage() {
         limit: pageSize,
       }),
     enabled: !isObrigacao,
-    // Mantém dados no polling (mesma queryKey); ao mudar pagina/cursor o placeholder seria a pagina antiga — escondemos ate chegar a resposta certa (isPlaceholderData).
+    // Mantém dados antigos enquanto refetch/paginação ocorre, evitando flicker.
     placeholderData: keepPreviousData,
     refetchInterval: () => getVisibilityAwareRefetchInterval(),
     refetchIntervalInBackground: true,
   });
+
+  useEffect(() => {
+    if (!documentsPage?.nextCursor || !documentsPage?.hasMore) return;
+    void queryClient.prefetchQuery({
+      queryKey: [
+        "fiscal-detail-page",
+        kind,
+        companyFilter,
+        search,
+        resolvedDateFrom,
+        resolvedDateTo,
+        fileKind,
+        origem,
+        modelo,
+        pageSize,
+        currentPage + 1,
+        documentsPage.nextCursor.id ?? null,
+        documentsPage.nextCursor.createdAt ?? null,
+        documentsPage.nextCursor.sortDate ?? null,
+      ],
+      queryFn: () =>
+        getFiscalDetailDocumentsPage({
+          kind,
+          companyIds: companyFilter,
+          search,
+          dateFrom: resolvedDateFrom || undefined,
+          dateTo: resolvedDateTo || undefined,
+          fileKind,
+          origem,
+          modelo,
+          cursor: documentsPage.nextCursor,
+          limit: pageSize,
+        }),
+      staleTime: 20_000,
+    });
+  }, [
+    documentsPage?.nextCursor,
+    documentsPage?.hasMore,
+    queryClient,
+    kind,
+    companyFilter,
+    search,
+    resolvedDateFrom,
+    resolvedDateTo,
+    fileKind,
+    origem,
+    modelo,
+    pageSize,
+    currentPage,
+  ]);
 
   const { data: detailSummary, isLoading: summaryLoading } = useQuery({
     queryKey: ["fiscal-detail-summary", kind, companyFilter, resolvedDateFrom, resolvedDateTo],
@@ -761,9 +837,7 @@ export default function FiscalDetailPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          {fiscalDocumentsPageIsPlaceholder ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">Carregando pagina...</div>
-          ) : pageItems.length === 0 && documentsLoading ? (
+          {pageItems.length === 0 && documentsLoading ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Carregando...</div>
           ) : pageItems.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhum documento encontrado.</div>
@@ -810,7 +884,7 @@ export default function FiscalDetailPage() {
             </table>
           )}
         </div>
-        {pageItems.length > 0 && !fiscalDocumentsPageIsPlaceholder && (
+        {pageItems.length > 0 && (
           <CursorPagination
             currentPage={currentPage}
             pageSize={pageSize}
