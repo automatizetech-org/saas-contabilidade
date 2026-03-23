@@ -1,7 +1,6 @@
 /**
- * Módulo WhatsApp — Alteração Empresarial.
- * Separação: formatação do texto do formulário | API (QR, grupos, envio).
- * Base URL da API: WHATSAPP_API (Servidor/whatsapp-emissor ou serviço equivalente).
+ * Módulo WhatsApp — Alteração Empresarial (só formatação de texto).
+ * Envio: whatsappApi (office-server + escritório ou WHATSAPP_API legado).
  */
 
 import { formatCNPJ, formatCurrencyBRL } from "@/lib/validators";

@@ -7,18 +7,28 @@
 
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 import dotenv from "dotenv";
 import { createHash, randomUUID, timingSafeEqual } from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Único .env: pasta Servidor (um nível acima). Path absoluto para PM2/Windows.
-dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
+// Preferir Servidor/.env (PM2); fallback Servidor/server-api/.env (dev no repo).
+const envPathServer = path.resolve(__dirname, "..", ".env");
+const envPathApi = path.join(__dirname, ".env");
+// Por padrão NÃO usar override: no PM2 o CONNECTOR_SECRET costuma vir do ecosystem;
+// override com .env de dev quebra o hash e OFFICE_ID fica null (robôs falham).
+// Para forçar .env sobre o ambiente: DOTENV_CONFIG_OVERRIDE=1
+dotenv.config({
+  path: fs.existsSync(envPathServer) ? envPathServer : envPathApi,
+  ...(String(process.env.DOTENV_CONFIG_OVERRIDE || "").trim() === "1"
+    ? { override: true }
+    : {}),
+});
 
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import fs from "fs";
 import os from "os";
 import archiver from "archiver";
 import { createProxyMiddleware } from "http-proxy-middleware";
@@ -2171,6 +2181,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isUuidString(value) {
+  const s = String(value ?? "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s,
+  );
+}
+
 function isTransientSupabaseError(error) {
   const message = String(error?.message ?? error ?? "").toLowerCase();
   return (
@@ -2230,6 +2247,60 @@ function createConfiguredSupabaseClient(supabaseUrl, key) {
   });
 }
 
+async function applyOfficeIdFromEnvFallback(supabase) {
+  if (OFFICE_ID && OFFICE_SERVER_ID) return;
+  const envOid = String(process.env.OFFICE_ID || "").trim();
+  if (!isUuidString(envOid)) return;
+
+  OFFICE_ID = envOid;
+  const envOsid = String(process.env.OFFICE_SERVER_ID || "").trim();
+  if (isUuidString(envOsid)) {
+    OFFICE_SERVER_ID = envOsid;
+  } else {
+    const { data: os, error: osErr } = await supabase
+      .from("office_servers")
+      .select("id, office_id, base_path, robots_root_path")
+      .eq("office_id", OFFICE_ID)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (osErr) {
+      console.error(
+        "[fiscal-watcher] Fallback OFFICE_ID: erro ao buscar office_server:",
+        osErr.message,
+      );
+      return;
+    }
+    if (os?.id) {
+      OFFICE_SERVER_ID = os.id;
+      if (
+        !ENV_BASE_PATH &&
+        os.base_path &&
+        String(os.base_path).trim()
+      ) {
+        BASE_PATH = String(os.base_path).trim();
+      }
+      if (
+        !ENV_ROBOTS_ROOT_PATH &&
+        os.robots_root_path &&
+        String(os.robots_root_path).trim()
+      ) {
+        ROBOTS_ROOT_PATH = String(os.robots_root_path).trim();
+      }
+    }
+  }
+
+  const { data: office } = await supabase
+    .from("offices")
+    .select("name")
+    .eq("id", OFFICE_ID)
+    .maybeSingle();
+  OFFICE_NAME = office?.name ?? null;
+
+  console.warn(
+    "[fiscal-watcher] OFFICE_ID/OFFICE_SERVER_ID resolvido via env OFFICE_ID (fallback). Ideal: CONNECTOR_SECRET alinhado a office_server_credentials para não depender disto.",
+  );
+}
+
 async function loadBasePathFromSupabase() {
   const url = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -2241,6 +2312,8 @@ async function loadBasePathFromSupabase() {
   }
   try {
     const supabase = createConfiguredSupabaseClient(url, serviceKey);
+    let resolvedByCredential = false;
+
     if (CONNECTOR_SECRET_HASH) {
       const hashPreview = CONNECTOR_SECRET_HASH.slice(0, 8) + "...";
       const { data: credential, error: credError } = await supabase
@@ -2253,54 +2326,55 @@ async function loadBasePathFromSupabase() {
           "[fiscal-watcher] Erro ao buscar credential:",
           credError.message,
         );
-        return;
-      }
-      if (!credential?.office_server_id) {
+      } else if (!credential?.office_server_id) {
         console.warn(
           "[fiscal-watcher] Nenhum credential com hash",
           hashPreview,
-          "no Supabase. Verifique CONNECTOR_SECRET no .env e office_server_credentials (secret_hash).",
+          "no Supabase. O secret_hash em office_server_credentials deve ser SHA-256 (UTF-8) do CONNECTOR_SECRET desta VM. Alinhe com: npm run sync:office-credential (E2E_SUPABASE_EMAIL / E2E_SUPABASE_PASSWORD + SUPABASE_SERVICE_ROLE_KEY no Servidor/server-api/.env).",
         );
-        return;
-      }
-      const { data: officeServer, error: osError } = await supabase
-        .from("office_servers")
-        .select("id, office_id, base_path, robots_root_path")
-        .eq("id", credential.office_server_id)
-        .maybeSingle();
-      if (osError) {
-        console.error(
-          "[fiscal-watcher] Erro ao buscar office_server:",
-          osError.message,
-        );
-        return;
-      }
-      if (officeServer?.id) {
-        OFFICE_SERVER_ID = officeServer.id;
-        OFFICE_ID = officeServer.office_id ?? null;
-        const { data: office } = await supabase
-          .from("offices")
-          .select("name")
-          .eq("id", OFFICE_ID)
+      } else {
+        const { data: officeServer, error: osError } = await supabase
+          .from("office_servers")
+          .select("id, office_id, base_path, robots_root_path")
+          .eq("id", credential.office_server_id)
           .maybeSingle();
-        OFFICE_NAME = office?.name ?? null;
-        if (
-          !ENV_BASE_PATH &&
-          officeServer?.base_path &&
-          String(officeServer.base_path).trim()
-        ) {
-          BASE_PATH = String(officeServer.base_path).trim();
+        if (osError) {
+          console.error(
+            "[fiscal-watcher] Erro ao buscar office_server:",
+            osError.message,
+          );
+        } else if (officeServer?.id) {
+          OFFICE_SERVER_ID = officeServer.id;
+          OFFICE_ID = officeServer.office_id ?? null;
+          const { data: office } = await supabase
+            .from("offices")
+            .select("name")
+            .eq("id", OFFICE_ID)
+            .maybeSingle();
+          OFFICE_NAME = office?.name ?? null;
+          if (
+            !ENV_BASE_PATH &&
+            officeServer?.base_path &&
+            String(officeServer.base_path).trim()
+          ) {
+            BASE_PATH = String(officeServer.base_path).trim();
+          }
+          if (
+            !ENV_ROBOTS_ROOT_PATH &&
+            officeServer?.robots_root_path &&
+            String(officeServer.robots_root_path).trim()
+          ) {
+            ROBOTS_ROOT_PATH = String(officeServer.robots_root_path).trim();
+          }
+          resolvedByCredential = true;
         }
-        if (
-          !ENV_ROBOTS_ROOT_PATH &&
-          officeServer?.robots_root_path &&
-          String(officeServer.robots_root_path).trim()
-        ) {
-          ROBOTS_ROOT_PATH = String(officeServer.robots_root_path).trim();
-        }
-        return;
       }
     }
+
+    if (!resolvedByCredential) {
+      await applyOfficeIdFromEnvFallback(supabase);
+    }
+
     if (!ENV_BASE_PATH) {
       const { data } = await supabase
         .from("admin_settings")
@@ -2549,7 +2623,11 @@ function requireConnectorSecret(req, res, next) {
     .replace(/^Bearer\s+/i, "")
     .trim();
   if (!providedHash || !safeTokenEqual(CONNECTOR_SECRET_HASH, providedHash)) {
-    return res.status(401).json({ error: "Conector não autorizado" });
+    return res.status(401).json({
+      error: "Conector não autorizado",
+      detail:
+        "O hash Bearer deve coincidir com SHA-256 (UTF-8) do CONNECTOR_SECRET desta VM. Alinhe office_server_credentials.secret_hash no Supabase (npm run sync:office-credential no repo).",
+    });
   }
   return next();
 }
@@ -2578,7 +2656,7 @@ async function validateSupabaseJwt(req, res, next) {
         detectSessionInUrl: false,
       },
     });
-    const { data, error } = await supabase.auth.getUser();
+    const { data, error } = await supabase.auth.getUser(token);
     if (error || !data?.user?.id) {
       return res.status(401).json({ error: "Token inválido" });
     }
@@ -2586,6 +2664,44 @@ async function validateSupabaseJwt(req, res, next) {
     return next();
   } catch (e) {
     return res.status(401).json({ error: "Token inválido" });
+  }
+}
+
+/** Garante que o JWT é de um usuário do mesmo office_id desta VM (CONNECTOR_SECRET). */
+async function validateUserBelongsToConnectorOffice(req, res, next) {
+  if (!OFFICE_ID) return next();
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY;
+  const token = getForwardedUserJwt(req);
+  if (!supabaseUrl || !supabaseKey || !token) {
+    return res.status(500).json({ error: "Supabase não configurado" });
+  }
+  try {
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+    const { data: m, error } = await supabase
+      .from("office_memberships")
+      .select("office_id")
+      .eq("user_id", req.user.id)
+      .order("is_default", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!m?.office_id || String(m.office_id) !== String(OFFICE_ID)) {
+      return res.status(403).json({
+        error:
+          "Usuario nao pertence ao escritorio deste conector (WhatsApp isolado por escritorio).",
+      });
+    }
+    return next();
+  } catch (e) {
+    return res.status(500).json({ error: "Falha ao validar escritorio" });
   }
 }
 
@@ -2602,7 +2718,9 @@ app.use((req, res, next) => {
   const p = req.path || "/";
   const normalized = p.startsWith("/api/") ? p.slice(4) : p; // compat com túnel que expõe apenas /api/*
   const isWhatsApp =
-    whatsappPaths.includes(normalized) || normalized.startsWith("/qr");
+    whatsappPaths.includes(normalized) ||
+    normalized.startsWith("/qr") ||
+    p.startsWith("/api/whatsapp");
   if (isWhatsApp) return next();
   const limit = process.env.BODY_LIMIT || "25mb";
   express.json({ limit })(req, res, (err) => {
@@ -3594,6 +3712,52 @@ function relativePathFromBase(absPath) {
   }
 }
 
+/** Lê só o início do XML (leve) e devolve YYYY-MM-DD de dhEmi/dEmi, se existir. */
+function sniffNfeNfcDocumentDateIso(absPath, maxBytes = 65536) {
+  if (!absPath || !fs.existsSync(absPath)) return null;
+  let fd;
+  try {
+    fd = fs.openSync(absPath, "r");
+    const st = fs.fstatSync(fd);
+    const n = Math.min(maxBytes, st.size);
+    const buf = Buffer.allocUnsafe(n);
+    const read = fs.readSync(fd, buf, 0, n, 0);
+    const txt = buf.slice(0, read).toString("utf8");
+    let m = txt.match(/<[^>]*?:?dhEmi[^>]*>\s*([^<]+)/i);
+    if (!m) m = txt.match(/<[^>]*?:?dEmi[^>]*>\s*([^<]+)/i);
+    if (!m) return null;
+    const raw = String(m[1] || "").trim();
+    if (!raw) return null;
+    const iso = raw.includes("T") ? raw.split("T")[0] : raw.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length >= 8) {
+      const y = digits.slice(0, 4);
+      const mo = digits.slice(4, 6);
+      const da = digits.slice(6, 8);
+      const nY = Number(y);
+      const nM = Number(mo);
+      const nD = Number(da);
+      if (
+        nY >= 1990 &&
+        nY <= 2100 &&
+        nM >= 1 &&
+        nM <= 12 &&
+        nD >= 1 &&
+        nD <= 31
+      )
+        return `${y}-${mo}-${da}`;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  } finally {
+    try {
+      if (fd != null) fs.closeSync(fd);
+    } catch (_) {}
+  }
+}
+
 function parseJsonLike(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
@@ -4114,6 +4278,10 @@ async function runFiscalSyncAll(supabase, officeId = null) {
               /^\d{2}$/.test(p) && parseInt(p, 10) >= 1 && parseInt(p, 10) <= 12,
           );
           if (y && m) periodo = `${y}-${m}`;
+          const sniffedDate = sniffNfeNfcDocumentDateIso(
+            path.join(BASE_PATH, fileRel),
+          );
+          if (sniffedDate) periodo = sniffedDate.slice(0, 7);
           const { data: existingRows } = await supabase
             .from("fiscal_documents")
             .select("id")
@@ -4132,6 +4300,7 @@ async function runFiscalSyncAll(supabase, officeId = null) {
             periodo,
             status: "novo",
             file_path: fileRel,
+            ...(sniffedDate ? { document_date: sniffedDate } : {}),
           };
           const { error } = await supabase.from("fiscal_documents").insert(row);
           if (error) {
@@ -4329,35 +4498,30 @@ app.get("/api/robot-config", requireConnectorSecret, async (req, res) => {
   }
 });
 
-// Proxy WhatsApp (somente rotas explícitas; evita expor catch-all)
+// WhatsApp: rota única segura /api/whatsapp/* (JWT + escritório + token interno no emissor)
 const WHATSAPP_BACKEND_URL =
   process.env.WHATSAPP_BACKEND_URL || "http://localhost:3010";
-const whatsappProxy = createProxyMiddleware({
+const whatsappSecureProxy = createProxyMiddleware({
   target: WHATSAPP_BACKEND_URL,
   changeOrigin: true,
-  proxyTimeout: 60_000,
-  timeout: 60_000,
-  onError: (err, req, res) => {
-    res
-      .status(502)
-      .json({ error: "Backend WhatsApp indisponível", detail: err.message });
+  proxyTimeout: 120_000,
+  timeout: 120_000,
+  pathRewrite: (pathReq) => {
+    const noPrefix = pathReq.replace(/^\/api\/whatsapp/, "") || "/";
+    return noPrefix.startsWith("/") ? noPrefix : `/${noPrefix}`;
   },
-});
-const whatsappProxyViaApiPrefix = createProxyMiddleware({
-  pathFilter: [
-    "/api/send",
-    "/api/status",
-    "/api/groups",
-    "/api/qr",
-    "/api/connect",
-    "/api/disconnect",
-  ],
-  target: WHATSAPP_BACKEND_URL,
-  changeOrigin: true,
-  proxyTimeout: 60_000,
-  timeout: 60_000,
-  pathRewrite: (pathReq) =>
-    pathReq.startsWith("/api/") ? pathReq.slice(4) : pathReq,
+  onProxyReq: (proxyReq) => {
+    if (OFFICE_ID) proxyReq.setHeader("X-Office-Id", OFFICE_ID);
+    try {
+      proxyReq.removeHeader("authorization");
+    } catch (_) {}
+    if (CONNECTOR_SECRET) {
+      proxyReq.setHeader("Authorization", `Bearer ${CONNECTOR_SECRET}`);
+    }
+    try {
+      proxyReq.removeHeader("x-office-user-jwt");
+    } catch (_) {}
+  },
   onError: (err, req, res) => {
     res
       .status(502)
@@ -4365,11 +4529,57 @@ const whatsappProxyViaApiPrefix = createProxyMiddleware({
   },
 });
 app.use(
-  ["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"],
-  whatsappProxy,
+  "/api/whatsapp",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  validateUserBelongsToConnectorOffice,
+  whatsappSecureProxy,
 );
-// Compat: alguns túneis/reverse-proxy só expõem /api/* para fora
-app.use(whatsappProxyViaApiPrefix);
+
+// Legado (desligado por padrão): expor /status, /qr, /send na raiz — inseguro em produção
+if (String(process.env.WA_OPEN_LEGACY_PROXY || "").trim() === "1") {
+  const whatsappProxy = createProxyMiddleware({
+    target: WHATSAPP_BACKEND_URL,
+    changeOrigin: true,
+    proxyTimeout: 60_000,
+    timeout: 60_000,
+    onError: (err, req, res) => {
+      res
+        .status(502)
+        .json({ error: "Backend WhatsApp indisponível", detail: err.message });
+    },
+  });
+  const whatsappProxyViaApiPrefix = createProxyMiddleware({
+    pathFilter: [
+      "/api/send",
+      "/api/status",
+      "/api/groups",
+      "/api/qr",
+      "/api/connect",
+      "/api/disconnect",
+    ],
+    target: WHATSAPP_BACKEND_URL,
+    changeOrigin: true,
+    proxyTimeout: 60_000,
+    timeout: 60_000,
+    pathRewrite: (pathReq) =>
+      pathReq.startsWith("/api/") ? pathReq.slice(4) : pathReq,
+    onError: (err, req, res) => {
+      res
+        .status(502)
+        .json({ error: "Backend WhatsApp indisponível", detail: err.message });
+    },
+  });
+  app.use(
+    ["/send", "/status", "/groups", "/qr", "/connect", "/disconnect"],
+    whatsappProxy,
+  );
+  app.use(whatsappProxyViaApiPrefix);
+  console.warn(
+    "[server-api] WA_OPEN_LEGACY_PROXY=1 — rotas WhatsApp antigas na raiz estão expostas.",
+  );
+}
 
 app.use((req, res) => {
   const path = req.path || req.url || "";
@@ -4530,7 +4740,9 @@ loadBasePathFromSupabase().then(() => {
     console.log(`[fiscal-watcher] ${FISCAL_SYNC_VERSION}`);
     console.log(`BASE_PATH: ${BASE_PATH}`);
     console.log(`ROBOTS_ROOT_PATH: ${ROBOTS_ROOT_PATH}`);
-    console.log(`Proxy WhatsApp: ${WHATSAPP_BACKEND_URL}`);
+    console.log(
+      `WhatsApp seguro: /api/whatsapp/* -> ${WHATSAPP_BACKEND_URL} (Bearer = CONNECTOR_SECRET)`,
+    );
     console.log(
       `CONNECTOR_SECRET: ${CONNECTOR_SECRET_HASH ? "configurado" : "ausente"}`,
     );

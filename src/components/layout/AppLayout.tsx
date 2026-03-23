@@ -230,7 +230,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
           sidebarOpen ? "md:w-64" : "md:w-0"
         )}
       >
-        <AppSidebar open={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
+        <AppSidebar
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          ecacMailboxUnread={ecacMailboxSummary?.unreadMessages ?? 0}
+        />
       </div>
 
       <main className="min-w-0 w-full max-w-full flex flex-col overflow-x-hidden relative min-h-0 h-dvh md:h-auto">

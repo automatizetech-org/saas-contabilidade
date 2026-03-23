@@ -120,7 +120,7 @@ export default function FiscalPage() {
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <StatsCard title="Total no periodo" value={cards.totalDocumentos.toLocaleString()} icon={Receipt} description="Notas fiscais no periodo (documentos reais)" />
-            <StatsCard title="Emitidos hoje" value={cards.documentosHoje.toLocaleString()} icon={CalendarDays} description="Documentos com data de referencia hoje" />
+            <StatsCard title="Emitidos hoje" value={cards.documentosHoje.toLocaleString()} icon={CalendarDays} description="Notas com data de emissao (XML) igual a hoje" />
             <StatsCard title="Empresas com emissao" value={cards.empresasComEmissao.toLocaleString()} icon={Building2} description="Empresas com pelo menos uma nota no periodo" />
           </div>
 

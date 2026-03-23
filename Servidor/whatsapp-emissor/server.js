@@ -1,81 +1,116 @@
 /**
- * Servidor HTTP do módulo WhatsApp — conexão igual ao WhatsApp_emissor.
- * Expõe: GET /status, GET /qr, GET /groups, POST /send (envia apenas para o groupId informado).
- * Uso: node server.js (ou npm run dev:wa a partir da raiz).
- * Pastas (tudo dentro de Servidor/whatsapp-emissor): .wwebjs_auth, .wwebjs_cache, data/
- * NUNCA apagar .wwebjs_auth — é a sessão salva; sem ela sempre pede QR de novo.
- * A sessão é sempre preservada: ao reiniciar, o cliente restaura de .wwebjs_auth e /status volta connected: true sem novo QR.
- * Configure no frontend: WHATSAPP_API=http://localhost:3010
+ * API HTTP WhatsApp — genérica para o SaaS (QR, grupos, envio).
+ *
+ * Contrato estável (evite mudar rotas):
+ *   GET  /status | /qr | /qr.png | /groups
+ *   POST /connect | /disconnect
+ *   POST /send        { groupId, message?, attachments?[] }
+ *   POST /deliver     { channel:"whatsapp", targets:[{type:"group",id}], message?, attachments?[] }
+ *
+ * Auth: Bearer = CONNECTOR_SECRET em claro (Servidor/.env), ou SHA-256 hex UTF-8 desse valor
+ * (igual office_server_credentials.secret_hash / header que chega no server-api), ou WHATSAPP_API_TOKEN (legado).
+ *
+ * Escritório (VM com um conector): sessão única "default" (sem multi-sessão).
+ * Várias sessões na mesma máquina: WA_BIND_OFFICE_HEADER=1 e header X-Office-Id: <uuid do escritório>.
+ *
+ * .env: Servidor/.env (dotenv um nível acima, como antes).
  */
 
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-// Único .env: pasta Servidor (um nível acima). Não use mais whatsapp-emissor/.env.
-require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+const envParent = path.join(__dirname, "..", ".env");
+const envServerApi = path.join(__dirname, "..", "server-api", ".env");
+// Ver server-api: override só com DOTENV_CONFIG_OVERRIDE=1 (PM2 vs .env).
+require("dotenv").config({
+  path: fs.existsSync(envParent) ? envParent : envServerApi,
+  ...(String(process.env.DOTENV_CONFIG_OVERRIDE || "").trim() === "1"
+    ? { override: true }
+    : {}),
+});
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrImage = require("qr-image");
 const { spawnSync } = require("child_process");
+const { timingSafeEqual, createHash } = require("crypto");
 
 const PORT = Number(process.env.WA_SERVER_PORT) || 3010;
 const APP_ROOT = path.resolve(__dirname);
-// Tudo (auth, cache, data) fica dentro de Servidor/whatsapp-emissor
 process.chdir(APP_ROOT);
 const DATA_ROOT = process.env.WA_APP_DATA_DIR
   ? path.resolve(process.env.WA_APP_DATA_DIR)
   : path.join(APP_ROOT, "data");
 const authFolder = path.join(APP_ROOT, ".wwebjs_auth");
 const cacheFolder = path.join(APP_ROOT, ".wwebjs_cache");
-const sessionFolder = path.join(authFolder, "session");
-const qrFile = path.join(DATA_ROOT, "json", "wa_qr.png");
 const pwBrowsersDir = path.join(DATA_ROOT, "ms-playwright");
 
-let client = null;
-let isReady = false;
-let lastQR = null;
-let isStarting = false;
-/** Só logar QR_READY uma vez por ciclo (até conectar ou desconectar); evita flood no console. */
-let qrLoggedInCycle = false;
+const WA_BIND_OFFICE =
+  String(process.env.WA_BIND_OFFICE_HEADER || "").trim() === "1";
+const GROUPS_CACHE_TTL_MS = 90 * 1000;
 
-// Cache de grupos: resposta imediata após o primeiro getChats (que é lento)
-const GROUPS_CACHE_TTL_MS = 90 * 1000; // 90s
-let groupsCache = { list: [], at: 0 };
-let groupsLoadPromise = null;
+/** @typedef {{ key: string, client: any, isReady: boolean, lastQR: Buffer|null, isStarting: boolean, qrLoggedInCycle: boolean, groupsCache: { list: any[], at: number }, groupsLoadPromise: Promise<any>|null }} WaSlot */
 
-function clearGroupsCache() {
-  groupsCache = { list: [], at: 0 };
-  groupsLoadPromise = null;
+/** @type {Map<string, WaSlot>} */
+const slots = new Map();
+
+function uuidOk(s) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(s || "").trim(),
+  );
 }
 
-async function fetchGroupsForCache() {
-  if (!client || !isReady) return [];
-  const existing = groupsLoadPromise;
-  if (existing) return existing;
-  const promise = (async () => {
-    try {
-      const chats = await client.getChats();
-      const list = chats
-        .filter((c) => c && c.isGroup)
-        .map((c) => ({
-          id: (c.id && c.id._serialized) || c.id || "",
-          name: (typeof c.name === "string" && c.name) ? c.name : "Sem nome",
-        }))
-        .filter((g) => g.id);
-      groupsCache = { list, at: Date.now() };
-      return list;
-    } catch (e) {
-      console.error("[ERRO] Cache de grupos:", e && e.message ? e.message : e);
-      return groupsCache.list.length ? groupsCache.list : [];
-    } finally {
-      groupsLoadPromise = null;
-    }
-  })();
-  groupsLoadPromise = promise;
-  return promise;
+/**
+ * Resolve chave da sessão. Sem WA_BIND_OFFICE_HEADER: sempre "default" (um WhatsApp por VM).
+ */
+function resolveSlotKey(req) {
+  if (!WA_BIND_OFFICE) return "default";
+  const raw = String(req.headers["x-office-id"] || "").trim();
+  if (!uuidOk(raw)) return null;
+  return raw.toLowerCase();
 }
 
-function clearChromeLocks() {
-  const rootLocks = ["SingletonLock", "SingletonCookie", "SingletonSocket", "DevToolsActivePort"];
+function qrFileFor(key) {
+  const safe =
+    key === "default" ? "default" : key.replace(/[^a-f0-9-]/gi, "");
+  return path.join(DATA_ROOT, "json", `wa_qr_${safe}.png`);
+}
+
+function sessionDirForSlot(slot) {
+  if (slot.key === "default") return path.join(authFolder, "session");
+  return path.join(authFolder, slot.key, "session");
+}
+
+/** @returns {WaSlot} */
+function getSlot(req) {
+  const key = resolveSlotKey(req);
+  if (key === null) return null;
+  if (!slots.has(key)) {
+    slots.set(key, {
+      key,
+      client: null,
+      isReady: false,
+      lastQR: null,
+      isStarting: false,
+      qrLoggedInCycle: false,
+      groupsCache: { list: [], at: 0 },
+      groupsLoadPromise: null,
+    });
+  }
+  return slots.get(key);
+}
+
+function clearGroupsCache(slot) {
+  slot.groupsCache = { list: [], at: 0 };
+  slot.groupsLoadPromise = null;
+}
+
+function clearChromeLocks(slot) {
+  const sessionFolder = sessionDirForSlot(slot);
+  const rootLocks = [
+    "SingletonLock",
+    "SingletonCookie",
+    "SingletonSocket",
+    "DevToolsActivePort",
+  ];
   rootLocks.forEach((name) => {
     const p = path.join(sessionFolder, name);
     try {
@@ -98,7 +133,11 @@ function clearChromeLocks() {
           if (e.isDirectory()) stack.push(full);
           else {
             const upper = e.name.toUpperCase();
-            if (upper === "LOCK" || upper.startsWith("SINGLETON") || e.name === "DevToolsActivePort") {
+            if (
+              upper === "LOCK" ||
+              upper.startsWith("SINGLETON") ||
+              e.name === "DevToolsActivePort"
+            ) {
               try {
                 fs.rmSync(full, { force: true });
               } catch (_) {}
@@ -110,13 +149,17 @@ function clearChromeLocks() {
   } catch (_) {}
 }
 
-function killOrphanChrome() {
+function killOrphanChrome(slot) {
   if (process.platform !== "win32") return;
-  const sessionPath = sessionFolder.replace(/'/g, "''");
+  const sessionPath = sessionDirForSlot(slot).replace(/'/g, "''");
   const authPath = authFolder.replace(/'/g, "''");
   const ps = [
     "Get-CimInstance Win32_Process |",
-    "Where-Object { $_.CommandLine -and ( $_.CommandLine -like '*" + sessionPath + "*' -or $_.CommandLine -like '*" + authPath + "*' ) } |",
+    "Where-Object { $_.CommandLine -and ( $_.CommandLine -like '*" +
+      sessionPath +
+      "*' -or $_.CommandLine -like '*" +
+      authPath +
+      "*' ) } |",
     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
   ].join(" ");
   try {
@@ -165,7 +208,38 @@ function resolveBrowserExecutable() {
   }
 }
 
-function buildClient() {
+async function fetchGroupsForCache(slot) {
+  if (!slot.client || !slot.isReady) return [];
+  const existing = slot.groupsLoadPromise;
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      const chats = await slot.client.getChats();
+      const list = chats
+        .filter((c) => c && c.isGroup)
+        .map((c) => ({
+          id: (c.id && c.id._serialized) || c.id || "",
+          name:
+            typeof c.name === "string" && c.name ? c.name : "Sem nome",
+        }))
+        .filter((g) => g.id);
+      slot.groupsCache = { list, at: Date.now() };
+      return list;
+    } catch (e) {
+      console.error(
+        "[ERRO] Cache de grupos:",
+        e && e.message ? e.message : e,
+      );
+      return slot.groupsCache.list.length ? slot.groupsCache.list : [];
+    } finally {
+      slot.groupsLoadPromise = null;
+    }
+  })();
+  slot.groupsLoadPromise = promise;
+  return promise;
+}
+
+function buildClient(slot) {
   const executablePath = resolveBrowserExecutable();
   const puppeteerOpts = {
     headless: true,
@@ -177,160 +251,187 @@ function buildClient() {
     ],
   };
   if (executablePath) puppeteerOpts.executablePath = executablePath;
+
+  const authStrategy =
+    slot.key === "default"
+      ? new LocalAuth({ dataPath: authFolder })
+      : new LocalAuth({ dataPath: authFolder, clientId: slot.key });
+
+  const qrFile = qrFileFor(slot.key);
+
   const c = new Client({
-    authStrategy: new LocalAuth({ dataPath: authFolder }),
+    authStrategy,
     webVersionCache: { type: "local", path: cacheFolder },
     puppeteer: puppeteerOpts,
     restartOnAuthFail: true,
   });
 
   c.on("qr", (qr) => {
-    if (isReady || client !== c) return;
+    if (slot.isReady || slot.client !== c) return;
     const png = qrImage.imageSync(qr, {
       type: "png",
       size: 12,
       margin: 3,
       ec_level: "M",
     });
-    lastQR = Buffer.isBuffer(png) ? png : Buffer.from(png);
+    slot.lastQR = Buffer.isBuffer(png) ? png : Buffer.from(png);
     try {
       const qrDir = path.dirname(qrFile);
       if (!fs.existsSync(qrDir)) fs.mkdirSync(qrDir, { recursive: true });
       fs.writeFileSync(qrFile, png);
-      if (!qrLoggedInCycle) {
-        qrLoggedInCycle = true;
-        console.log("QR_READY");
+      if (!slot.qrLoggedInCycle) {
+        slot.qrLoggedInCycle = true;
+        console.log("QR_READY", slot.key);
       }
     } catch (_) {}
   });
 
   c.on("ready", () => {
-    isReady = true;
-    qrLoggedInCycle = false; // próximo ciclo de QR poderá logar de novo
-    lastQR = null;
-    clearGroupsCache();
+    slot.isReady = true;
+    slot.qrLoggedInCycle = false;
+    slot.lastQR = null;
+    clearGroupsCache(slot);
     try {
       if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
     } catch (_) {}
-    console.log("[OK] WhatsApp conectado.");
-    // Pré-carrega grupos em background para /groups responder na hora
-    fetchGroupsForCache()
-      .then((list) => console.log("[OK] Grupos em cache:", list.length))
+    console.log("[OK] WhatsApp conectado.", slot.key);
+    fetchGroupsForCache(slot)
+      .then((list) => console.log("[OK] Grupos em cache:", slot.key, list.length))
       .catch(() => {});
   });
 
   c.on("disconnected", async (reason) => {
-    isReady = false;
-    qrLoggedInCycle = false;
-    lastQR = null;
-    clearGroupsCache();
-    if (client) {
+    slot.isReady = false;
+    slot.qrLoggedInCycle = false;
+    slot.lastQR = null;
+    clearGroupsCache(slot);
+    if (slot.client === c) {
       try {
-        await client.destroy();
+        await slot.client.destroy();
       } catch (_) {}
-      client = null;
+      slot.client = null;
     }
-    console.log("[!] Desconectado:", reason || "");
+    console.log("[!] Desconectado:", slot.key, reason || "");
   });
 
   c.on("auth_failure", () => {
-    console.log("[!] Falha de autenticação.");
+    console.log("[!] Falha de autenticação.", slot.key);
   });
 
   return c;
 }
 
-async function startClient() {
-  if (client) return;
-  isStarting = true;
-  console.log("[INFO] Inicializando cliente WhatsApp...");
-  if (fs.existsSync(authFolder)) {
-    console.log("[INFO] Sessão salva encontrada — tentando restaurar (sem novo QR se válida).");
-  }
+async function startClient(slot) {
+  if (slot.client) return;
+  slot.isStarting = true;
+  console.log("[INFO] Inicializando cliente WhatsApp...", slot.key);
+  const qrFile = qrFileFor(slot.key);
   try {
     if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
   } catch (_) {}
-  // Primeira tentativa: não matar Chrome nem limpar locks — deixa a sessão (LocalAuth) restaurar
   await new Promise((r) => setTimeout(r, 3000));
-  client = buildClient();
+  slot.client = buildClient(slot);
   try {
-    await client.initialize();
+    await slot.client.initialize();
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    console.error("[ERRO] Falha ao inicializar:", msg);
-    client = null;
-    const isBrowserAlreadyRunning = /browser is already running|userDataDir/i.test(msg);
-    const isContextDestroyed = /Execution context|context was destroyed/i.test(msg);
+    console.error("[ERRO] Falha ao inicializar:", slot.key, msg);
+    slot.client = null;
+    const isBrowserAlreadyRunning = /browser is already running|userDataDir/i.test(
+      msg,
+    );
+    const isContextDestroyed = /Execution context|context was destroyed/i.test(
+      msg,
+    );
     if (isBrowserAlreadyRunning || isContextDestroyed) {
-      console.log("[INFO] Encerrando Chrome órfão e tentando novamente em 8s...");
-      killOrphanChrome();
-      clearChromeLocks();
+      console.log(
+        "[INFO] Encerrando Chrome órfão e tentando novamente em 8s...",
+        slot.key,
+      );
+      killOrphanChrome(slot);
+      clearChromeLocks(slot);
       await new Promise((r) => setTimeout(r, 8000));
     } else if (fs.existsSync(cacheFolder)) {
       try {
         fs.rmSync(cacheFolder, { recursive: true, force: true });
       } catch (_) {}
-      killOrphanChrome();
+      killOrphanChrome(slot);
       await new Promise((r) => setTimeout(r, 3000));
     }
-    client = buildClient();
+    slot.client = buildClient(slot);
     try {
-      await client.initialize();
+      await slot.client.initialize();
     } catch (e2) {
-      client = null;
-      console.error("[ERRO] Segunda tentativa falhou:", e2 && e2.message ? e2.message : e2);
+      slot.client = null;
+      console.error(
+        "[ERRO] Segunda tentativa falhou:",
+        slot.key,
+        e2 && e2.message ? e2.message : e2,
+      );
     }
   } finally {
-    isStarting = false;
+    slot.isStarting = false;
   }
 }
 
-async function disconnectClient(opts = {}) {
+async function disconnectClient(slot, opts = {}) {
   const clearSession = opts.clearSession === true;
-  if (client) {
+  const qrFile = qrFileFor(slot.key);
+  if (slot.client) {
     try {
-      await client.destroy();
+      await slot.client.destroy();
     } catch (_) {}
-    client = null;
+    slot.client = null;
   }
-  isReady = false;
-  lastQR = null;
+  slot.isReady = false;
+  slot.lastQR = null;
   try {
     if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
   } catch (_) {}
   if (clearSession) {
     try {
-      if (fs.existsSync(authFolder)) fs.rmSync(authFolder, { recursive: true, force: true });
-      if (fs.existsSync(cacheFolder)) fs.rmSync(cacheFolder, { recursive: true, force: true });
-      console.log("[OK] Cliente desconectado. Sessão e cache apagados — próximo Conectar gerará novo QR.");
+      if (slot.key === "default") {
+        if (fs.existsSync(authFolder))
+          fs.rmSync(authFolder, { recursive: true, force: true });
+      } else {
+        const sub = path.join(authFolder, slot.key);
+        if (fs.existsSync(sub)) fs.rmSync(sub, { recursive: true, force: true });
+      }
+      if (fs.existsSync(cacheFolder))
+        fs.rmSync(cacheFolder, { recursive: true, force: true });
+      console.log(
+        "[OK] Sessão apagada — próximo Conectar gerará novo QR.",
+        slot.key,
+      );
     } catch (e) {
-      console.warn("[AVISO] Erro ao apagar sessão:", e && e.message ? e.message : e);
+      console.warn(
+        "[AVISO] Erro ao apagar sessão:",
+        e && e.message ? e.message : e,
+      );
     }
   } else {
-    console.log("[OK] Cliente desconectado. Sessão mantida para reconectar.");
+    console.log("[OK] Cliente desconectado. Sessão mantida.", slot.key);
   }
 }
 
-/** Marca o cliente como quebrado (ex.: Frame detachado, context destroyed) para permitir nova conexão e novo QR. */
-async function resetBrokenClient() {
-  if (!client) return;
-  isReady = false;
-  lastQR = null;
-  clearGroupsCache();
+async function resetBrokenClient(slot) {
+  if (!slot.client) return;
+  slot.isReady = false;
+  slot.lastQR = null;
+  clearGroupsCache(slot);
   try {
-    await client.destroy();
+    await slot.client.destroy();
   } catch (_) {}
-  client = null;
+  slot.client = null;
+  const qrFile = qrFileFor(slot.key);
   try {
     if (fs.existsSync(qrFile)) fs.rmSync(qrFile, { force: true });
   } catch (_) {}
-  console.log("[!] Cliente reiniciado (sessão quebrada). Use Conectar no site para gerar novo QR.");
+  console.log("[!] Cliente reiniciado (sessão quebrada).", slot.key);
 }
 
 function sendJson(res, statusCode, data) {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json",
-  });
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }
 
@@ -345,24 +446,52 @@ function applyCors(req, res) {
     res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, ngrok-skip-browser-warning");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, ngrok-skip-browser-warning, X-Office-Id",
+  );
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
+function normalizedConnectorSecret() {
+  const raw = String(process.env.CONNECTOR_SECRET || "").trim();
+  const cleanHex = raw.replace(/\s+/g, "").replace(/[^0-9a-fA-F]/g, "");
+  return cleanHex.length === 64 ? cleanHex.toLowerCase() : raw;
+}
+
+/** Mesmo algoritmo do server-api / office_server_credentials (secret_hash). */
+function sha256HexUtf8(s) {
+  return createHash("sha256")
+    .update(String(s || ""), "utf8")
+    .digest("hex");
+}
+
 function requireToken(req, res) {
-  const token = String(process.env.WHATSAPP_API_TOKEN || "").trim();
-  if (!token) return true; // se não configurado, não bloqueia (evita quebrar ambiente existente)
+  const legacy = String(process.env.WHATSAPP_API_TOKEN || "").trim();
+  const connector = normalizedConnectorSecret();
+  if (!legacy && !connector) return true;
   const auth = String(req.headers.authorization || "");
-  const ok = auth === `Bearer ${token}`;
-  if (ok) return true;
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const candidates = [connector, legacy].filter(Boolean);
+  if (connector) {
+    const hash = sha256HexUtf8(connector);
+    if (hash) candidates.push(hash);
+  }
+  for (const tok of candidates) {
+    try {
+      const a = Buffer.from(tok, "utf8");
+      const b = Buffer.from(bearer, "utf8");
+      if (a.length === b.length && timingSafeEqual(a, b)) return true;
+    } catch (_) {}
+  }
   sendJson(res, 401, { error: "Unauthorized" });
   return false;
 }
 
-// Rate limit simples em memória (por IP)
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMITS = {
   "/send": 30,
+  "/deliver": 30,
   "/connect": 10,
   "/disconnect": 10,
   "/qr": 120,
@@ -373,7 +502,11 @@ const ipCounters = new Map();
 function rateLimit(req, res, pathname) {
   const limit = RATE_LIMITS[pathname];
   if (!limit) return true;
-  const ip = String((req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "unknown");
+  const ip = String(
+    (req.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
+      req.socket.remoteAddress ||
+      "unknown",
+  );
   const key = `${ip}:${pathname}`;
   const now = Date.now();
   const prev = ipCounters.get(key) || { resetAt: now + RATE_WINDOW_MS, count: 0 };
@@ -389,13 +522,76 @@ function rateLimit(req, res, pathname) {
   return false;
 }
 
+function normalizeSendPayload(data) {
+  const groupId = (data.groupId || "").trim();
+  const message = typeof data.message === "string" ? data.message : "";
+  const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+  return { groupId, message, attachments };
+}
+
+/** /deliver genérico: hoje só channel whatsapp + target group */
+function normalizeDeliverPayload(data) {
+  if (!data || typeof data !== "object") return null;
+  if (String(data.channel || "").toLowerCase() !== "whatsapp") return null;
+  const targets = Array.isArray(data.targets) ? data.targets : [];
+  const g = targets.find(
+    (t) => t && String(t.type || "").toLowerCase() === "group" && t.id,
+  );
+  if (!g) return null;
+  return normalizeSendPayload({
+    groupId: String(g.id),
+    message: data.message,
+    attachments: data.attachments,
+  });
+}
+
+function runSendInBackground(slot, groupId, message, attachments) {
+  const rawId = groupId.includes("@") ? groupId.split("@")[0] : groupId;
+  const targetId = rawId ? `${rawId.trim()}@g.us` : groupId;
+  const delayMs = (ms) => new Promise((r) => setTimeout(r, ms));
+  (async () => {
+    try {
+      await slot.client.sendMessage(targetId, message || " ");
+      if (attachments.length > 0) {
+        await delayMs(1200);
+        for (const att of attachments) {
+          const mimetype =
+            att.mimetype && typeof att.mimetype === "string"
+              ? att.mimetype
+              : "application/octet-stream";
+          const dataBase64 =
+            att.dataBase64 && typeof att.dataBase64 === "string"
+              ? att.dataBase64
+              : "";
+          const filename =
+            att.filename && typeof att.filename === "string"
+              ? att.filename
+              : "documento";
+          if (!dataBase64) continue;
+          const media = new MessageMedia(mimetype, dataBase64, filename);
+          await slot.client.sendMessage(targetId, media);
+          await delayMs(800);
+        }
+      }
+      console.log("[SEND] OK", slot.key, targetId);
+    } catch (e) {
+      console.error(
+        "[ERRO] Enviar (background):",
+        slot.key,
+        e && e.message ? e.message : e,
+      );
+    }
+  })();
+}
+
 const server = http.createServer(async (req, res) => {
   applyCors(req, res);
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Content-Length": "0",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, ngrok-skip-browser-warning",
+      "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, ngrok-skip-browser-warning, X-Office-Id",
       "Access-Control-Max-Age": "86400",
     });
     res.end();
@@ -405,29 +601,39 @@ const server = http.createServer(async (req, res) => {
   const url = req.url || "/";
   const pathname = url.split("?")[0];
 
+  const slot = getSlot(req);
+  if (!slot) {
+    sendJson(res, 400, {
+      error:
+        "X-Office-Id obrigatório (UUID do escritório). Ative WA_BIND_OFFICE_HEADER=1 apenas se várias sessões na mesma VM.",
+    });
+    return;
+  }
+
+  const qrFile = qrFileFor(slot.key);
+
   if (pathname === "/status") {
     if (!rateLimit(req, res, pathname)) return;
     if (!requireToken(req, res)) return;
-    sendJson(res, 200, { connected: isReady });
+    sendJson(res, 200, { connected: slot.isReady, officeScope: slot.key });
     return;
   }
 
   if (pathname === "/qr") {
     if (!rateLimit(req, res, pathname)) return;
     if (!requireToken(req, res)) return;
-    if (isReady) {
+    if (slot.isReady) {
       sendJson(res, 200, { qr: null, connected: true });
       return;
     }
-    let qrBuffer = lastQR;
+    let qrBuffer = slot.lastQR;
     if (!qrBuffer || !Buffer.isBuffer(qrBuffer)) {
       try {
         if (fs.existsSync(qrFile)) {
           const stat = fs.statSync(qrFile);
-          const ageMs = Date.now() - stat.mtimeMs;
-          if (ageMs < 90000) {
+          if (Date.now() - stat.mtimeMs < 90000) {
             qrBuffer = fs.readFileSync(qrFile);
-            lastQR = qrBuffer;
+            slot.lastQR = qrBuffer;
           }
         }
       } catch (_) {}
@@ -437,7 +643,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const base64 = qrBuffer.toString("base64");
-    sendJson(res, 200, { qr: `data:image/png;base64,${base64}`, connected: false });
+    sendJson(res, 200, {
+      qr: `data:image/png;base64,${base64}`,
+      connected: false,
+    });
     return;
   }
 
@@ -447,19 +656,19 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-    if (isReady) {
+    if (slot.isReady) {
       res.writeHead(204);
       res.end();
       return;
     }
-    let qrBuffer = lastQR;
+    let qrBuffer = slot.lastQR;
     if (!qrBuffer || !Buffer.isBuffer(qrBuffer)) {
       try {
         if (fs.existsSync(qrFile)) {
           const stat = fs.statSync(qrFile);
           if (Date.now() - stat.mtimeMs < 90000) {
             qrBuffer = fs.readFileSync(qrFile);
-            lastQR = qrBuffer;
+            slot.lastQR = qrBuffer;
           }
         }
       } catch (_) {}
@@ -477,31 +686,45 @@ const server = http.createServer(async (req, res) => {
   if (pathname === "/groups") {
     if (!rateLimit(req, res, pathname)) return;
     if (!requireToken(req, res)) return;
-    if (!isReady || !client) {
+    if (!slot.isReady || !slot.client) {
       sendJson(res, 200, { groups: [] });
       return;
     }
     const urlObj = new URL(req.url || "/", `http://localhost:${PORT}`);
-    const forceRefresh = urlObj.searchParams.get("refresh") === "1" || urlObj.searchParams.get("refresh") === "true";
-    const useCache = !forceRefresh && groupsCache.list.length > 0 && (Date.now() - groupsCache.at < GROUPS_CACHE_TTL_MS);
+    const forceRefresh =
+      urlObj.searchParams.get("refresh") === "1" ||
+      urlObj.searchParams.get("refresh") === "true";
+    const useCache =
+      !forceRefresh &&
+      slot.groupsCache.list.length > 0 &&
+      Date.now() - slot.groupsCache.at < GROUPS_CACHE_TTL_MS;
     if (useCache) {
-      sendJson(res, 200, { groups: groupsCache.list });
+      sendJson(res, 200, { groups: slot.groupsCache.list });
       return;
     }
-    if (forceRefresh) clearGroupsCache();
+    if (forceRefresh) clearGroupsCache(slot);
     try {
-      const groups = await fetchGroupsForCache();
+      const groups = await fetchGroupsForCache(slot);
       sendJson(res, 200, { groups });
     } catch (e) {
-      const msg = (e && e.message) ? e.message : String(e);
-      const isBroken = /detached|Execution context|context was destroyed/i.test(msg);
+      const msg = e && e.message ? e.message : String(e);
+      const isBroken = /detached|Execution context|context was destroyed/i.test(
+        msg,
+      );
       if (isBroken) {
-        resetBrokenClient().then(() => {
-          sendJson(res, 200, { groups: [], error: "Sessão quebrada. Clique em Conectar no site para gerar novo QR." });
+        resetBrokenClient(slot).then(() => {
+          sendJson(res, 200, {
+            groups: [],
+            error:
+              "Sessão quebrada. Clique em Conectar no site para gerar novo QR.",
+          });
         });
       } else {
         console.error("[ERRO] Listar grupos:", e);
-        sendJson(res, 500, { groups: groupsCache.list.length ? groupsCache.list : [], error: msg || "Erro ao listar grupos" });
+        sendJson(res, 500, {
+          groups: slot.groupsCache.list.length ? slot.groupsCache.list : [],
+          error: msg || "Erro ao listar grupos",
+        });
       }
     }
     return;
@@ -510,17 +733,22 @@ const server = http.createServer(async (req, res) => {
   if (pathname === "/connect" && req.method === "POST") {
     if (!rateLimit(req, res, pathname)) return;
     if (!requireToken(req, res)) return;
-    if (client && isReady) {
+    if (slot.client && slot.isReady) {
       sendJson(res, 200, { ok: true, alreadyConnected: true });
       return;
     }
-    if (client || isStarting) {
+    if (slot.client || slot.isStarting) {
       sendJson(res, 200, { ok: true, starting: true });
       return;
     }
-    startClient()
+    startClient(slot)
       .then(() => sendJson(res, 200, { ok: true }))
-      .catch((e) => sendJson(res, 500, { ok: false, error: (e && e.message) ? e.message : "Falha ao iniciar" }));
+      .catch((e) =>
+        sendJson(res, 500, {
+          ok: false,
+          error: e && e.message ? e.message : "Falha ao iniciar",
+        }),
+      );
     return;
   }
 
@@ -528,110 +756,109 @@ const server = http.createServer(async (req, res) => {
     if (!rateLimit(req, res, pathname)) return;
     if (!requireToken(req, res)) return;
     const restartOnDisconnect = process.env.WA_RESTART_ON_DISCONNECT === "1";
-    disconnectClient({ clearSession: true })
+    disconnectClient(slot, { clearSession: true })
       .then(() => {
         sendJson(res, 200, { ok: true });
         if (restartOnDisconnect) {
-          console.log("[INFO] WA_RESTART_ON_DISCONNECT=1 — encerrando processo para PM2 reiniciar e gerar novo QR.");
           setTimeout(() => process.exit(0), 1500);
         } else {
-          console.log("[INFO] Iniciando cliente para gerar novo QR após desconexão.");
-          startClient().catch((e) => console.error("[ERRO] startClient após disconnect:", e && e.message ? e.message : e));
+          startClient(slot).catch((e) =>
+            console.error(
+              "[ERRO] startClient após disconnect:",
+              e && e.message ? e.message : e,
+            ),
+          );
         }
       })
       .catch(() => {
         sendJson(res, 200, { ok: true });
-        if (!restartOnDisconnect) startClient().catch(() => {});
+        if (!restartOnDisconnect) startClient(slot).catch(() => {});
       });
     return;
   }
 
-  if (pathname === "/send" && req.method === "POST") {
-    if (!rateLimit(req, res, pathname)) return;
+  const handleSendBody = (body, sendOnce) => {
+    try {
+      if (!slot.isReady || !slot.client) {
+        sendOnce(503, { ok: false, error: "WhatsApp desconectado" });
+        return;
+      }
+      let data;
+      try {
+        data = JSON.parse(body || "{}");
+      } catch (_) {
+        sendOnce(400, { ok: false, error: "JSON inválido" });
+        return;
+      }
+      let norm = normalizeSendPayload(data);
+      if (!norm.groupId && pathname === "/deliver") {
+        const d = normalizeDeliverPayload(data);
+        if (d) norm = d;
+      }
+      if (!norm.groupId) {
+        sendOnce(400, {
+          ok: false,
+          error:
+            pathname === "/deliver"
+              ? "deliver: use channel=whatsapp e targets[{type:group,id}] ou POST /send com groupId"
+              : "groupId obrigatório",
+        });
+        return;
+      }
+      console.log(
+        "[SEND]",
+        slot.key,
+        "anexos=",
+        norm.attachments.length,
+      );
+      sendOnce(200, { ok: true });
+      runSendInBackground(
+        slot,
+        norm.groupId,
+        norm.message,
+        norm.attachments,
+      );
+    } catch (err) {
+      console.error("[ERRO] send:", err && err.message ? err.message : err);
+      sendOnce(500, { ok: false, error: "Erro interno" });
+    }
+  };
+
+  if (
+    (pathname === "/send" || pathname === "/deliver") &&
+    req.method === "POST"
+  ) {
+    if (!rateLimit(req, res, pathname === "/deliver" ? "/deliver" : "/send"))
+      return;
     if (!requireToken(req, res)) return;
     const contentLength = Math.min(
       parseInt(req.headers["content-length"], 10) || 0,
-      10 * 1024 * 1024
-    ); // máx 10MB
+      10 * 1024 * 1024,
+    );
     let body = "";
     let bodyDone = false;
     const sendOnce = (code, data) => {
       if (res.writableEnded) return;
       sendJson(res, code, data);
     };
-
-    const processBody = () => {
-      if (bodyDone) return;
-      bodyDone = true;
-      clearTimeout(bodyTimeout);
-      if (contentLength > 0 && body.length > contentLength) body = body.slice(0, contentLength);
-      console.log("[SEND] Body completo,", body.length, "bytes");
-
-      try {
-        if (!isReady || !client) {
-          sendOnce(503, { ok: false, error: "WhatsApp desconectado" });
-          return;
-        }
-        let data;
-        try {
-          data = JSON.parse(body || "{}");
-        } catch (_) {
-          sendOnce(400, { ok: false, error: "JSON inválido" });
-          return;
-        }
-        const groupId = (data.groupId || "").trim();
-        const message = typeof data.message === "string" ? data.message : "";
-        const attachments = Array.isArray(data.attachments) ? data.attachments : [];
-        if (!groupId) {
-          sendOnce(400, { ok: false, error: "groupId obrigatório" });
-          return;
-        }
-        const rawId = groupId.includes("@") ? groupId.split("@")[0] : groupId;
-        const targetId = rawId ? `${rawId.trim()}@g.us` : groupId;
-        console.log("[SEND] Aceito: grupo=" + targetId + ", anexos=" + attachments.length);
-        sendOnce(200, { ok: true });
-        (async () => {
-          const delayMs = (ms) => new Promise((r) => setTimeout(r, ms));
-          try {
-            await client.sendMessage(targetId, message || " ");
-            if (attachments.length > 0) {
-              await delayMs(1200);
-              for (const att of attachments) {
-                const mimetype =
-                  att.mimetype && typeof att.mimetype === "string"
-                    ? att.mimetype
-                    : "application/octet-stream";
-                const dataBase64 =
-                  att.dataBase64 && typeof att.dataBase64 === "string" ? att.dataBase64 : "";
-                const filename =
-                  att.filename && typeof att.filename === "string" ? att.filename : "documento";
-                if (!dataBase64) continue;
-                const media = new MessageMedia(mimetype, dataBase64, filename);
-                await client.sendMessage(targetId, media);
-                await delayMs(800);
-              }
-            }
-            console.log("[SEND] Enviado com sucesso para", targetId);
-          } catch (e) {
-            console.error("[ERRO] Enviar para grupo (background):", e && e.message ? e.message : e);
-          }
-        })();
-      } catch (err) {
-        console.error("[ERRO] /send inesperado:", err && err.message ? err.message : err);
-        sendOnce(500, { ok: false, error: "Erro interno" });
-      }
-    };
-
     const BODY_TIMEOUT_MS = 45_000;
     const bodyTimeout = setTimeout(() => {
       if (bodyDone) return;
       bodyDone = true;
-      console.warn("[SEND] Timeout: body não recebido em", BODY_TIMEOUT_MS / 1000, "s");
-      sendOnce(408, { ok: false, error: "Tempo esgotado ao receber os dados. Tente novamente." });
+      sendOnce(408, {
+        ok: false,
+        error: "Tempo esgotado ao receber os dados. Tente novamente.",
+      });
       req.destroy();
     }, BODY_TIMEOUT_MS);
-
-    console.log("[SEND] POST /send recebido, aguardando body (Content-Length:", contentLength, ")...");
+    const processBody = () => {
+      if (bodyDone) return;
+      bodyDone = true;
+      clearTimeout(bodyTimeout);
+      if (contentLength > 0 && body.length > contentLength)
+        body = body.slice(0, contentLength);
+      handleSendBody(body, sendOnce);
+    };
     req.on("data", (chunk) => {
       body += chunk;
       if (contentLength > 0 && body.length >= contentLength) processBody();
@@ -651,8 +878,15 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[API] WhatsApp API em http://localhost:${PORT}`);
-  console.log("[API] Configure no .env do frontend: WHATSAPP_API=http://localhost:" + PORT);
-  startClient().catch((e) => {
-    console.error("[ERRO] Cliente não iniciou:", e);
-  });
+  console.log(
+    "[API] Auth: Bearer CONNECTOR_SECRET (Servidor/.env). WA_BIND_OFFICE_HEADER=1 = várias sessões (sem auto-start).",
+  );
+  if (!WA_BIND_OFFICE) {
+    const boot = getSlot({ headers: {} });
+    if (boot) startClient(boot).catch((e) => console.error("[ERRO] boot:", e));
+  } else {
+    console.log(
+      "[API] Auto-start desligado — cada escritório: POST /connect com X-Office-Id.",
+    );
+  }
 });

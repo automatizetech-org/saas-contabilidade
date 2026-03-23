@@ -10,6 +10,8 @@
     "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "test:ngrok:list": "node scripts/test-ngrok-api.mjs list",
     "test:ngrok:sync": "node scripts/test-ngrok-api.mjs sync",
+    "verify:office-whatsapp": "node scripts/verify-edge-whatsapp.mjs",
+    "sync:office-credential": "node scripts/sync-office-credential-hash.mjs",
     "build": "vite --version && vite build --config config/vite.config.ts",
     "build:dev": "vite build --mode development --config config/vite.config.ts",
     "lint": "eslint . -c config/eslint.config.js",
@@ -20,7 +22,8 @@
     "supabase:deploy:login": "supabase functions deploy auth",
     "supabase:deploy:bootstrap": "supabase functions deploy auth",
     "supabase:deploy:ir-charge": "supabase functions deploy btg-create-ir-charge",
-    "supabase:deploy:ir-webhook": "supabase functions deploy btg-ir-webhook"
+    "supabase:deploy:ir-webhook": "supabase functions deploy btg-ir-webhook",
+    "supabase:deploy:office-server": "supabase functions deploy office-server --no-verify-jwt"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

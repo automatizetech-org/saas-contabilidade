@@ -23,13 +23,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils";
 import { useState, useEffect } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
 import { useBranding, getSidebarTitle } from "@/contexts/BrandingContext";
-import { getVisibilityAwareRefetchInterval } from "@/lib/queryPolling";
-import { getEcacMailboxSummary, getEcacMailboxSummaryQueryKey } from "@/services/ecacMailboxService";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -140,8 +137,16 @@ const navItems: NavItem[] = [
   },
   { name: "Administração", path: "/admin", icon: Settings, description: "Usuários e config" },
 ];
-
-export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle?: () => void }) {
+export function AppSidebar({
+  open = true,
+  onToggle,
+  ecacMailboxUnread = 0,
+}: {
+  open?: boolean;
+  onToggle?: () => void;
+  /** Uma única query em AppLayout — evita dobro de polling no React Query */
+  ecacMailboxUnread?: number;
+}) {
   const location = useLocation();
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -150,16 +155,6 @@ export function AppSidebar({ open = true, onToggle }: { open?: boolean; onToggle
   const { isSuperAdmin, canAccessAdmin, profile } = useProfile();
   const { logoUrl, branding } = useBranding();
   const sidebarTitle = getSidebarTitle(branding?.client_name);
-  const companyFilter = selectedCompanyIds.length > 0 ? selectedCompanyIds : null;
-  const { data: ecacMailboxSummary } = useQuery({
-    queryKey: getEcacMailboxSummaryQueryKey(companyFilter),
-    queryFn: () => getEcacMailboxSummary(companyFilter),
-    placeholderData: keepPreviousData,
-    refetchInterval: () => getVisibilityAwareRefetchInterval(),
-    refetchIntervalInBackground: true,
-    enabled: Boolean(profile?.office_id),
-  });
-  const ecacMailboxUnread = ecacMailboxSummary?.unreadMessages ?? 0;
 
   const visibleNavItems = navItems.filter((item) => {
     if (item.path === "/admin") return canAccessAdmin;

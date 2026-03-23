@@ -57,14 +57,13 @@ import {
   QUALIFICACAO_DISPLAY,
   type QualificacaoPlano,
 } from "@/services/bcbSalarioMinimoService";
+import { useProfile } from "@/hooks/useProfile";
 
 const SIM_NAO = [
   { value: "sim", label: "Sim" },
   { value: "nao", label: "Não" },
   { value: "nao_informado", label: "Não informado" },
 ];
-
-const WA_GROUP_STORAGE_KEY = "alteracao-empresarial-wa-group-id";
 
 const TIPO_CONTABILIDADE = [
   { value: "Planilha", label: "Planilha" },
@@ -110,6 +109,11 @@ const INITIAL_FORM = {
 };
 
 export function AlteracaoVisaoGeralTab() {
+  const { officeId } = useProfile();
+  const waGroupStorageKey = officeId
+    ? `alteracao-empresarial-wa-group-${officeId}`
+    : "alteracao-empresarial-wa-group-id";
+
   const [cnpjBusca, setCnpjBusca] = useState("");
   const [cnpjError, setCnpjError] = useState("");
   const [loadingCnpj, setLoadingCnpj] = useState(false);
@@ -125,7 +129,8 @@ export function AlteracaoVisaoGeralTab() {
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waGroupsLoading, setWaGroupsLoading] = useState(false);
-  const waAutoConnectTried = useRef(false);
+  /** Um auto-connect por montagem (ou após reset explícito ao mudar office). */
+  const waAutoConnectOnce = useRef(false);
   const lastQrFetchTime = useRef(0);
   const waQrRef = useRef<string | null>(null);
   const waGroupsFilledRef = useRef(false);
@@ -186,107 +191,149 @@ export function AlteracaoVisaoGeralTab() {
     waQrRef.current = waQr;
   }, [waQr]);
 
+  // Uma sequência na montagem / troca de escritório: status + um único POST connect (sem rajadas de timers).
   useEffect(() => {
     let cancelled = false;
-    const check = () =>
-      getConnectionStatus()
-        .then((s) => {
-          if (cancelled) return;
-          setWaConnected(s.connected);
-          if (!s.connected) {
-            waAutoConnectTried.current = true;
-            connectWhatsApp().then(() => {});
+    waAutoConnectOnce.current = false;
+    void (async () => {
+      try {
+        const s = await getConnectionStatus();
+        if (cancelled) return;
+        if (s.sessionUnauthorized) {
+          setWaApiError(
+            "Sessão não autorizada na API. Confirme login, atualize a página ou verifique se o .env do front aponta para o mesmo projeto Supabase da Edge.",
+          );
+          setWaConnected(false);
+          return;
+        }
+        setWaConnected(s.connected);
+        if (!s.connected && !waAutoConnectOnce.current) {
+          waAutoConnectOnce.current = true;
+          await connectWhatsApp().catch(() => {});
+        }
+      } catch {
+        if (!cancelled) {
+          setWaConnected(false);
+          if (!waAutoConnectOnce.current) {
+            waAutoConnectOnce.current = true;
+            await connectWhatsApp().catch(() => {});
           }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setWaConnected(false);
-            waAutoConnectTried.current = true;
-            connectWhatsApp().then(() => {});
-          }
-        });
-    check();
-    // Rechecagens rápidas para detectar sessão já conectada (backend pode levar 2–5s para restaurar)
-    const t1 = setTimeout(() => { if (!cancelled) check(); }, 1500);
-    const t2 = setTimeout(() => { if (!cancelled) check(); }, 3000);
-    const t3 = setTimeout(() => { if (!cancelled) check(); }, 5000);
-    const fallback = setTimeout(() => { if (!cancelled) setWaConnected((v) => (v === null ? false : v)); }, 6000);
-    return () => { cancelled = true; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(fallback); };
-  }, []);
-
-  // Ao abrir a página: tenta conectar automaticamente se estiver desconectado (e API acessível). Se não conseguir, o polling traz o QR.
-  useEffect(() => {
-    if (waConnected === true) {
-      waAutoConnectTried.current = false;
-      return;
-    }
-    if (waConnected !== false || waApiError) return;
-    if (waAutoConnectTried.current) return;
-    waAutoConnectTried.current = true;
-    connectWhatsApp().then(() => {});
-  }, [waConnected, waApiError]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [officeId]);
 
   useEffect(() => {
     if (waConnected === true) {
+      waAutoConnectOnce.current = false;
       setWaQr(null);
       setWaApiError(null);
       setWaGroupsLoading(true);
       waGroupsFilledRef.current = false;
-      const load = (isRetry: boolean) =>
+      const load = () =>
         getGroups(false).then((g) => {
           if (g.length > 0) waGroupsFilledRef.current = true;
           setWaGroups(g);
           setWaGroupsLoading(false);
-          const saved = localStorage.getItem(WA_GROUP_STORAGE_KEY);
+          const saved = localStorage.getItem(waGroupStorageKey);
           if (saved && g.some((gr) => gr.id === saved)) setWaGroupId(saved);
         });
-      load(false);
-      // Retries rápidos se a primeira resposta vier vazia (cache ainda carregando no backend)
+      load();
       const t1 = setTimeout(() => {
-        if (!waGroupsFilledRef.current) load(true);
-      }, 1200);
+        if (!waGroupsFilledRef.current) getGroups(true).then((g) => {
+          if (g.length > 0) waGroupsFilledRef.current = true;
+          setWaGroups(g);
+          setWaGroupsLoading(false);
+        });
+      }, 2000);
       const t2 = setTimeout(() => {
-        if (!waGroupsFilledRef.current) load(true);
-      }, 3500);
+        if (!waGroupsFilledRef.current) getGroups(true).then((g) => {
+          if (g.length > 0) waGroupsFilledRef.current = true;
+          setWaGroups(g);
+          setWaGroupsLoading(false);
+        });
+      }, 6000);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
       };
     }
-    if (waConnected !== false) return;
+    if (waConnected !== false) return undefined;
+
     setWaGroups([]);
     setWaGroupId("");
-    const tick = async () => {
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tickBusy = false;
+
+    const schedule = (delayMs: number) => {
+      if (cancelled) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void tick(), delayMs);
+    };
+
+    async function tick() {
+      if (cancelled || tickBusy) return;
+      tickBusy = true;
+      let stillDisconnected = true;
       try {
         const status = await getConnectionStatus();
+        if (cancelled) return;
+        if (status.sessionUnauthorized) {
+          setWaApiError(
+            "Sessão não autorizada na API. Confirme login, atualize a página ou verifique se o .env do front aponta para o mesmo projeto Supabase da Edge.",
+          );
+          setWaConnected(false);
+          setWaQr(null);
+          stillDisconnected = false;
+          return;
+        }
         setWaApiError(null);
         setWaConnected(status.connected);
         if (status.connected) {
           setWaQr(null);
+          stillDisconnected = false;
           return;
         }
         const now = Date.now();
         const hasQr = waQrRef.current != null && waQrRef.current.length > 0;
         const qrExpired = hasQr && now - lastQrFetchTime.current >= 55000;
         const needQr = !hasQr || qrExpired;
-        if (!needQr) return;
-        const qr = await getQrImage();
-        if (qr) {
-          lastQrFetchTime.current = now;
-          setWaQr(qr);
-        } else {
-          setWaQr(null);
+        if (needQr) {
+          const qr = await getQrImage();
+          if (cancelled) return;
+          if (qr) {
+            lastQrFetchTime.current = now;
+            setWaQr(qr);
+          } else {
+            setWaQr(null);
+          }
         }
       } catch {
-        setWaApiError("Servidor inacessível. Confira: 1) .env com WHATSAPP_API=http://IP_DA_VM:3010 2) Site HTTPS só funciona se a API for HTTPS 3) Firewall da VM com porta 3010 liberada.");
-        setWaConnected(false);
-        setWaQr(null);
+        if (!cancelled) {
+          setWaApiError(
+            "WhatsApp inacessível. Com escritório no SaaS: VM com CONNECTOR_SECRET, Edge office-server. Modo legado: WHATSAPP_API e VITE_WHATSAPP_VIA_OFFICE_SERVER=false.",
+          );
+          setWaConnected(false);
+          setWaQr(null);
+        }
+      } finally {
+        tickBusy = false;
+        if (!cancelled && stillDisconnected) schedule(22000);
       }
+    }
+
+    schedule(9000);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
     };
-    tick();
-    const id = setInterval(tick, 4000);
-    return () => clearInterval(id);
-  }, [waConnected]);
+  }, [waConnected, waGroupStorageKey]);
 
   // QR só via /qr (base64); sem polling de qr.png para evitar infinitas requisições e bloqueio por ad blocker
 
@@ -1162,7 +1209,7 @@ export function AlteracaoVisaoGeralTab() {
                 type="button"
                 variant="default"
                 size="sm"
-                disabled={!!waApiError || waConnecting}
+                disabled={waConnecting}
                 onClick={async () => {
                   setWaConnecting(true);
                   setWaError("");
@@ -1242,7 +1289,7 @@ export function AlteracaoVisaoGeralTab() {
                 value={waGroupId}
                 onValueChange={(id) => {
                   setWaGroupId(id);
-                  if (id) localStorage.setItem(WA_GROUP_STORAGE_KEY, id);
+                  if (id) localStorage.setItem(waGroupStorageKey, id);
                 }}
               >
                 <SelectTrigger className="w-[280px]"><SelectValue placeholder="Selecione um grupo" /></SelectTrigger>
@@ -1266,7 +1313,7 @@ export function AlteracaoVisaoGeralTab() {
                   try {
                     const g = await getGroups(true);
                     setWaGroups(g);
-                    const saved = localStorage.getItem(WA_GROUP_STORAGE_KEY);
+                    const saved = localStorage.getItem(waGroupStorageKey);
                     if (saved && g.some((gr) => gr.id === saved)) setWaGroupId(saved);
                     if (g.length > 0) toast.success(`${g.length} grupo(s) carregado(s).`);
                     else toast.info("Nenhum grupo encontrado. Aguarde a sincronização ou tente novamente.");

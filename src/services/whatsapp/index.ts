@@ -5,5 +5,15 @@
 
 export { formatAlteracaoMessage } from "./formatAlteracaoMessage";
 export type { WhatsAppFormPayload } from "./formatAlteracaoMessage";
-export { getConnectionStatus, getQrImage, getQrImageUrl, getQrImageUrlWithTimestamp, getGroups, sendToGroup, connectWhatsApp, disconnectWhatsApp } from "./whatsappApi";
+export {
+  getConnectionStatus,
+  getQrImage,
+  getQrImageUrl,
+  getQrImageUrlWithTimestamp,
+  getGroups,
+  sendToGroup,
+  connectWhatsApp,
+  disconnectWhatsApp,
+  deliverWhatsApp,
+} from "./whatsappApi";
 export type { WhatsAppGroup, ConnectionStatus, WhatsAppAttachment } from "./whatsappApi";

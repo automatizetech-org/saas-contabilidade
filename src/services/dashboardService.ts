@@ -925,6 +925,11 @@ async function getFiscalOverviewAnalyticsLegacy(companyIds: string[] | null, dat
   const statusMap = new Map<string, number>()
   const companyVolumeMap = new Map<string, number>()
   const monthMap = new Map(buildMonthsBetween(dateFrom, dateTo).map((item) => [item.key, 0]))
+  const emissionDay = (doc: { document_date?: string | null }) => {
+    const d = doc.document_date
+    if (d == null || String(d).trim() === "") return ""
+    return String(d).slice(0, 10)
+  }
 
   for (const doc of filteredDocs) {
     const type = String(doc.type || "OUTROS").toUpperCase()
@@ -940,7 +945,10 @@ async function getFiscalOverviewAnalyticsLegacy(companyIds: string[] | null, dat
   return {
     cards: {
       totalDocumentos: filteredDocs.length,
-      documentosHoje: filteredDocs.filter((doc) => resolveDocumentReferenceDate(doc) === today).length,
+      documentosHoje: filteredDocs.filter((doc) => {
+        const day = emissionDay(doc)
+        return day !== "" && day === today
+      }).length,
       documentosPendentes: filteredDocs.filter((doc) => ["pendente", "processando", "divergente"].includes(String(doc.status || "").toLowerCase())).length,
       documentosRejeitados: filteredDocs.filter((doc) => ["rejeitado", "rejected", "cancelado", "cancelada"].includes(String(doc.status || "").toLowerCase())).length,
       empresasComEmissao: companyVolumeMap.size,

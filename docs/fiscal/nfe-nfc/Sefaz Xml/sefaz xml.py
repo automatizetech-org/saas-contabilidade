@@ -9970,6 +9970,56 @@ def _parse_xml_root(xml_bytes: bytes):
         return None
 
 
+def _parse_nfe_emission_date_str(raw: str) -> Optional[date]:
+    """Converte dhEmi/dEmi (ISO, BR ou YYYYMMDD) em date."""
+    if not raw:
+        return None
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if "T" in s:
+        s_date = s.split("T", 1)[0]
+    else:
+        s_date = s[:10] if len(s) >= 10 and s[4:5] == "-" and s[7:8] == "-" else s
+    try:
+        if len(s_date) >= 10 and s_date[4] == "-" and s_date[7] == "-":
+            return datetime.strptime(s_date[:10], "%Y-%m-%d").date()
+    except Exception:
+        pass
+    try:
+        return datetime.strptime(s, "%d/%m/%Y").date()
+    except Exception:
+        pass
+    dig = re.sub(r"[^0-9]", "", s)
+    if len(dig) >= 8:
+        try:
+            return datetime.strptime(dig[:8], "%Y%m%d").date()
+        except Exception:
+            pass
+    return None
+
+
+def _sniff_nfe_emission_date_from_bytes(xml_bytes: bytes, max_scan: int = 98304) -> Optional[date]:
+    """Só os primeiros ~96 KB: regex dhEmi/dEmi (com prefixo de namespace), sem depender de <ide>."""
+    if not xml_bytes:
+        return None
+    head = xml_bytes if len(xml_bytes) <= max_scan else xml_bytes[:max_scan]
+    try:
+        txt = head.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+    for pat in (
+        r"<(?:[\w.-]+:)?dhEmi\b[^>]*>\s*([^<]+?)\s*</(?:[\w.-]+:)?dhEmi>",
+        r"<(?:[\w.-]+:)?dEmi\b[^>]*>\s*([^<]+?)\s*</(?:[\w.-]+:)?dEmi>",
+    ):
+        m = re.search(pat, txt, re.I | re.S)
+        if m:
+            d = _parse_nfe_emission_date_str(m.group(1))
+            if d:
+                return d
+    return None
+
+
 def extrair_info_nfe(xml_bytes: bytes):
     """Extrai modelo (55/65), tpNF (0/1), valor vNF e data de emissão do XML.
 
@@ -10006,19 +10056,15 @@ def extrair_info_nfe(xml_bytes: bytes):
                     if val in ('0', '1'):
                         tp_nf = val
                 elif t in ('dhemi', 'demi') and getattr(el, 'text', None):
-                    raw = (el.text or '').strip()
-                    # dhEmi pode vir ISO: 2025-12-01T00:00:00-03:00
-                    try:
-                        if 'T' in raw:
-                            raw2 = raw.split('T', 1)[0]
-                        else:
-                            raw2 = raw
-                        dt_emi = datetime.strptime(raw2, '%Y-%m-%d').date()
-                    except Exception:
-                        try:
-                            dt_emi = datetime.strptime(raw, '%d/%m/%Y').date()
-                        except Exception:
-                            pass
+                    dt_emi = _parse_nfe_emission_date_str((el.text or '').strip())
+
+        if dt_emi is None and root is not None:
+            for el in root.iter():
+                t = _local_tag(getattr(el, 'tag', ''))
+                if t in ('dhemi', 'demi') and getattr(el, 'text', None):
+                    dt_emi = _parse_nfe_emission_date_str((el.text or '').strip())
+                    if dt_emi:
+                        break
 
         # vNF (total da nota)
         for el in root.iter():
@@ -10071,6 +10117,8 @@ def extrair_info_nfe(xml_bytes: bytes):
         except Exception:
             pass
 
+    if dt_emi is None:
+        dt_emi = _sniff_nfe_emission_date_from_bytes(xml_bytes)
 
     # Chave de acesso (44 dígitos) – usada para deduplicar no Dashboard
     chave = ''

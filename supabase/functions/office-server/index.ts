@@ -88,10 +88,78 @@ function validateRelativePath(input: string) {
   return parts.join("/");
 }
 
+/**
+ * Sessão ativa no GoTrue. Usar **somente a anon key** no header `apikey`:
+ * com `service_role` + JWT de usuário o GoTrue costuma responder 401/403 indevido.
+ */
+async function resolveUserIdFromGoTrue(
+  supabaseUrl: string,
+  anonKey: string,
+  accessToken: string,
+): Promise<
+  | { ok: true; id: string }
+  | { ok: false; detail: string }
+> {
+  const base = supabaseUrl.replace(/\/$/, "");
+  let lastDetail =
+    "Sessão inválida ou expirada. Faça login de novo (ou atualize a página).";
+
+  try {
+    const supabase = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (!error && data?.user?.id) {
+      return { ok: true, id: data.user.id };
+    }
+    if (error?.message) lastDetail = error.message;
+  } catch (e) {
+    lastDetail = e instanceof Error ? e.message : String(e);
+  }
+
+  const res = await fetch(`${base}/auth/v1/user`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: anonKey,
+    },
+  });
+
+  if (res.ok) {
+    try {
+      const body = (await res.json()) as { id?: string };
+      if (body?.id) return { ok: true, id: body.id };
+    } catch {
+      /* ignore */
+    }
+    lastDetail = "Resposta inválida do servidor de autenticação.";
+    return { ok: false, detail: lastDetail };
+  }
+
+  try {
+    const j = (await res.json()) as {
+      msg?: string;
+      error_description?: string;
+      message?: string;
+    };
+    lastDetail =
+      j.msg ||
+      j.error_description ||
+      j.message ||
+      `Auth HTTP ${res.status}`;
+  } catch {
+    lastDetail = `Auth HTTP ${res.status}`;
+  }
+
+  return { ok: false, detail: lastDetail };
+}
+
 async function getContext(req: Request) {
   const userToken = req.headers
     .get("Authorization")
-    ?.replace(/^Bearer\s+/i, "");
+    ?.replace(/^Bearer\s+/i, "")
+    ?.trim();
   if (!userToken)
     return { error: json({ error: "Missing authorization" }, 401) };
 
@@ -99,20 +167,32 @@ async function getContext(req: Request) {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-  const authClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: `Bearer ${userToken}` } },
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  const {
-    data: { user },
-    error: authError,
-  } = await authClient.auth.getUser();
-  if (authError || !user)
+  const authUser = await resolveUserIdFromGoTrue(
+    supabaseUrl,
+    anonKey,
+    userToken,
+  );
+
+  if (!authUser.ok) {
     return {
-      error: json({ error: "Unauthorized", detail: authError?.message }, 401),
+      error: json(
+        {
+          error: "Unauthorized",
+          detail: authUser.detail,
+        },
+        401,
+      ),
     };
+  }
+
+  const user = { id: authUser.id };
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const authClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${userToken}` } },
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
@@ -798,9 +878,102 @@ Deno.serve(async (req) => {
     });
   }
 
+  if (action === "whatsapp") {
+    if (!hasAnyPanelAccess(context, ["alteracao_empresarial"])) {
+      return json(
+        {
+          error:
+            "Sem permissao para WhatsApp (alteracao empresarial) neste escritorio.",
+        },
+        403,
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const call = String(body.call ?? "").trim();
+    const allowed = new Set([
+      "status",
+      "qr",
+      "groups",
+      "connect",
+      "disconnect",
+      "send",
+      "deliver",
+    ]);
+    if (!allowed.has(call)) {
+      return json(
+        {
+          error: "call invalido",
+          detail:
+            "Envie JSON com call em: status, qr, groups, connect, disconnect, send, deliver.",
+          received: call || null,
+        },
+        400,
+      );
+    }
+
+    const q =
+      typeof body.query === "string" ? body.query.replace(/^\?/, "") : "";
+    const basePath = `/api/whatsapp/${call}`;
+    const pathWithQuery =
+      call === "groups" && q ? `${basePath}?${q}` : basePath;
+    const method =
+      call === "send" ||
+      call === "deliver" ||
+      call === "connect" ||
+      call === "disconnect"
+        ? "POST"
+        : "GET";
+
+    let postBody: string | undefined;
+    if (method === "POST") {
+      if (call === "connect" || call === "disconnect") {
+        postBody = "{}";
+      } else {
+        postBody = JSON.stringify(
+          body.payload && typeof body.payload === "object"
+            ? body.payload
+            : {},
+        );
+      }
+    }
+
+    const response = await fetch(
+      `${server.public_base_url}${pathWithQuery}`,
+      {
+        method,
+        headers: {
+          Authorization: `Bearer ${connectorSecretHash}`,
+          "X-Office-User-JWT": userToken,
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "1",
+        },
+        body: postBody,
+      },
+    );
+
+    const text = await response.text().catch(() => "");
+    return new Response(text, {
+      status: response.status,
+      headers: {
+        ...corsHeaders,
+        "Content-Type":
+          response.headers.get("Content-Type") ?? "application/json",
+      },
+    });
+  }
+
   if (action === "status") {
     return json({ office_server: server });
   }
 
-  return json({ error: "Unsupported action" }, 400);
+  return json(
+    {
+      error: "Unsupported action",
+      action: action || null,
+      hint:
+        "Deploy a Edge Function office-server atualizada (ex.: action=whatsapp).",
+    },
+    400,
+  );
 });

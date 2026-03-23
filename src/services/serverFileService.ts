@@ -21,11 +21,60 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(a.href)
 }
 
+/** Uma renovação em voo por vez (vários polls em paralelo não disparam vários refresh_token). */
+let sessionRefreshPromise: Promise<string> | null = null
+let sessionValidationPromise: Promise<void> | null = null
+
+async function refreshAccessTokenOrThrow(): Promise<string> {
+  if (!sessionRefreshPromise) {
+    sessionRefreshPromise = (async () => {
+      try {
+        const { data: ref, error: refErr } = await supabase.auth.refreshSession()
+        if (refErr || !ref.session?.access_token) {
+          throw new Error("Sessão expirada. Faça login novamente.")
+        }
+        return ref.session.access_token
+      } finally {
+        sessionRefreshPromise = null
+      }
+    })()
+  }
+  return sessionRefreshPromise
+}
+
+/** Repara sessão corrompida/stale (token inválido em assinatura) antes de chamar a Edge. */
+async function ensureSessionValidOrThrow(): Promise<void> {
+  if (!sessionValidationPromise) {
+    sessionValidationPromise = (async () => {
+      try {
+        const first = await supabase.auth.getUser()
+        if (!first.error && first.data?.user?.id) return
+        await refreshAccessTokenOrThrow()
+        const second = await supabase.auth.getUser()
+        if (second.error || !second.data?.user?.id) {
+          throw new Error("Sessão não autorizada na API. Atualize a página ou faça login novamente.")
+        }
+      } finally {
+        sessionValidationPromise = null
+      }
+    })()
+  }
+  return sessionValidationPromise
+}
+
 async function getAuthHeaders(contentType?: string) {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session?.access_token) throw new Error("Faça login para continuar.")
+  const { data: { session }, error: sessErr } = await supabase.auth.getSession()
+  if (sessErr || !session?.access_token) throw new Error("Faça login para continuar.")
+
+  const nowSec = Math.floor(Date.now() / 1000)
+  const exp = session.expires_at
+  let accessToken = session.access_token
+  if (typeof exp === "number" && exp <= nowSec + 120) {
+    accessToken = await refreshAccessTokenOrThrow()
+  }
+
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${session.access_token}`,
+    Authorization: `Bearer ${accessToken}`,
     apikey: SUPABASE_ANON_KEY,
   }
   if (contentType) headers["Content-Type"] = contentType
@@ -143,6 +192,119 @@ export function getServerApiUrl(): string {
 
 export function hasServerApi(): boolean {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
+}
+
+/** Após 401 persistente, não ficar em loop com refresh_token a cada poll. */
+let officeWhatsapp401CooldownUntil = 0
+
+/** Uma chamada `action=whatsapp` de cada vez — evita 10–20 pedidos em paralelo no Network. */
+let whatsappOfficeQueue: Promise<unknown> = Promise.resolve()
+
+function enqueueWhatsAppOfficeCall<T>(fn: () => Promise<T>): Promise<T> {
+  const run = whatsappOfficeQueue.then(fn, fn)
+  whatsappOfficeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+/**
+ * WhatsApp via Edge — usa `supabase.functions.invoke` (mesmo fetch com Bearer da sessão que o SDK usa no PostgREST).
+ * Evita `fetch` manual com headers que podem divergir do cliente.
+ */
+async function invokeOfficeServerWhatsappEdge(
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const fn = `office-server?action=${encodeURIComponent("whatsapp")}`
+  const { data, error, response } = await supabase.functions.invoke(fn, {
+    method: "POST",
+    body,
+  })
+
+  // Sempre honrar o status HTTP real da Edge (401/403/502). O SDK já pode ter lido o body
+  // para preencher `data` — nesse caso `response.text()` falha (stream já consumido).
+  if (response instanceof Response) {
+    let text: string
+    if (response.bodyUsed) {
+      if (data !== undefined && data !== null) {
+        text = typeof data === "string" ? data : JSON.stringify(data)
+      } else {
+        text = JSON.stringify({
+          error:
+            error instanceof Error ? error.message : "Falha ao chamar office-server",
+        })
+      }
+    } else {
+      text = await response.text()
+    }
+    return new Response(text, {
+      status: response.status,
+      headers: {
+        "Content-Type":
+          response.headers.get("Content-Type") || "application/json",
+      },
+    })
+  }
+
+  if (error) {
+    return new Response(
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "Falha ao chamar office-server",
+      }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    )
+  }
+
+  return new Response(JSON.stringify(data ?? {}), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })
+}
+
+/** WhatsApp via Edge `office-server` → VM `/api/whatsapp/*` (escritório + JWT). */
+export async function invokeOfficeServerWhatsApp(
+  call: string,
+  options?: { query?: string; payload?: Record<string, unknown> },
+): Promise<Response> {
+  const body: Record<string, unknown> = { call }
+  if (options?.query) body.query = options.query
+  if (options?.payload && Object.keys(options.payload).length > 0) {
+    body.payload = options.payload
+  }
+
+  return enqueueWhatsAppOfficeCall(async () => {
+    try {
+      await ensureSessionValidOrThrow()
+    } catch (e) {
+      return new Response(
+        JSON.stringify({
+          error: e instanceof Error ? e.message : "Sessão não autorizada na API.",
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      )
+    }
+
+    let res = await invokeOfficeServerWhatsappEdge(body)
+    if (res.status !== 401) {
+      if (res.ok) officeWhatsapp401CooldownUntil = 0
+      return res
+    }
+
+    const now = Date.now()
+    if (now < officeWhatsapp401CooldownUntil) return res
+
+    try {
+      await refreshAccessTokenOrThrow()
+    } catch {
+      officeWhatsapp401CooldownUntil = now + 60_000
+      return res
+    }
+    res = await invokeOfficeServerWhatsappEdge(body)
+    if (res.status === 401) officeWhatsapp401CooldownUntil = now + 60_000
+    else officeWhatsapp401CooldownUntil = 0
+    return res
+  })
 }
 
 async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; filename: string }> {

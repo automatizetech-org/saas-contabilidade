@@ -189,9 +189,11 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       queryClient.setQueryData(["auth-session"], session ?? null);
       setHasSession(Boolean(session));
+      // TOKEN_REFRESHED dispara muito com refresh/getUser e rebenta o Network (profiles, user, memberships).
+      if (event === "TOKEN_REFRESHED") return;
       if (session?.user?.id) {
         queryClient.invalidateQueries({ queryKey: ["profile", session.user.id] });
       } else {
