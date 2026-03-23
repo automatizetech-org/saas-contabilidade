@@ -173,6 +173,77 @@ function sumServiceCodes(codes: ServiceCodeStat[]) {
   return codes.reduce((sum, item) => sum + parseMoneyLike(item.total_value), 0)
 }
 
+function buildMonthRangeKeys(dateFrom: string, dateTo: string) {
+  const from = dateFrom.slice(0, 7)
+  const to = dateTo.slice(0, 7)
+  if (from > to) return buildMonthRangeKeys(dateTo, dateFrom)
+  const months: string[] = []
+  const yFrom = parseInt(from.slice(0, 4), 10)
+  const mFrom = parseInt(from.slice(5, 7), 10)
+  const yTo = parseInt(to.slice(0, 4), 10)
+  const mTo = parseInt(to.slice(5, 7), 10)
+  for (let y = yFrom; y <= yTo; y++) {
+    const mStart = y === yFrom ? mFrom : 1
+    const mEnd = y === yTo ? mTo : 12
+    for (let m = mStart; m <= mEnd; m++) {
+      months.push(`${y}-${String(m).padStart(2, "0")}`)
+    }
+  }
+  if (months.length === 0) {
+    const now = new Date()
+    months.push(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`)
+  }
+  return months
+}
+
+async function getActiveNfsCompanyPeriods(companyIds: string[] | null, months: string[]) {
+  const normalizedCompanyIds = normalizeCompanyIds(companyIds)
+  let q = supabase
+    .from("fiscal_documents")
+    .select("company_id, periodo, file_path")
+    .eq("type", "NFS")
+    .not("file_path", "is", null)
+  if (months.length === 1) {
+    q = q.eq("periodo", months[0])
+  } else if (months.length > 1) {
+    q = q.in("periodo", months)
+  }
+  if (normalizedCompanyIds.length === 1) {
+    q = q.eq("company_id", normalizedCompanyIds[0])
+  } else if (normalizedCompanyIds.length > 1) {
+    q = q.in("company_id", normalizedCompanyIds)
+  }
+  const rows = await fetchAllPages<{
+    company_id: string
+    periodo?: string | null
+    file_path?: string | null
+  }>((from, to) => q.range(from, to))
+  return new Set(
+    rows
+      .filter((row) => Boolean(String(row.file_path ?? "").trim()))
+      .map((row) => {
+        const companyId = String(row.company_id || "").trim().toLowerCase()
+        const period = String(row.periodo || "").trim().slice(0, 7)
+        return companyId && /^\d{4}-\d{2}$/.test(period) ? `${companyId}:${period}` : ""
+      })
+      .filter(Boolean),
+  )
+}
+
+function getEmptyNfsStats(period: string) {
+  return {
+    period,
+    totalQty: 0,
+    valorEmitidas: 0,
+    valorRecebidas: 0,
+    previousValorEmitidas: 0,
+    previousValorRecebidas: 0,
+    serviceCodesRanking: [] as ServiceCodeStat[],
+    serviceCodesRankingPrestadas: [] as ServiceCodeStat[],
+    serviceCodesRankingTomadas: [] as ServiceCodeStat[],
+  }
+}
+
 /** Contagens reais (notas únicas por chave/id). Usa a mesma RPC do dashboard quando possível. */
 export async function getDashboardCounts(companyIds: string[] | null) {
   try {
@@ -391,14 +462,15 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
       latestByCompanyAndType.set(key, candidate)
     }
   }
-  return [...latestByCompanyAndType.values()].map((d) => {
-    return {
-      ...d,
-      empresa: names.get(d.company_id) ?? "",
-      cnpj: documents.get(d.company_id) ?? "",
-      tipo_certidao: tipoLabel[d.tipo_certidao] ?? d.tipo_certidao,
-    }
-  })
+  return [...latestByCompanyAndType.values()]
+    .map((d) => {
+      return {
+        ...d,
+        empresa: names.get(d.company_id) ?? "",
+        cnpj: documents.get(d.company_id) ?? "",
+        tipo_certidao: tipoLabel[d.tipo_certidao] ?? d.tipo_certidao,
+      }
+    })
 }
 
 /** Resumo fiscal para a visão geral: totais por tipo (NFS, NFE, NFC) com métricas reais (um documento = chave/id único). Opcional: period YYYY-MM para filtrar por período. */
@@ -465,6 +537,8 @@ export async function getNfsStats(companyIds: string[] | null, period?: string) 
   const now = new Date()
   const defPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
   const p = periodFilter || defPeriod
+  const activePairs = await getActiveNfsCompanyPeriods(companyIds, [p])
+  if (activePairs.size === 0) return getEmptyNfsStats(p)
   let q = supabase
     .from("nfs_stats")
     .select("company_id, qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes")
@@ -483,8 +557,9 @@ export async function getNfsStats(companyIds: string[] | null, period?: string) 
     service_codes: unknown
   }>((from, to) => q.range(from, to))
   const rows = data.filter((row) => {
-    if (normalizedCompanyIds.length === 0) return true
-    return normalizedCompanyIds.includes(String(row.company_id || "").trim().toLowerCase())
+    const companyId = String(row.company_id || "").trim().toLowerCase()
+    const matchesCompany = normalizedCompanyIds.length === 0 || normalizedCompanyIds.includes(companyId)
+    return matchesCompany && activePairs.has(`${companyId}:${p}`)
   })
   let totalQty = 0
   let valorEmitidas = 0
@@ -508,11 +583,20 @@ export async function getNfsStats(companyIds: string[] | null, period?: string) 
     valorEmitidas,
     valorRecebidas,
     serviceCodesRanking,
+    serviceCodesRankingPrestadas: serviceCodesRanking,
+    serviceCodesRankingTomadas: [],
+    previousValorEmitidas: 0,
+    previousValorRecebidas: 0,
   }
 }
 
 /** Agrega nfs_stats para todos os meses entre dateFrom e dateTo (YYYY-MM-DD). */
 export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFrom: string, dateTo: string) {
+  const months = buildMonthRangeKeys(dateFrom, dateTo)
+  const activePairs = await getActiveNfsCompanyPeriods(companyIds, months)
+  if (activePairs.size === 0) {
+    return getEmptyNfsStats(months.length === 1 ? months[0] : `${months[0]} a ${months[months.length - 1]}`)
+  }
   try {
     const { data, error } = await supabase.rpc("get_nfs_stats_range_summary", {
       company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
@@ -556,28 +640,9 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
   }
 
   const normalizedCompanyIds = normalizeCompanyIds(companyIds)
-  const from = dateFrom.slice(0, 7)
-  const to = dateTo.slice(0, 7)
-  if (from > to) return getNfsStatsByDateRange(companyIds, dateTo, dateFrom)
-  const months: string[] = []
-  const yFrom = parseInt(from.slice(0, 4), 10)
-  const mFrom = parseInt(from.slice(5, 7), 10)
-  const yTo = parseInt(to.slice(0, 4), 10)
-  const mTo = parseInt(to.slice(5, 7), 10)
-  for (let y = yFrom; y <= yTo; y++) {
-    const mStart = y === yFrom ? mFrom : 1
-    const mEnd = y === yTo ? mTo : 12
-    for (let m = mStart; m <= mEnd; m++) {
-      months.push(`${y}-${String(m).padStart(2, "0")}`)
-    }
-  }
-  if (months.length === 0) {
-    const now = new Date()
-    months.push(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`)
-  }
   let q = supabase
     .from("nfs_stats")
-    .select("company_id, qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes, service_codes_emitidas, service_codes_recebidas")
+    .select("company_id, period, qty_emitidas, qty_recebidas, valor_emitidas, valor_recebidas, service_codes, service_codes_emitidas, service_codes_recebidas")
     .in("period", months)
   if (normalizedCompanyIds.length === 1) {
     q = q.eq("company_id", normalizedCompanyIds[0])
@@ -586,6 +651,7 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
   }
   const data = await fetchAllPages<{
     company_id: string
+    period: string
     qty_emitidas: number
     qty_recebidas: number
     valor_emitidas: number
@@ -595,8 +661,10 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
     service_codes_recebidas: unknown
   }>((from, to) => q.range(from, to))
   const rows = data.filter((row) => {
-    if (normalizedCompanyIds.length === 0) return true
-    return normalizedCompanyIds.includes(String(row.company_id || "").trim().toLowerCase())
+    const companyId = String(row.company_id || "").trim().toLowerCase()
+    const period = String(row.period || "").trim().slice(0, 7)
+    const matchesCompany = normalizedCompanyIds.length === 0 || normalizedCompanyIds.includes(companyId)
+    return matchesCompany && activePairs.has(`${companyId}:${period}`)
   })
   let totalQty = 0
   let valorEmitidas = 0

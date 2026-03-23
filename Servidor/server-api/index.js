@@ -3485,6 +3485,246 @@ function walkDir(dir, baseDir) {
   return results;
 }
 
+function parseJsonLike(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  if (typeof value !== "string") return {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+async function fetchAllRows(queryBuilderFactory, pageSize = 1000) {
+  const rows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await queryBuilderFactory().range(from, to);
+    if (error) throw error;
+
+    const chunk = Array.isArray(data) ? data : [];
+    rows.push(...chunk);
+
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
+}
+
+function resolveStoredFilePathInfo(filePath) {
+  const raw = String(filePath || "").trim();
+  if (!raw) {
+    return {
+      raw,
+      normalized: "",
+      fullPath: "",
+      relativePath: "",
+      exists: false,
+      insideBase: false,
+    };
+  }
+
+  const baseResolved = path.resolve(BASE_PATH);
+  let fullPath = "";
+  let relativePath = "";
+  let insideBase = false;
+
+  try {
+    if (path.isAbsolute(raw)) {
+      fullPath = path.resolve(raw);
+      insideBase = fullPath.startsWith(baseResolved);
+      if (insideBase) {
+        relativePath = path.relative(baseResolved, fullPath).replace(/\\/g, "/");
+      }
+    } else {
+      const normalized = raw.replace(/\//g, path.sep);
+      fullPath = path.resolve(path.join(BASE_PATH, normalized));
+      insideBase = fullPath.startsWith(baseResolved);
+      if (insideBase) {
+        relativePath = path.relative(baseResolved, fullPath).replace(/\\/g, "/");
+      }
+    }
+  } catch {
+    fullPath = "";
+    relativePath = "";
+    insideBase = false;
+  }
+
+  const exists = fullPath ? fs.existsSync(fullPath) : false;
+  return {
+    raw,
+    normalized: raw.replace(/\\/g, "/"),
+    fullPath,
+    relativePath,
+    exists,
+    insideBase,
+  };
+}
+
+async function clearMissingFileReferences(supabase, effectiveOfficeId, result, allPathsOnDisk) {
+  const fileMissingFromBase = (filePath) => {
+    const info = resolveStoredFilePathInfo(filePath);
+    if (!info.raw) return false;
+    if (!info.insideBase) return false;
+    return !info.exists;
+  };
+
+  // Certidões: o índice usa o evento mais recente. Então, quando o PDF some do disco,
+  // sobrescrevemos o mesmo idempotency_key removendo apenas o arquivo_pdf do payload.
+  const certRows = await fetchAllRows(() =>
+    supabase
+      .from("sync_events")
+      .select("id, office_id, company_id, payload, status, idempotency_key")
+      .eq("office_id", effectiveOfficeId)
+      .eq("tipo", "certidao_resultado"),
+  );
+
+  for (const row of certRows || []) {
+    const payload = parseJsonLike(row.payload);
+    const filePath = String(payload.arquivo_pdf || "").trim();
+    if (!filePath || !fileMissingFromBase(filePath)) continue;
+
+    const nextPayload = { ...payload };
+    delete nextPayload.arquivo_pdf;
+    nextPayload.file_removed = true;
+    nextPayload.file_removed_at = new Date().toISOString();
+
+    const idemKey =
+      String(row.idempotency_key || "").trim() ||
+      `${row.company_id || ""}:${payload.tipo_certidao || ""}:${payload.document_date || payload.data_consulta || row.id}`;
+
+    try {
+      await supabase
+        .from("sync_events")
+        .delete()
+        .eq("office_id", effectiveOfficeId)
+        .eq("tipo", "certidao_resultado")
+        .eq("idempotency_key", idemKey);
+
+      const { error: insertError } = await supabase.from("sync_events").insert({
+        office_id: String(row.office_id || effectiveOfficeId),
+        company_id: row.company_id,
+        tipo: "certidao_resultado",
+        payload: JSON.stringify(nextPayload),
+        status: row.status || "sucesso",
+        idempotency_key: idemKey,
+      });
+      if (insertError) {
+        result.errors.push({
+          file: filePath,
+          error: `sync_events(certidoes): ${insertError.message}`,
+        });
+      } else {
+        result.deleted++;
+      }
+    } catch (error) {
+      result.errors.push({
+        file: filePath,
+        error: `sync_events(certidoes): ${error.message}`,
+      });
+    }
+  }
+
+  const clearColumnWhenMissing = async ({
+    table,
+    column,
+  }) => {
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from(table)
+        .select(`id, ${column}`)
+        .eq("office_id", effectiveOfficeId)
+        .not(column, "is", null),
+    );
+
+    const idsToClear = (rows || [])
+      .filter((row) => fileMissingFromBase(row[column]))
+      .map((row) => row.id);
+
+    if (idsToClear.length === 0) return;
+
+    const { error } = await supabase
+      .from(table)
+      .update({ [column]: null })
+      .in("id", idsToClear);
+
+    if (error) {
+      result.errors.push({
+        file: `${table}.${column}`,
+        error: error.message,
+      });
+      return;
+    }
+
+    result.deleted += idsToClear.length;
+  };
+
+  await clearColumnWhenMissing({ table: "dp_guias", column: "file_path" });
+  await clearColumnWhenMissing({
+    table: "municipal_tax_debts",
+    column: "guia_pdf_path",
+  });
+}
+
+async function clearMissingNfsStats(supabase, effectiveOfficeId, result) {
+  const activeFiscalRows = await fetchAllRows(() =>
+    supabase
+      .from("fiscal_documents")
+      .select("company_id, periodo, file_path")
+      .eq("office_id", effectiveOfficeId)
+      .eq("type", "NFS")
+      .not("file_path", "is", null),
+  );
+
+  const activePairs = new Set(
+    (activeFiscalRows || [])
+      .filter((row) => Boolean(String(row.file_path || "").trim()))
+      .map((row) => {
+        const companyId = String(row.company_id || "").trim();
+        const period = String(row.periodo || "").trim().slice(0, 7);
+        return companyId && /^\d{4}-\d{2}$/.test(period)
+          ? `${companyId}:${period}`
+          : "";
+      })
+      .filter(Boolean),
+  );
+
+  const nfsStatsRows = await fetchAllRows(() =>
+    supabase
+      .from("nfs_stats")
+      .select("id, company_id, period")
+      .eq("office_id", effectiveOfficeId),
+  );
+
+  const idsToDelete = (nfsStatsRows || [])
+    .filter((row) => {
+      const companyId = String(row.company_id || "").trim();
+      const period = String(row.period || "").trim().slice(0, 7);
+      if (!companyId || !/^\d{4}-\d{2}$/.test(period)) return true;
+      return !activePairs.has(`${companyId}:${period}`);
+    })
+    .map((row) => row.id);
+
+  if (idsToDelete.length === 0) return;
+
+  for (let index = 0; index < idsToDelete.length; index += 500) {
+    const batch = idsToDelete.slice(index, index + 500);
+    const { error } = await supabase.from("nfs_stats").delete().in("id", batch);
+    if (error) {
+      result.errors.push({
+        file: "nfs_stats",
+        error: error.message,
+      });
+      continue;
+    }
+    result.deleted += batch.length;
+  }
+}
+
 /**
  * Executa a sincronização completa EMPRESAS -> fiscal_documents.
  * Inclui remoção: registros cujo arquivo não existe mais na pasta são removidos do banco.
@@ -3527,19 +3767,36 @@ async function runFiscalSyncAll(supabase, officeId = null) {
 
   if (!empresasExists) {
     // Pasta base não existe: espelhar “zerando” para qualquer documento salvo no fiscal_documents.
-    const { data: rows } = await supabase
-      .from("fiscal_documents")
-      .select("id, file_path")
-      .eq("office_id", effectiveOfficeId)
-      .not("file_path", "is", null);
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from("fiscal_documents")
+        .select("id, file_path")
+        .eq("office_id", effectiveOfficeId)
+        .not("file_path", "is", null),
+    );
     const idsToDelete = (rows || []).map((r) => r.id);
     if (idsToDelete.length > 0) {
-      const { error: deleteError } = await supabase
-        .from("fiscal_documents")
-        .delete()
-        .in("id", idsToDelete);
-      if (!deleteError) result.deleted += idsToDelete.length;
+      for (let index = 0; index < idsToDelete.length; index += 500) {
+        const batch = idsToDelete.slice(index, index + 500);
+        const { error: deleteError } = await supabase
+          .from("fiscal_documents")
+          .delete()
+          .in("id", batch);
+        if (!deleteError) result.deleted += batch.length;
+        else {
+          result.errors.push({
+            file: "fiscal_documents",
+            error: deleteError.message,
+          });
+        }
+      }
     }
+    await clearMissingFileReferences(
+      supabase,
+      effectiveOfficeId,
+      result,
+      allPathsOnDisk,
+    );
     return result;
   }
 
@@ -3662,21 +3919,43 @@ async function runFiscalSyncAll(supabase, officeId = null) {
   }
 
   // Espelhamento: remove do banco os registros DESTE ESCRITÓRIO cujo arquivo não existe mais na pasta.
-  const { data: rowsToMirrorDelete } = await supabase
-    .from("fiscal_documents")
-    .select("id, file_path")
-    .eq("office_id", effectiveOfficeId)
-    .not("file_path", "is", null);
+  const rowsToMirrorDelete = await fetchAllRows(() =>
+    supabase
+      .from("fiscal_documents")
+      .select("id, file_path")
+      .eq("office_id", effectiveOfficeId)
+      .not("file_path", "is", null),
+  );
   const idsToDelete = (rowsToMirrorDelete || [])
-    .filter((r) => !allPathsOnDisk.has(r.file_path))
+    .filter((r) => {
+      const info = resolveStoredFilePathInfo(r.file_path);
+      return !info.exists;
+    })
     .map((r) => r.id);
   if (idsToDelete.length > 0) {
-    const { error: deleteError } = await supabase
-      .from("fiscal_documents")
-      .delete()
-      .in("id", idsToDelete);
-    if (!deleteError) result.deleted += idsToDelete.length;
+    for (let index = 0; index < idsToDelete.length; index += 500) {
+      const batch = idsToDelete.slice(index, index + 500);
+      const { error: deleteError } = await supabase
+        .from("fiscal_documents")
+        .delete()
+        .in("id", batch);
+      if (!deleteError) result.deleted += batch.length;
+      else {
+        result.errors.push({
+          file: "fiscal_documents",
+          error: deleteError.message,
+        });
+      }
+    }
   }
+
+  await clearMissingFileReferences(
+    supabase,
+    effectiveOfficeId,
+    result,
+    allPathsOnDisk,
+  );
+  await clearMissingNfsStats(supabase, effectiveOfficeId, result);
 
   return result;
 }
