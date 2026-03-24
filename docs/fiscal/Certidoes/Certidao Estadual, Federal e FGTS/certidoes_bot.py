@@ -100,16 +100,39 @@ def get_internal_dir():
 BASE_DIR = get_base_dir()
 INTERNAL_DIR = get_internal_dir()
 BASE_DIR_PATH = Path(BASE_DIR)
-ROBOTS_BASE_ENV_DIR = Path(r"C:\Users\ROBO\Documents\ROBOS")
+
+
+def _resolve_robots_base_env_dir() -> Optional[Path]:
+    """Pasta ROBOS onde costuma estar venv\ e .env (não hardcodar utilizador Windows)."""
+    raw = (os.environ.get("ROBOTS_ROOT_PATH") or "").strip().strip('"')
+    if raw:
+        p = Path(raw)
+        if p.is_dir():
+            return p.resolve()
+    cur = Path(__file__).resolve().parent
+    for _ in range(12):
+        if (cur / "venv").is_dir():
+            return cur.resolve()
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    legacy = Path(r"C:\Users\ROBO\Documents\ROBOS")
+    if legacy.is_dir():
+        return legacy.resolve()
+    return None
+
+
+ROBOTS_BASE_ENV_DIR = _resolve_robots_base_env_dir()
 
 try:
     from dotenv import load_dotenv
 
-    env_robos = ROBOTS_BASE_ENV_DIR / ".env"
-    if env_robos.exists():
-        load_dotenv(env_robos)
-    elif (ROBOTS_BASE_ENV_DIR / ".env.example").exists():
-        load_dotenv(ROBOTS_BASE_ENV_DIR / ".env.example")
+    if ROBOTS_BASE_ENV_DIR is not None:
+        env_robos = ROBOTS_BASE_ENV_DIR / ".env"
+        if env_robos.exists():
+            load_dotenv(env_robos)
+        elif (ROBOTS_BASE_ENV_DIR / ".env.example").exists():
+            load_dotenv(ROBOTS_BASE_ENV_DIR / ".env.example")
 
     env_path = BASE_DIR_PATH / ".env"
     if not env_path.exists():
@@ -119,7 +142,7 @@ try:
 
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
-        if exe_dir != ROBOTS_BASE_ENV_DIR:
+        if ROBOTS_BASE_ENV_DIR is None or exe_dir.resolve() != ROBOTS_BASE_ENV_DIR:
             load_dotenv(exe_dir / ".env")
             if not (exe_dir / ".env").exists():
                 load_dotenv(exe_dir / ".env.example")

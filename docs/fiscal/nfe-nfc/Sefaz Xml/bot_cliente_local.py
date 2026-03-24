@@ -633,6 +633,89 @@ def get_robot_api_config(force_refresh: bool = False) -> Optional[Dict[str, Any]
     return _robot_api_config
 
 
+def _resolve_office_id_for_startup_guard() -> str:
+    """office_id vindo do job JSON (agendamento) ou da API do conector."""
+    job = _current_json_job()
+    if isinstance(job, dict):
+        oid = str(job.get("office_id") or "").strip()
+        if oid:
+            return oid
+    cfg = get_robot_api_config(force_refresh=True) or {}
+    return str(cfg.get("office_id") or "").strip()
+
+
+def ensure_office_active_for_robot(app: QApplication) -> bool:
+    """
+    BLOQUEIO principal: escritório inativo (public.offices.status != 'active') → só aviso, robô não abre.
+    Modo cliente local (sem .env SaaS): não aplica esta verificação.
+    """
+    if SEFAZ_LOCAL_JSON_CLIENT_MODE:
+        return True
+    url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
+    key = _get_supabase_service_role_key().strip()
+    if not url or not key:
+        return True
+    office_id = _resolve_office_id_for_startup_guard().strip()
+    parent = app.activeWindow() if app is not None else None
+    if not office_id:
+        QMessageBox.critical(
+            parent,
+            "Escritório não identificado",
+            "Este robô não conseguiu identificar o escritório no painel (office_id).\n\n"
+            "Verifique o conector da VM, SERVER_API_URL / FOLDER_STRUCTURE_API_URL e CONNECTOR_SECRET.\n"
+            "Sem vínculo ao escritório ativo no SaaS, o robô não pode ser iniciado.\n\n"
+            "Contacte o suporte.",
+        )
+        return False
+    try:
+        from supabase import create_client as _office_supa_create
+    except ImportError:
+        return True
+    try:
+        client = _office_supa_create(url, key)
+        res = (
+            client.table("offices")
+            .select("id,status,name")
+            .eq("id", office_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(res, "data", None) or []
+    except Exception as exc:
+        QMessageBox.critical(
+            parent,
+            "Escritório — erro de verificação",
+            "Não foi possível confirmar o estado do escritório no servidor.\n\n"
+            f"{exc}\n\n"
+            "Verifique rede, Supabase e tente novamente. Contacte o suporte se persistir.",
+        )
+        return False
+    if not rows:
+        QMessageBox.critical(
+            parent,
+            "Escritório não encontrado",
+            "O escritório vinculado a esta VM não foi encontrado na base do painel.\n\n"
+            "Confirme se o office_id está correto ou se o escritório foi removido.\n"
+            "Contacte o suporte.",
+        )
+        return False
+    row = rows[0] or {}
+    st = str(row.get("status") or "").strip().lower()
+    name = str(row.get("name") or "").strip() or office_id
+    if st != "active":
+        QMessageBox.critical(
+            parent,
+            "Escritório inativo",
+            f"O escritório «{name}» não está ativo no painel.\n"
+            f"Estado atual: {st or 'indeterminado'} (é necessário «active»).\n\n"
+            "Robôs só podem ser iniciados com escritório ativo.\n"
+            "Peça ao administrador da conta para reativar o escritório no dashboard.\n\n"
+            "O aplicativo será encerrado.",
+        )
+        return False
+    return True
+
+
 def get_resolved_output_base() -> Optional[pathlib.Path]:
     cfg = get_robot_api_config()
     base_path = (cfg or {}).get("base_path") or os.getenv("BASE_PATH") or ""
@@ -2263,50 +2346,12 @@ def _warn_if_expiring_soon(parent=None):
 
 def ensure_license_valid(parent_app: QApplication) -> bool:
     """
-    Garante que há uma licença válida antes de abrir a UI principal.
-    Sempre valida no Supabase – não confia apenas no JSON local.
+    Controlo de acesso ao robô SEFAZ: não usa mais RPC verify_license nem diálogo de chave.
+    O único bloqueio em modo SaaS é o escritório ativo (ensure_office_active_for_robot no main).
+    Mantém AUTOMATIZE_VERIFIED para compatibilidade com trechos legados.
     """
-    if SEFAZ_LOCAL_JSON_CLIENT_MODE:
-        os.environ["AUTOMATIZE_VERIFIED"] = "1"
-        return True
-
-    last_fail_msg = None
-
-    # 1) tenta licença salva (sem apagar se der erro)
-    saved = get_saved_key()
-    if saved:
-        ok, msg, meta = check_license_with_supabase(saved)
-        if ok:
-            persist_key(saved, meta)
-            os.environ["AUTOMATIZE_VERIFIED"] = "1"
-            _warn_if_expiring_soon()
-            return True
-        else:
-            last_fail_msg = msg  # guardamos o motivo (p.ex., revogada/inativa)
-
-    # 2) pede no diálogo até validar ou cancelar
-    while True:
-        dlg = LicenseDialog(preset_key=get_saved_key() or "")
-        low = (last_fail_msg or "").lower()
-        if "desativad" in low or "inativa" in low or "revog" in low:
-            dlg.set_revoked_mode(last_fail_msg)
-
-        if dlg.exec() == QDialog.Accepted:
-            _warn_if_expiring_soon()
-            return True
-
-        # Cancelou → confirmar saída
-        confirm = ConfirmDialog(
-            title="É necessário ativar a licença",
-            message="Para continuar, você precisa ativar a licença.\n"
-                    "Deseja encerrar o aplicativo agora?",
-            primary_text="Encerrar",
-            secondary_text="Voltar e ativar"
-        )
-        confirm.exec()
-        if confirm.choice == "primary":
-            return False
-        # se escolher voltar, reabre o diálogo de licença
+    os.environ["AUTOMATIZE_VERIFIED"] = "1"
+    return True
 
 def is_scheduler_mode_enabled() -> bool:
     return str(os.environ.get("AUTOMATIZE_SCHEDULER_MODE") or "").strip().lower() in {
@@ -9454,7 +9499,7 @@ class AutomationWorker(QThread):
                                                 self._log(f"[ERRO] âŒ Erro ao sincronizar ZIP baixado no Supabase: {e}")
 
                                         chave = (ie, operacao, mes_ini, mes_fim)
-                                        if self.separar_modelo_xml:
+                                        if self.separar_modelo_xml and not SEFAZ_LOCAL_JSON_CLIENT_MODE:
                                             # processa e limpa imediatamente em modo separacao
                                             try:
                                                 c55, c65 = extrair_e_separar_zips_por_modelo(
@@ -9482,7 +9527,7 @@ class AutomationWorker(QThread):
                                                 self._log(f"[WARN] ⚠️ Falha ao separar ZIPs imediatamente: {e}")
                                                 zips_por_emp_op_intervalo[chave].extend(zip_paths)
                                         else:
-                                            # acumula os ZIPs deste bloco diario no intervalo-base (mes)
+                                            # Sem separação OU modo cliente local: só acumula referências (ZIP fica como baixado)
                                             zips_por_emp_op_intervalo[chave].extend(zip_paths)
 
                                         # Marca que esta empresa conseguiu baixar pelo menos algo nesta operacao
@@ -9518,8 +9563,17 @@ class AutomationWorker(QThread):
                             zip_list = zips_por_emp_op_intervalo.get(chave)
                             if not zip_list:
                                 continue
-                            
-                            if self.separar_modelo_xml:
+
+                            if SEFAZ_LOCAL_JSON_CLIENT_MODE:
+                                if zip_list:
+                                    nomes = [os.path.basename(p) for p in zip_list[:8]]
+                                    extra = f" (+{len(zip_list) - 8} outros)" if len(zip_list) > 8 else ""
+                                    self._log(
+                                        "[MODO CLIENTE LOCAL] ZIP(s) mantidos sem extrair/unificar: "
+                                        + ", ".join(nomes)
+                                        + extra
+                                    )
+                            elif self.separar_modelo_xml:
                                 # ✅ MODO SEPARAÇÃO: salva SOMENTE nas pastas dos modelos
                                 c55, c65 = extrair_e_separar_zips_por_modelo(
                                     zip_paths=zip_list,
@@ -9867,9 +9921,14 @@ class AutomationWorker(QThread):
                                 r.alert_text = ""
                                 r.motivo = ""
 
-                                # Processa imediatamente o ZIP baixado na retentativa
+                                # Processa imediatamente o ZIP baixado na retentativa (modo dashboard)
                                 try:
-                                    if separar_por_modelo_ativo:
+                                    if SEFAZ_LOCAL_JSON_CLIENT_MODE:
+                                        self._log(
+                                            "[MODO CLIENTE LOCAL] Retentativa: ZIP mantido sem extrair/unificar: "
+                                            + ", ".join(os.path.basename(p) for p in zip_paths)
+                                        )
+                                    elif separar_por_modelo_ativo:
                                         pasta_mes_retry = pasta_mes2
                                         c55, c65 = extrair_e_separar_zips_por_modelo(
                                             zip_paths=zip_paths,
@@ -17637,10 +17696,9 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # === NOVO: validar licença antes de abrir a UI ===
+    if not ensure_office_active_for_robot(app):
+        sys.exit(0)
     if not scheduler_mode and not ensure_license_valid(app):
-
-        # usuário saiu ou licença inválida
         sys.exit(0)
     style_text = """
         /* QInputDialog (nome da empresa, seleção, etc.) */
