@@ -19,7 +19,7 @@ dist-ssr
 .env.production.local
 .env.*.local
 !.env.example
-Servidor/ajuste server.txt
+Servidor/ajuste server.md
 
 # =============================================================================
 # Logs e debug
