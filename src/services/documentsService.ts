@@ -554,7 +554,7 @@ function mapFiscalDetailRpcRow(row: any): FiscalListRow {
   }
 }
 
-export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilters): Promise<{ items: FiscalListRow[]; nextCursor: CursorPageToken | null; hasMore: boolean; refreshAt: string | null }> {
+export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilters): Promise<{ items: FiscalListRow[]; nextCursor: CursorPageToken | null; hasMore: boolean; refreshAt: string | null; totalCount: number | null }> {
   const detailKind = filters.kind === "nfe-nfc" ? "NFE_NFC" : filters.kind.toUpperCase()
   try {
     if (filters.kind === "certidoes" || !canUseFiscalDetailCursorRpc) {
@@ -582,7 +582,10 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
     if (parsed.items.length === 0) {
       throw new Error("Fiscal detail cursor RPC returned empty payload")
     }
-    return parsed
+    return {
+      ...parsed,
+      totalCount: null,
+    }
   } catch {
     if (filters.kind !== "certidoes") {
       canUseFiscalDetailCursorRpc = false
@@ -707,6 +710,7 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
       nextCursor,
       hasMore,
       refreshAt: null,
+      totalCount: deduped.length,
     }
   }
 }

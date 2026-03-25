@@ -213,6 +213,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
   }));
   const items = certidoesPage?.items ?? [];
   const hasMore = certidoesPage?.hasMore ?? false;
+  const totalFilteredItems = certidoesPage?.totalCount ?? overview?.cards.total ?? null;
 
   const handleBaixarPdf = async (row: FiscalDocumentRow) => {
     if (!row.file_path) {
@@ -381,7 +382,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
             pageSize={pageSize}
             shownItems={items.length}
             hasMore={hasMore}
-            totalApprox={overview?.cards.total ?? null}
+            totalApprox={totalFilteredItems}
             onFirst={() => {
               setPage(1);
               setCursorHistory([null]);
