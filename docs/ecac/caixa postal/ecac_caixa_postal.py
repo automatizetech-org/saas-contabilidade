@@ -2034,6 +2034,14 @@ def _stack_tail(exc: BaseException) -> str:
     return "".join(traceback.format_exception_only(type(exc), exc)).strip()
 
 
+class ProfileSwitchError(RuntimeError):
+    pass
+
+
+class ProfileSwitchNoPowerOfAttorneyError(ProfileSwitchError):
+    pass
+
+
 class EcacMailboxAutomation:
     def __init__(
         self,
@@ -2580,7 +2588,12 @@ class EcacMailboxAutomation:
                     raise RuntimeError("O modal de alteração de perfil permaneceu aberto após a confirmação.")
                 modal_error = self._extract_profile_modal_error()
                 if modal_error:
-                    raise RuntimeError(f"Falha retornada pelo portal ao alterar perfil: {modal_error}")
+                    lowered_error = modal_error.lower()
+                    if "não existe procuração eletrônica" in lowered_error or "nao existe procuracao eletronica" in lowered_error:
+                        raise ProfileSwitchNoPowerOfAttorneyError(
+                            f"Falha retornada pelo portal ao alterar perfil: {modal_error}"
+                        )
+                    raise ProfileSwitchError(f"Falha retornada pelo portal ao alterar perfil: {modal_error}")
                 cleanup_state = self._after_profile_switch_cleanup()
                 changed = self._wait_until(
                     lambda: self._profile_switch_success(company),
@@ -2594,6 +2607,12 @@ class EcacMailboxAutomation:
                     )
                 self._log_step(f"profile_switched attempt={attempt} state={cleanup_state}")
                 return context
+            except ProfileSwitchNoPowerOfAttorneyError as exc:
+                last_error = exc
+                self.runtime.logger.warning(f"profile_switch_failed attempt={attempt} company={company.name}: {exc}")
+                self._capture_debug_artifacts(f"profile_switch_failed_{company.company_id}_attempt_{attempt}")
+                self.close_blocking_modals()
+                raise
             except Exception as exc:
                 last_error = exc
                 self.runtime.logger.warning(f"profile_switch_failed attempt={attempt} company={company.name}: {exc}")
@@ -2888,6 +2907,7 @@ class EcacMailboxAutomation:
         *,
         switch_profile: bool = False,
         context_type: str = "company",
+        raise_on_error: bool = False,
     ) -> CompanyRunResult:
         result = CompanyRunResult(
             company_id=company.company_id,
@@ -2920,6 +2940,8 @@ class EcacMailboxAutomation:
             result.status = "error"
             result.errors.append(_stack_tail(exc))
             self.runtime.logger.warning(f"Empresa {company.name}: {exc}")
+            if raise_on_error:
+                raise
         finally:
             result.finished_at = utc_now_iso()
         return result
@@ -2950,6 +2972,30 @@ def _resolve_company_certificate(runtime_env: RuntimeEnvironment, company: Compa
     if not metadata:
         raise RuntimeError(f"Certificado digital não encontrado para {company.name}.")
     return metadata
+
+
+def _company_has_own_certificate(company: CompanyRecord) -> bool:
+    return bool(company.has_certificate_credentials and str(company.auth_mode or "").strip().lower() == "certificate")
+
+
+def _build_company_error_result(
+    company: CompanyRecord,
+    *,
+    error_messages: list[str],
+    context_type: str = "company",
+) -> CompanyRunResult:
+    return CompanyRunResult(
+        company_id=company.company_id,
+        company_name=company.name,
+        company_document=format_document(company.document),
+        context_type=context_type,
+        status="error",
+        eligible=company.eligible,
+        block_reason=company.block_reason,
+        errors=[message for message in error_messages if message],
+        started_at=utc_now_iso(),
+        finished_at=utc_now_iso(),
+    )
 
 
 def _resolve_responsible_office_company(
@@ -3062,11 +3108,12 @@ def execute_mailbox_run(
             mailbox_config,
         )
         target_companies = [company for company in companies if company.company_id != responsible_company.company_id]
-        session: Optional[BrowserSession] = None
-        try:
-            certificate = _resolve_company_certificate(runtime_env, responsible_company)
+        deferred_certificate_fallbacks: list[tuple[CompanyRecord, str]] = []
+        responsible_certificate = _resolve_company_certificate(runtime_env, responsible_company)
+
+        def _open_authenticated_automation(certificate: CertificateMetadata, company_label: str) -> tuple[BrowserSession, EcacMailboxAutomation]:
             session = launch_browser(runtime_env, headless=headless)
-            runtime_env.logger.info(f"Navegador iniciado em {session.executable_path}")
+            runtime_env.logger.info(f"Navegador iniciado em {session.executable_path} para {company_label}")
             automation = EcacMailboxAutomation(
                 runtime_env,
                 session,
@@ -3074,6 +3121,12 @@ def execute_mailbox_run(
                 stop_requested=stop_requested,
             )
             automation.login()
+            return session, automation
+
+        session: Optional[BrowserSession] = None
+        automation: Optional[EcacMailboxAutomation] = None
+        try:
+            session, automation = _open_authenticated_automation(responsible_certificate, responsible_company.name)
             responsible_office_result = automation.collect_current_mailbox(
                 responsible_company,
                 run_id,
@@ -3101,6 +3154,50 @@ def execute_mailbox_run(
                     summary["status"] = "stopped"
                     summary["interrupted_at_company"] = company.name
                     break
+                if automation is None:
+                    try:
+                        session, automation = _open_authenticated_automation(responsible_certificate, responsible_company.name)
+                    except Exception as exc:
+                        runtime_env.logger.warning(
+                            f"Não foi possível reabrir a sessão do escritório responsável antes de {company.name}: {exc}"
+                        )
+                        if _company_has_own_certificate(company):
+                            fallback_session: Optional[BrowserSession] = None
+                            try:
+                                company_certificate = _resolve_company_certificate(runtime_env, company)
+                                fallback_session, fallback_automation = _open_authenticated_automation(company_certificate, company.name)
+                                result = fallback_automation.collect_current_mailbox(
+                                    company,
+                                    run_id,
+                                    switch_profile=False,
+                                    context_type="company",
+                                    raise_on_error=True,
+                                )
+                            except Exception as fallback_exc:
+                                result = _build_company_error_result(
+                                    company,
+                                    error_messages=[_stack_tail(exc), _stack_tail(fallback_exc)],
+                                )
+                            finally:
+                                close_browser(fallback_session, runtime_env)
+                            company_results.append(result)
+                            dashboard_client.persist_mailbox_messages(
+                                office_context,
+                                result,
+                                run_id=run_id,
+                            )
+                            continue
+                        result = _build_company_error_result(
+                            company,
+                            error_messages=[_stack_tail(exc)],
+                        )
+                        company_results.append(result)
+                        dashboard_client.persist_mailbox_messages(
+                            office_context,
+                            result,
+                            run_id=run_id,
+                        )
+                        continue
                 runtime_env.logger.info(f"Processando empresa por procuração: {company.name}")
                 runtime_env.json_runtime.write_heartbeat(
                     status="processing",
@@ -3112,7 +3209,39 @@ def execute_mailbox_run(
                 )
                 if progress_callback:
                     progress_callback({"current": index, "total": total_steps, "company_name": company.name})
-                result = automation.collect_current_mailbox(company, run_id, switch_profile=True, context_type="company")
+                try:
+                    result = automation.collect_current_mailbox(
+                        company,
+                        run_id,
+                        switch_profile=True,
+                        context_type="company",
+                        raise_on_error=True,
+                    )
+                except ProfileSwitchNoPowerOfAttorneyError as exc:
+                    if _company_has_own_certificate(company):
+                        runtime_env.logger.warning(
+                            f"Empresa {company.name} sem procuração via escritório responsável. "
+                            "Empresa será tentada novamente no final com certificado próprio."
+                        )
+                        deferred_certificate_fallbacks.append((company, _stack_tail(exc)))
+                        continue
+                    else:
+                        runtime_env.logger.warning(
+                            f"Empresa {company.name} sem procuração via escritório responsável e sem certificado próprio. "
+                            "Seguindo para a próxima empresa."
+                        )
+                        result = _build_company_error_result(
+                            company,
+                            error_messages=[
+                                _stack_tail(exc),
+                                "Empresa sem certificado digital próprio para fallback após falta de procuração.",
+                            ],
+                        )
+                except Exception as exc:
+                    result = _build_company_error_result(
+                        company,
+                        error_messages=[_stack_tail(exc)],
+                    )
                 company_results.append(result)
                 dashboard_client.persist_mailbox_messages(
                     office_context,
@@ -3121,6 +3250,48 @@ def execute_mailbox_run(
                 )
         finally:
             close_browser(session, runtime_env)
+
+        for deferred_company, deferred_error in deferred_certificate_fallbacks:
+            if stop_requested():
+                summary["status"] = "stopped"
+                summary["interrupted_at_company"] = deferred_company.name
+                break
+            runtime_env.logger.info(
+                f"Processando empresa com certificado próprio após falta de procuração: {deferred_company.name}"
+            )
+            runtime_env.json_runtime.write_heartbeat(
+                status="processing",
+                current_job_id=job.job_id if job else None,
+                current_execution_request_id=job.execution_request_id if job else None,
+                message=f"fallback_company:{deferred_company.company_id}",
+                progress={"current": len(company_results) + 1, "total": total_steps, "company_id": deferred_company.company_id},
+                extra={"run_id": run_id, "company_name": deferred_company.name, "mode": "own_certificate_fallback"},
+            )
+            fallback_session: Optional[BrowserSession] = None
+            try:
+                company_certificate = _resolve_company_certificate(runtime_env, deferred_company)
+                fallback_session, fallback_automation = _open_authenticated_automation(company_certificate, deferred_company.name)
+                result = fallback_automation.collect_current_mailbox(
+                    deferred_company,
+                    run_id,
+                    switch_profile=False,
+                    context_type="company",
+                    raise_on_error=True,
+                )
+                result.errors.insert(0, deferred_error)
+            except Exception as fallback_exc:
+                result = _build_company_error_result(
+                    deferred_company,
+                    error_messages=[deferred_error, _stack_tail(fallback_exc)],
+                )
+            finally:
+                close_browser(fallback_session, runtime_env)
+            company_results.append(result)
+            dashboard_client.persist_mailbox_messages(
+                office_context,
+                result,
+                run_id=run_id,
+            )
     else:
         for index, company in enumerate(companies, start=1):
             if stop_requested():
