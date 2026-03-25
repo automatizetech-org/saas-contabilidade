@@ -381,6 +381,7 @@ function CertidoesContent({ companyFilter }: { companyFilter: string[] | null })
             pageSize={pageSize}
             shownItems={items.length}
             hasMore={hasMore}
+            totalApprox={overview?.cards.total ?? null}
             onFirst={() => {
               setPage(1);
               setCursorHistory([null]);
@@ -890,7 +891,7 @@ export default function FiscalDetailPage() {
             pageSize={pageSize}
             shownItems={pageItems.length}
             hasMore={hasMore}
-            totalApprox={isNfs || isNfeNfc ? summaryCards.totalDocuments : null}
+            totalApprox={isNfs || isNfeNfc || kind === "certidoes" ? summaryCards.totalDocuments : null}
             onFirst={() => {
               setCurrentPage(1);
               setCursorHistory([null]);

@@ -96,6 +96,26 @@ async function fetchOfficeServer(
   return fetch(url, init)
 }
 
+async function fetchOfficeServerWithAuthRetry(
+  action: string,
+  buildInit: (headers: Record<string, string>) => RequestInit & { body?: BodyInit | null },
+): Promise<Response> {
+  await ensureSessionValidOrThrow()
+  let headers = await getAuthHeaders("application/json")
+  let response = await fetchOfficeServer(action, buildInit(headers))
+  if (response.status !== 401) return response
+
+  try {
+    await refreshAccessTokenOrThrow()
+  } catch {
+    return response
+  }
+
+  headers = await getAuthHeaders("application/json")
+  response = await fetchOfficeServer(action, buildInit(headers))
+  return response
+}
+
 async function readError(res: Response) {
   const text = await res.text().catch(() => "")
   try {
@@ -110,12 +130,11 @@ export async function postOfficeServerJson<T>(
   action: string,
   payload: Record<string, unknown>
 ): Promise<T> {
-  const headers = await getAuthHeaders("application/json")
-  const res = await fetchOfficeServer(action, {
+  const res = await fetchOfficeServerWithAuthRetry(action, (headers) => ({
     method: "POST",
     headers,
     body: JSON.stringify(payload),
-  })
+  }))
   if (!res.ok) throw new Error(await readError(res))
   return (await res.json().catch(() => ({}))) as T
 }
@@ -315,12 +334,11 @@ async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; fi
   const normalizedPath = String(filePath || "").trim()
   if (!normalizedPath) throw new Error("Caminho do arquivo não informado.")
 
-  const headers = await getAuthHeaders("application/json")
-  const res = await fetchOfficeServer("download-file", {
+  const res = await fetchOfficeServerWithAuthRetry("download-file", (headers) => ({
     method: "POST",
     headers,
     body: JSON.stringify({ file_path: normalizedPath }),
-  })
+  }))
 
   if (!res.ok) throw new Error(await readError(res))
 
@@ -335,12 +353,11 @@ async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; fi
 }
 
 export async function downloadFiscalDocument(documentId: string, suggestedName?: string): Promise<void> {
-  const headers = await getAuthHeaders("application/json")
-  const res = await fetchOfficeServer("download-fiscal-document", {
+  const res = await fetchOfficeServerWithAuthRetry("download-fiscal-document", (headers) => ({
     method: "POST",
     headers,
     body: JSON.stringify({ document_id: documentId }),
-  })
+  }))
   if (!res.ok) throw new Error(await readError(res))
   const blob = await res.blob()
   const disposition = res.headers.get("Content-Disposition")
@@ -361,12 +378,11 @@ export async function downloadOfficeServerAction(
   payload: Record<string, unknown>,
   suggestedName?: string
 ): Promise<void> {
-  const headers = await getAuthHeaders("application/json")
-  const res = await fetchOfficeServer(action, {
+  const res = await fetchOfficeServerWithAuthRetry(action, (headers) => ({
     method: "POST",
     headers,
     body: JSON.stringify(payload),
-  })
+  }))
   if (!res.ok) throw new Error(await readError(res))
   const blob = await res.blob()
   const disposition = res.headers.get("Content-Disposition")
@@ -496,8 +512,7 @@ export async function downloadListedFilesZipWithCategory(
   }
 
   if (hasServerApi()) {
-    const headers = await getAuthHeaders("application/json")
-    const res = await fetchOfficeServer("download-zip-by-paths", {
+    const res = await fetchOfficeServerWithAuthRetry("download-zip-by-paths", (headers) => ({
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -509,7 +524,7 @@ export async function downloadListedFilesZipWithCategory(
         })),
         filename_suffix: suggestedName !== "documentos" ? suggestedName.replace(/[^a-z0-9-]/gi, "-").slice(0, 32) : undefined,
       }),
-    })
+    }))
     const blob = await fetchBlobWithProgress(res, onProgress)
     triggerBlobDownload(blob, `${suggestedName}.zip`)
     return
@@ -577,12 +592,11 @@ async function downloadZipAction(
   filename: string,
   onProgress?: (percent: number) => void
 ): Promise<void> {
-  const headers = await getAuthHeaders("application/json")
-  const res = await fetchOfficeServer(action, {
+  const res = await fetchOfficeServerWithAuthRetry(action, (headers) => ({
     method: "POST",
     headers,
     body: JSON.stringify(payload),
-  })
+  }))
   const blob = await fetchBlobWithProgress(res, onProgress)
   triggerBlobDownload(blob, filename)
 }
@@ -622,12 +636,11 @@ export async function downloadHubCompaniesZip(companyIds: string[], filenameSuff
 }
 
 export async function fiscalSyncAll(): Promise<{ ok: boolean; inserted: number; skipped: number; deleted: number; errors?: Array<{ file: string; error: string }> }> {
-  const headers = await getAuthHeaders("application/json")
-  const res = await fetchOfficeServer("fiscal-sync-all", {
+  const res = await fetchOfficeServerWithAuthRetry("fiscal-sync-all", (headers) => ({
     method: "POST",
     headers,
     body: JSON.stringify({}),
-  })
+  }))
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg = body?.error ?? body?.detail ?? `Erro ${res.status} ao sincronizar`

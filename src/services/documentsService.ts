@@ -73,6 +73,56 @@ const preferFiscalDetailFallback = Boolean(import.meta.env.DEV)
 let canUseFiscalDetailSummaryRpc = !preferFiscalDetailFallback
 let canUseFiscalDetailCursorRpc = !preferFiscalDetailFallback
 let canUseFiscalDetailZipPathsRpc = !preferFiscalDetailFallback
+const CERTIDOES_CACHE_TTL_MS = 15_000
+
+type CachedCertidaoRow = Awaited<ReturnType<typeof getCertidoesDocuments>>
+
+const certidoesDocumentsCache = new Map<
+  string,
+  { data: CachedCertidaoRow; expiresAt: number; promise: Promise<CachedCertidaoRow> | null }
+>()
+
+function getCertidoesCacheKey(companyIds: string[] | null | undefined) {
+  const normalized = (companyIds ?? [])
+    .map((id) => String(id || "").trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+  return normalized.join("|") || "__all__"
+}
+
+async function getCachedCertidoesDocuments(companyIds: string[] | null | undefined) {
+  const key = getCertidoesCacheKey(companyIds)
+  const now = Date.now()
+  const cached = certidoesDocumentsCache.get(key)
+  if (cached?.data && cached.expiresAt > now) {
+    return cached.data
+  }
+  if (cached?.promise) {
+    return cached.promise
+  }
+
+  const request = getCertidoesDocuments(companyIds?.length ? companyIds : null)
+    .then((rows) => {
+      certidoesDocumentsCache.set(key, {
+        data: rows,
+        expiresAt: Date.now() + CERTIDOES_CACHE_TTL_MS,
+        promise: null,
+      })
+      return rows
+    })
+    .catch((error) => {
+      certidoesDocumentsCache.delete(key)
+      throw error
+    })
+
+  certidoesDocumentsCache.set(key, {
+    data: cached?.data ?? [],
+    expiresAt: 0,
+    promise: request,
+  })
+
+  return request
+}
 
 function normalizeText(value: unknown) {
   return String(value ?? "")
@@ -86,9 +136,25 @@ function normalizeDigits(value: unknown) {
   return String(value ?? "").replace(/\D/g, "")
 }
 
+function normalizeCertidaoTipoValue(value: unknown) {
+  const normalized = normalizeText(value)
+  if (!normalized) return ""
+  if (normalized.includes("estadual")) return "estadual"
+  if (normalized === "estadual_go") return "estadual"
+  if (normalized === "fgts") return "fgts"
+  if (normalized === "federal") return "federal"
+  return normalized
+}
+
 function isNegativeCertidaoStatus(status: unknown) {
   const normalized = normalizeText(status)
-  return normalized === "regular" || normalized === "negativa" || normalized === "empregador nao cadastrado"
+  return (
+    normalized === "regular" ||
+    normalized === "negativa" ||
+    normalized === "empregador nao cadastrado" ||
+    normalized === "positiva com efeito de negativa" ||
+    normalized === "positiva com efeitos de negativa"
+  )
 }
 
 function mapUnifiedRpcRow(row: any): UnifiedDocumentRow {
@@ -377,7 +443,7 @@ function buildMonthSeries(rows: FiscalListRow[], dateFrom?: string, dateTo?: str
 }
 
 export async function getCertidoesOverviewSummary(companyIds: string[] | null): Promise<CertidoesOverview> {
-  const certidoes = await getCertidoesDocuments(companyIds)
+  const certidoes = await getCachedCertidoesDocuments(companyIds)
   const negativas = certidoes.filter((certidao) => isNegativeCertidaoStatus((certidao as { status?: string | null }).status)).length
   const irregulares = certidoes.length - negativas
   return {
@@ -522,7 +588,7 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
       canUseFiscalDetailCursorRpc = false
     }
     const baseRows = filters.kind === "certidoes"
-      ? (await getCertidoesDocuments(filters.companyIds?.length ? filters.companyIds : null)).map((row) => ({
+      ? (await getCachedCertidoesDocuments(filters.companyIds?.length ? filters.companyIds : null)).map((row) => ({
           id: row.id,
           company_id: row.company_id,
           empresa: row.empresa ?? "",
@@ -569,6 +635,7 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
           normalizeText(row.status).includes(search) ||
           normalizeText(row.chave).includes(search) ||
           normalizeText(row.tipo_certidao).includes(search) ||
+          normalizeCertidaoTipoValue(row.tipo_certidao).includes(search) ||
           (digitsSearch.length > 0 && normalizeDigits(row.cnpj).includes(digitsSearch))
         if (!matchesSearch) return false
       }
@@ -581,7 +648,13 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
       }
       if (filters.origem && filters.origem !== "all" && row.origem !== filters.origem) return false
       if (filters.modelo && filters.modelo !== "all" && row.modelo !== filters.modelo) return false
-      if (filters.certidaoTipo && filters.certidaoTipo !== "all" && row.tipo_certidao !== normalizeText(filters.certidaoTipo)) return false
+      if (
+        filters.certidaoTipo &&
+        filters.certidaoTipo !== "all" &&
+        normalizeCertidaoTipoValue(row.tipo_certidao) !== normalizeCertidaoTipoValue(filters.certidaoTipo)
+      ) {
+        return false
+      }
       return true
     })
 

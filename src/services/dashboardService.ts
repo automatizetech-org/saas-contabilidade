@@ -37,6 +37,48 @@ function isWithinDateRange(value: string, dateFrom?: string, dateTo?: string) {
   return true
 }
 
+function normalizeRelativeFilePath(value: unknown) {
+  const raw = String(value ?? "").trim()
+  if (!raw) return null
+  return raw.replace(/\\/g, "/")
+}
+
+function sanitizeCompanyFolderName(value: string) {
+  const normalized = String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+  return normalized.replace(/[^A-Za-z0-9 _.-]/g, "").trim() || "EMPRESA"
+}
+
+function buildCertidaoFallbackFilePath(
+  companyName: string,
+  tipoCertidao: string,
+  payload: Record<string, unknown>,
+) {
+  const normalizedCompany = String(companyName || "").trim()
+  const normalizedTipo = String(tipoCertidao || "").trim()
+  const documentDate = String(payload.document_date || payload.data_consulta || "").slice(0, 10)
+  if (!normalizedCompany || !normalizedTipo || !/^\d{4}-\d{2}-\d{2}$/.test(documentDate)) {
+    return null
+  }
+  const [year, month, day] = documentDate.split("-")
+  const safeCompany = sanitizeCompanyFolderName(normalizedCompany)
+  return `${safeCompany}/FISCAL/CERTIDOES/${year}/${month}/${day}/${normalizedTipo}.pdf`
+}
+
+function resolveCertidaoFilePath(
+  companyName: string,
+  tipoCertidao: string,
+  payload: Record<string, unknown>,
+) {
+  const directKeys = ["arquivo_pdf", "file_path", "pdf_path", "path", "relative_path"]
+  for (const key of directKeys) {
+    const normalized = normalizeRelativeFilePath(payload[key])
+    if (normalized) return normalized
+  }
+  return buildCertidaoFallbackFilePath(companyName, tipoCertidao, payload)
+}
+
 function buildMonthsBetween(dateFrom: string, dateTo: string) {
   const from = new Date(`${dateFrom}T12:00:00`)
   const to = new Date(`${dateTo}T12:00:00`)
@@ -87,7 +129,15 @@ function normalizeCertidaoStatus(status: unknown) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
-  if (normalized === "empregador nao cadastrado") return "negativa"
+  if (
+    normalized === "empregador nao cadastrado" ||
+    normalized === "regular" ||
+    normalized === "positiva com efeito de negativa" ||
+    normalized === "positiva com efeitos de negativa"
+  ) {
+    return "negativa"
+  }
+  if (normalized === "positiva") return "irregular"
   return String(status ?? "").trim() || null
 }
 
@@ -460,6 +510,7 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
     const payload = d.payload || {}
     const tipoCertidao = String(payload.tipo_certidao || "").trim()
     if (!tipoCertidao) continue
+    const companyName = names.get(d.company_id) ?? ""
     const key = `${d.company_id}:${tipoCertidao}`
     const current = latestByCompanyAndType.get(key)
     const candidate = {
@@ -469,7 +520,7 @@ export async function getCertidoesDocuments(companyIds: string[] | null) {
       status: normalizeCertidaoStatus(payload.status),
       document_date: String(payload.document_date || payload.data_consulta || "").slice(0, 10) || null,
       tipo_certidao: tipoCertidao,
-      file_path: String(payload.arquivo_pdf || "") || null,
+      file_path: resolveCertidaoFilePath(companyName, tipoCertidao, payload),
       created_at: String(d.created_at || ""),
     }
     if (!current || candidate.created_at > current.created_at) {

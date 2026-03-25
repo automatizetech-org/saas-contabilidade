@@ -31,6 +31,10 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   const alias: Record<string, keyof typeof statusConfig> = {
     "irregularidade": "irregular",
     "irregular": "irregular",
+    "regular": "negativa",
+    "positiva": "irregular",
+    "positiva com efeito de negativa": "negativa",
+    "positiva com efeitos de negativa": "negativa",
     "empregador nao cadastrado": "negativa",
     "empregador não cadastrado": "negativa",
     "não processado": "pendente",

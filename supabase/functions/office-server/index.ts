@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.9.6";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +46,8 @@ type RequestContext = {
   connectorSecretHash: string;
 };
 
+const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
 function isOwnerOrSuperAdmin(
   context: Pick<RequestContext, "officeRole" | "platformRole">,
 ) {
@@ -86,6 +89,62 @@ function validateRelativePath(input: string) {
   }
 
   return parts.join("/");
+}
+
+function sanitizeCompanyFolderName(input: string) {
+  const normalized = String(input ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return normalized.replace(/[^A-Za-z0-9 _.-]/g, "").trim() || "EMPRESA";
+}
+
+async function buildRequestedPathCandidates(
+  context: Pick<RequestContext, "admin" | "officeId">,
+  filePath: string,
+) {
+  const normalized = validateRelativePath(filePath);
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length === 0) return [normalized];
+
+  const [requestedCompanyFolder, ...restParts] = parts;
+  const suffix = restParts.join("/");
+  const candidates = new Set<string>([normalized]);
+  const requestedSanitized = sanitizeCompanyFolderName(requestedCompanyFolder);
+
+  if (suffix && requestedSanitized !== requestedCompanyFolder) {
+    candidates.add(`${requestedSanitized}/${suffix}`);
+  }
+
+  const { data: companies, error } = await context.admin
+    .from("companies")
+    .select("name")
+    .eq("office_id", context.officeId);
+  if (error) {
+    throw new Error(
+      error.message || "Não foi possível resolver aliases de pastas da empresa.",
+    );
+  }
+
+  for (const row of companies ?? []) {
+    const rawName = String(row.name ?? "").trim();
+    if (!rawName) continue;
+    const sanitizedName = sanitizeCompanyFolderName(rawName);
+    if (
+      rawName === requestedCompanyFolder ||
+      sanitizedName === requestedCompanyFolder ||
+      sanitizedName === requestedSanitized
+    ) {
+      if (suffix) {
+        candidates.add(`${rawName}/${suffix}`);
+        candidates.add(`${sanitizedName}/${suffix}`);
+      } else {
+        candidates.add(rawName);
+        candidates.add(sanitizedName);
+      }
+    }
+  }
+
+  return [...candidates];
 }
 
 /**
@@ -150,6 +209,25 @@ async function resolveUserIdFromGoTrue(
       `Auth HTTP ${res.status}`;
   } catch {
     lastDetail = `Auth HTTP ${res.status}`;
+  }
+
+  try {
+    const base = supabaseUrl.replace(/\/$/, "");
+    let jwks = jwksCache.get(base);
+    if (!jwks) {
+      jwks = createRemoteJWKSet(new URL(`${base}/auth/v1/.well-known/jwks.json`));
+      jwksCache.set(base, jwks);
+    }
+    const { payload } = await jwtVerify(accessToken, jwks, {
+      issuer: `${base}/auth/v1`,
+      audience: "authenticated",
+    });
+    if (typeof payload.sub === "string" && payload.sub.trim()) {
+      return { ok: true, id: payload.sub.trim() };
+    }
+    lastDetail = "JWT válido, mas sem subject do usuário.";
+  } catch (e) {
+    lastDetail = e instanceof Error ? e.message : String(e);
   }
 
   return { ok: false, detail: lastDetail };
@@ -268,7 +346,7 @@ async function getContext(req: Request) {
 }
 
 async function getAuthorizedFilePaths(
-  context: Pick<RequestContext, "authClient">,
+  context: Pick<RequestContext, "authClient" | "admin" | "officeId">,
   filePaths: string[],
 ) {
   const normalizedPaths = [
@@ -289,13 +367,107 @@ async function getAuthorizedFilePaths(
     );
   }
 
-  return new Set(
+  const authorized = new Set(
     (Array.isArray(data) ? data : [])
       .map((row) =>
         String((row as { file_path?: string | null })?.file_path ?? "").trim(),
       )
       .filter(Boolean),
   );
+
+  const pendingCertidaoPaths = normalizedPaths.filter(
+    (filePath) =>
+      !authorized.has(filePath) &&
+      /\/fiscal\/certidoes\/\d{4}\/\d{2}\/\d{2}\//i.test(filePath),
+  );
+  if (pendingCertidaoPaths.length === 0) return authorized;
+
+  const requestedCompanyFolders = [
+    ...new Set(
+      pendingCertidaoPaths
+        .map((filePath) => filePath.split("/")[0]?.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (requestedCompanyFolders.length === 0) return authorized;
+
+  const { data: companies, error: companiesError } = await context.admin
+    .from("companies")
+    .select("id, name")
+    .eq("office_id", context.officeId);
+  if (companiesError) {
+    throw new Error(
+      companiesError.message ||
+        "Não foi possível validar as empresas das certidões.",
+    );
+  }
+
+  const companyMap = new Map<string, string>();
+  for (const company of companies ?? []) {
+    const companyId = String(company.id ?? "").trim();
+    const companyName = String(company.name ?? "").trim();
+    if (!companyId || !companyName) continue;
+    const sanitizedName = sanitizeCompanyFolderName(companyName);
+    if (
+      requestedCompanyFolders.includes(companyName) ||
+      requestedCompanyFolders.includes(sanitizedName)
+    ) {
+      companyMap.set(companyId, companyName);
+    }
+  }
+  const companyIds = [...companyMap.keys()].filter(Boolean);
+  if (companyIds.length === 0) return authorized;
+
+  const { data: certRows, error: certError } = await context.admin
+    .from("sync_events")
+    .select("company_id, payload")
+    .eq("office_id", context.officeId)
+    .eq("tipo", "certidao_resultado")
+    .in("company_id", companyIds);
+  if (certError) {
+    throw new Error(
+      certError.message ||
+        "Não foi possível validar os arquivos de certidão.",
+    );
+  }
+
+  const pendingSet = new Set(pendingCertidaoPaths);
+  for (const row of certRows ?? []) {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(String(row.payload ?? "{}"));
+    } catch {
+      payload = {};
+    }
+
+    const explicitPath = String(payload.arquivo_pdf ?? "").trim();
+    if (explicitPath && pendingSet.has(explicitPath)) {
+      authorized.add(explicitPath);
+    }
+
+    const companyName =
+      companyMap.get(String(row.company_id ?? "").trim()) ?? "";
+    const tipo = String(payload.tipo_certidao ?? "").trim();
+    const documentDate = String(
+      payload.document_date ?? payload.data_consulta ?? "",
+    ).slice(0, 10);
+    if (!companyName || !tipo || !/^\d{4}-\d{2}-\d{2}$/.test(documentDate)) {
+      continue;
+    }
+    const [year, month, day] = documentDate.split("-");
+    const fallbackRawPath =
+      `${companyName}/FISCAL/CERTIDOES/${year}/${month}/${day}/${tipo}.pdf`;
+    const fallbackSanitizedPath =
+      `${sanitizeCompanyFolderName(companyName)}/FISCAL/CERTIDOES/${year}/${month}/${day}/${tipo}.pdf`;
+    if (pendingSet.has(fallbackRawPath)) {
+      authorized.add(fallbackRawPath);
+    }
+    if (pendingSet.has(fallbackSanitizedPath)) {
+      authorized.add(fallbackSanitizedPath);
+    }
+  }
+
+  return authorized;
 }
 
 async function readError(response: Response) {
@@ -442,23 +614,39 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     try {
-      const filePath = validateRelativePath(String(body.file_path ?? ""));
-      const authorizedPaths = await getAuthorizedFilePaths(context, [filePath]);
-      if (!authorizedPaths.has(filePath)) {
+      const requestedPath = validateRelativePath(String(body.file_path ?? ""));
+      const candidatePaths = await buildRequestedPathCandidates(
+        context,
+        requestedPath,
+      );
+      const authorizedPaths = await getAuthorizedFilePaths(
+        context,
+        candidatePaths,
+      );
+      const allowedCandidates = candidatePaths.filter((filePath) =>
+        authorizedPaths.has(filePath),
+      );
+      if (allowedCandidates.length === 0) {
         return json(
           { error: "Arquivo não autorizado para este escritório." },
           403,
         );
       }
-      return proxyBinary(
-        server,
-        connectorSecretHash,
-        userToken,
-        `/api/files/download?path=${encodeURIComponent(filePath)}`,
-        {
-          method: "GET",
-        },
-      );
+      let lastResponse: Response | null = null;
+      for (const filePath of allowedCandidates) {
+        const response = await proxyBinary(
+          server,
+          connectorSecretHash,
+          userToken,
+          `/api/files/download?path=${encodeURIComponent(filePath)}`,
+          {
+            method: "GET",
+          },
+        );
+        if (response.status === 200) return response;
+        lastResponse = response;
+      }
+      return lastResponse ?? json({ error: "Arquivo não encontrado." }, 404);
     } catch (error) {
       const message =
         error instanceof Error
@@ -501,10 +689,14 @@ Deno.serve(async (req) => {
       const requestedPaths: string[] = [];
       for (const it of rawItems) {
         try {
-          const file_path = validateRelativePath(
+          const requestedPath = validateRelativePath(
             String(it?.file_path ?? "").trim(),
           );
-          requestedPaths.push(file_path);
+          const candidatePaths = await buildRequestedPathCandidates(
+            context,
+            requestedPath,
+          );
+          requestedPaths.push(...candidatePaths);
           const rawInner =
             typeof it?.zip_inner_segment === "string"
               ? it.zip_inner_segment.trim()
@@ -512,7 +704,8 @@ Deno.serve(async (req) => {
           const zip_inner_segment =
             rawInner === "55" || rawInner === "65" ? rawInner : undefined;
           items.push({
-            file_path,
+            file_path: requestedPath,
+            requested_candidates: candidatePaths,
             company_name:
               typeof it?.company_name === "string"
                 ? it.company_name.trim()
@@ -531,7 +724,22 @@ Deno.serve(async (req) => {
         context,
         requestedPaths,
       );
-      if (authorizedPaths.size !== new Set(requestedPaths).size) {
+      const resolvedItems = items
+        .map((item) => {
+          const resolvedPath =
+            item.requested_candidates.find((candidate) =>
+              authorizedPaths.has(candidate),
+            ) ?? null;
+          return resolvedPath ? { ...item, file_path: resolvedPath } : null;
+        })
+        .filter(Boolean) as Array<{
+          file_path: string;
+          company_name?: string;
+          category?: string;
+          zip_inner_segment?: string;
+          requested_candidates: string[];
+        }>;
+      if (resolvedItems.length !== items.length) {
         return json(
           {
             error:
@@ -548,7 +756,14 @@ Deno.serve(async (req) => {
         {
           method: "POST",
           body: JSON.stringify({
-            items: items.filter((item) => authorizedPaths.has(item.file_path)),
+            items: resolvedItems.map((item) => ({
+              file_path: item.file_path,
+              company_name: item.company_name,
+              category: item.category,
+              ...(item.zip_inner_segment
+                ? { zip_inner_segment: item.zip_inner_segment }
+                : {}),
+            })),
             filename_suffix: body.filename_suffix,
           }),
         },

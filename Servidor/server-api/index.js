@@ -3843,11 +3843,13 @@ async function runFiscalSyncAll(supabase, officeId = null) {
   const companyDirs = fs
     .readdirSync(empresasPath, { withFileTypes: true })
     .filter((e) => e.isDirectory());
+  let matchedCompanyDirs = 0;
 
   for (const companyDir of companyDirs) {
     const companyName = companyDir.name;
     const companyId = nameToId.get(normalizeCompanyName(companyName));
     if (!companyId) continue;
+    matchedCompanyDirs += 1;
     const pathsOnDisk = pathsOnDiskByCompany.get(companyId);
     if (!pathsOnDisk) continue;
 
@@ -3959,6 +3961,14 @@ async function runFiscalSyncAll(supabase, officeId = null) {
   }
 
   // Espelhamento: remove do banco os registros DESTE ESCRITÓRIO cujo arquivo não existe mais na pasta.
+  console.log(
+    `[fiscal-watcher] office=${effectiveOfficeId} | base_path=${empresasPath} | db_companies=${companies.length} | disk_dirs=${companyDirs.length} | matched_dirs=${matchedCompanyDirs}`,
+  );
+  if (companies.length > 0 && matchedCompanyDirs === 0) {
+    console.warn(
+      `[fiscal-watcher] Nenhuma pasta de empresa em BASE_PATH corresponde às empresas do escritório ${effectiveOfficeId}. Verifique BASE_PATH e o vínculo do conector.`,
+    );
+  }
   const rowsToMirrorDelete = await fetchAllRows(() =>
     supabase
       .from("fiscal_documents")

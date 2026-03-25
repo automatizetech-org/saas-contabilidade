@@ -710,6 +710,116 @@ class DashboardClient:
             self.runtime.logger.warning(f"Falha ao carregar admin_settings do robô: {exc}")
             return RobotMailboxConfig(source="default")
 
+    def _mailbox_external_message_id(self, message: MessageRecord) -> str:
+        candidate = str(message.message_id or "").strip()
+        if candidate:
+            return candidate
+        raw = "|".join(
+            [
+                str(message.company_id or "").strip(),
+                str(message.subject or "").strip(),
+                str(message.received_at or message.posted_at or "").strip(),
+                str(message.raw_visible_text or "").strip(),
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+    def _mailbox_received_at_iso(self, message: MessageRecord) -> str:
+        raw = str(message.received_at or message.posted_at or message.sent_at or "").strip()
+        if not raw:
+            return message.extracted_at
+        for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y"):
+            try:
+                parsed = datetime.strptime(raw, fmt)
+                return parsed.replace(tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                continue
+        return message.extracted_at
+
+    def _mailbox_status_tuple(self, message: MessageRecord) -> tuple[str, bool]:
+        read_status = str(message.read_status or "").strip().lower()
+        if message.unread is True:
+            return "novo", False
+        if message.unread is False:
+            return "lido", True
+        if any(token in read_status for token in ("não lida", "nao lida", "não visualizada", "nao visualizada", "nova")):
+            return "novo", False
+        if any(token in read_status for token in ("lida", "lido", "visualizada")):
+            return "lido", True
+        return "novo", False
+
+    def persist_mailbox_messages(
+        self,
+        office_context: OfficeContext,
+        result: CompanyRunResult,
+        *,
+        run_id: str,
+    ) -> int:
+        if not office_context.office_id or not result.messages:
+            return 0
+
+        try:
+            client = self._supabase()
+            payload_rows: list[dict[str, Any]] = []
+            external_ids: list[str] = []
+            for message in result.messages:
+                external_message_id = self._mailbox_external_message_id(message)
+                status, is_read = self._mailbox_status_tuple(message)
+                external_ids.append(external_message_id)
+                payload_rows.append(
+                    {
+                        "office_id": office_context.office_id,
+                        "company_id": result.company_id,
+                        "robot_technical_id": ROBOT_TECHNICAL_ID,
+                        "external_message_id": external_message_id,
+                        "subject": str(message.subject or "").strip() or "(sem assunto)",
+                        "sender_name": str(message.sender or "").strip() or None,
+                        "sender_document": None,
+                        "category": str(message.category or "").strip() or None,
+                        "status": status,
+                        "received_at": self._mailbox_received_at_iso(message),
+                        "fetched_at": str(message.extracted_at or utc_now_iso()).strip(),
+                        "is_read": is_read,
+                        "read_at": str(message.extracted_at or utc_now_iso()).strip() if is_read else None,
+                        "payload": {
+                            "run_id": run_id,
+                            "context_type": result.context_type,
+                            "company_profile_context": result.company_profile_context,
+                            "message_id": message.message_id,
+                            "subject": message.subject,
+                            "sender": message.sender,
+                            "category": message.category,
+                            "received_at_raw": message.received_at,
+                            "sent_at_raw": message.sent_at,
+                            "posted_at_raw": message.posted_at,
+                            "read_status": message.read_status,
+                            "unread": message.unread,
+                            "priority": message.priority,
+                            "preview": message.snippet,
+                            "body": message.body,
+                            "attachments": message.attachments,
+                            "raw_visible_text": message.raw_visible_text,
+                            "detail_visible_text": message.detail_visible_text,
+                            "source_system": message.source_system,
+                            "row_index": message.row_index,
+                            "extracted_at": message.extracted_at,
+                        },
+                    }
+                )
+
+            if external_ids:
+                client.table("ecac_mailbox_messages").delete().eq("office_id", office_context.office_id).eq(
+                    "company_id", result.company_id
+                ).eq("robot_technical_id", ROBOT_TECHNICAL_ID).in_("external_message_id", external_ids).execute()
+            client.table("ecac_mailbox_messages").insert(payload_rows).execute()
+            self.runtime.logger.info(
+                f"Supabase: {len(payload_rows)} mensagem(ns) da Caixa Postal sincronizada(s) para {result.company_name}."
+            )
+            return len(payload_rows)
+        except Exception as exc:
+            self.runtime.logger.warning(f"Falha ao sincronizar Caixa Postal no Supabase para {result.company_name}: {exc}")
+            return 0
+
     def resolve_office_context(self, job: Optional[JobPayload] = None, force_refresh: bool = False) -> OfficeContext:
         if self._office_context and not force_refresh:
             return self._office_context
@@ -2414,6 +2524,11 @@ def execute_mailbox_run(
                 switch_profile=False,
                 context_type="responsible_office",
             )
+            dashboard_client.persist_mailbox_messages(
+                office_context,
+                responsible_office_result,
+                run_id=run_id,
+            )
             runtime_env.json_runtime.write_heartbeat(
                 status="processing",
                 current_job_id=job.job_id if job else None,
@@ -2443,6 +2558,11 @@ def execute_mailbox_run(
                     progress_callback({"current": index, "total": total_steps, "company_name": company.name})
                 result = automation.collect_current_mailbox(company, run_id, switch_profile=True, context_type="company")
                 company_results.append(result)
+                dashboard_client.persist_mailbox_messages(
+                    office_context,
+                    result,
+                    run_id=run_id,
+                )
         finally:
             close_browser(session)
     else:
@@ -2491,6 +2611,11 @@ def execute_mailbox_run(
                 automation.login()
                 result = automation.collect_current_mailbox(company, run_id, switch_profile=False, context_type="company")
                 company_results.append(result)
+                dashboard_client.persist_mailbox_messages(
+                    office_context,
+                    result,
+                    run_id=run_id,
+                )
             finally:
                 close_browser(session)
 
@@ -2772,11 +2897,6 @@ class MainWindow(QMainWindow):
         self.company_list.setUniformItemSizes(False)
         companies_layout.addWidget(self.company_list, 1)
 
-        company_buttons = QHBoxLayout()
-        self.refresh_button = QPushButton("Recarregar job")
-        self.refresh_button.clicked.connect(self.reload_companies)
-        company_buttons.addWidget(self.refresh_button)
-        companies_layout.addLayout(company_buttons)
         top_row.addWidget(companies_box, 2)
 
         side_column = QVBoxLayout()
@@ -2938,11 +3058,13 @@ class MainWindow(QMainWindow):
                 self.job_label.setText(self.job.job_id or self.job.execution_request_id or "(sem job_id)")
                 self.status_label.setText("Pronto para executar job")
                 self.progress_label.setText(f"0 / {len(self.companies)}")
+                self.start_button.setEnabled(True)
             else:
                 self.job_label.setText("job.json pendente ou já consumido")
                 self.status_label.setText("Conectado ao dashboard")
                 self.progress_label.setText(f"0 / {len(self.companies)}")
                 self.append_log("Nenhum job.json pendente encontrado. Empresas exibidas a partir do dashboard.")
+                self.start_button.setEnabled(bool(self.companies))
             self.append_log(
                 "Configuração dinâmica: "
                 + (
@@ -2955,6 +3077,7 @@ class MainWindow(QMainWindow):
             self.append_log(f"Falha ao carregar empresas: {exc}")
             self.companies = []
             self._apply_company_filter()
+            self.start_button.setEnabled(False)
 
     def _apply_company_filter(self) -> None:
         search = self.search_input.text().strip().lower()
@@ -2976,19 +3099,47 @@ class MainWindow(QMainWindow):
                 item.setText(item.text() + f"\nMotivo: {company.block_reason}")
             self.company_list.addItem(item)
 
+    def _build_manual_job(self) -> JobPayload:
+        execution_id = f"manual_{uuid.uuid4().hex}"
+        company_ids = [company.company_id for company in self.companies if str(company.company_id).strip()]
+        company_rows = [company.to_dict() for company in self.companies]
+        return JobPayload(
+            job_id=execution_id,
+            execution_request_id=execution_id,
+            office_id=self.office_context.office_id,
+            company_ids=company_ids,
+            companies=company_rows,
+            raw={
+                "job_id": execution_id,
+                "execution_request_id": execution_id,
+                "office_id": self.office_context.office_id,
+                "company_ids": company_ids,
+                "companies": company_rows,
+                "source": "manual_ui",
+            },
+        )
+
     def start_worker(self) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
-        if not self.job:
-            QMessageBox.warning(self, "Job", "job.json obrigatório não encontrado ou já consumido.")
-            return
         if not self.companies:
-            QMessageBox.warning(self, "Empresas", "Nenhuma empresa foi carregada a partir do job.json.")
+            QMessageBox.warning(self, "Empresas", "Nenhuma empresa foi carregada do dashboard.")
+            return
+        execution_job = self.job
+        if not execution_job:
+            if not self.office_context.office_id:
+                QMessageBox.warning(self, "Escritório", "office_id não resolvido. Recarregue o dashboard antes de iniciar.")
+                return
+            execution_job = self._build_manual_job()
+            self.append_log("Nenhum job.json pendente encontrado. Iniciando execução manual com as empresas do dashboard.")
+            self.job_label.setText(execution_job.job_id)
+        if not execution_job.company_ids and not execution_job.companies:
+            QMessageBox.warning(self, "Empresas", "Nenhuma empresa foi informada para a execução.")
             return
         self.worker = EcacMailboxWorker(
             self.runtime,
             companies=list(self.companies),
-            job=self.job,
+            job=execution_job,
             headless=False,
         )
         self.worker.log.connect(self.append_log)
