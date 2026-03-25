@@ -129,6 +129,10 @@ docs/paralegal/taxas e impostos/goiania-taxas-impostos-robot/data/chrome_start.l
 
 # eCAC Login (build/executável PyInstaller)
 docs/ecac/eCAC Login/
+docs/ecac/caixa postal/data/chrome_profile/
+docs/ecac/caixa postal/data/chrome_profile_backup/
+docs/ecac/caixa postal/data/temp_certificates/
+docs/ecac/caixa postal/data/json/certificates.json
 
 # =============================================================================
 # Deploy / plataformas (opcional)

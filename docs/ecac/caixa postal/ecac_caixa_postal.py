@@ -9,6 +9,7 @@ Implementação consolidada em arquivo único.
 import base64
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+import tempfile
 from typing import Any, Optional
 
 
@@ -22,6 +23,7 @@ class RuntimePaths:
     json_dir: Path
     logs_dir: Path
     chrome_profile_dir: Path
+    chrome_profile_backup_dir: Path
     certificates_registry_path: Path
     runtime_log_path: Path
 
@@ -363,9 +365,10 @@ def bootstrap_environment() -> RuntimePaths:
     data_dir = runtime_dir / "data"
     json_dir = data_dir / "json"
     logs_dir = data_dir / "logs"
-    chrome_profile_dir = runtime_dir / "chrome_profile"
+    chrome_profile_dir = data_dir / "chrome_profile"
+    chrome_profile_backup_dir = data_dir / "chrome_profile_backup"
 
-    for folder in (data_dir, json_dir, logs_dir, chrome_profile_dir):
+    for folder in (data_dir, json_dir, logs_dir, chrome_profile_dir, chrome_profile_backup_dir):
         folder.mkdir(parents=True, exist_ok=True)
 
     playwright_dir = data_dir / "ms-playwright"
@@ -380,6 +383,7 @@ def bootstrap_environment() -> RuntimePaths:
         json_dir=json_dir,
         logs_dir=logs_dir,
         chrome_profile_dir=chrome_profile_dir,
+        chrome_profile_backup_dir=chrome_profile_backup_dir,
         certificates_registry_path=json_dir / "certificates.json",
         runtime_log_path=logs_dir / "runtime.log",
     )
@@ -560,8 +564,6 @@ class RuntimeEnvironment:
 def build_runtime(sink: Optional[Callable[[str], None]] = None) -> RuntimeEnvironment:
     paths = bootstrap_environment()
     logger = RuntimeLogger(paths.runtime_log_path, sink=sink)
-    if not paths.certificates_registry_path.exists():
-        paths.certificates_registry_path.write_text("[]\n", encoding="utf-8")
     json_runtime = JsonRobotRuntime(ROBOT_TECHNICAL_ID, ROBOT_DISPLAY_NAME, paths.json_dir)
     return RuntimeEnvironment(paths=paths, logger=logger, json_runtime=json_runtime)
 
@@ -1118,6 +1120,8 @@ def run_powershell(script: str, timeout_ms: int = 60000) -> str:
 
 
 def load_registry(path: Path) -> list[CertificateMetadata]:
+    if not path.exists():
+        return []
     payload = read_json(path, default=[])
     if not isinstance(payload, list):
         return []
@@ -1233,10 +1237,8 @@ def register_certificate(
 ) -> CertificateMetadata:
     metadata = import_pfx_and_get_metadata(pfx_path, password)
     metadata.alias = alias.strip() or metadata.alias or pfx_path.stem
-    registry = load_registry(runtime_env.paths.certificates_registry_path)
-    registry = [item for item in registry if item.thumbprint != metadata.thumbprint]
-    registry.append(metadata)
-    save_registry(runtime_env.paths.certificates_registry_path, registry)
+    metadata.pfx_path = ""
+    metadata.source = "manual_import"
     return metadata
 
 
@@ -1331,14 +1333,29 @@ def resolve_certificate_from_dashboard(
                 raise RuntimeError(f"Caminho de certificado do dashboard inválido para {company.name}: {cert_path}")
             cert_data = cert_path.read_bytes()
 
-        cert_dir = runtime_env.paths.data_dir / "temp_certificates"
-        cert_dir.mkdir(parents=True, exist_ok=True)
-        temp_pfx = cert_dir / f"{company.company_id}_{slugify(company.name or company.document)}.pfx"
-        temp_pfx.write_bytes(cert_data)
-
-        metadata = import_pfx_and_get_metadata(temp_pfx, cert_password)
+        temp_file = tempfile.NamedTemporaryFile(
+            suffix=".pfx",
+            prefix=f"ecac_caixa_postal_{slugify(company.name or company.document)}_",
+            delete=False,
+        )
+        temp_pfx = Path(temp_file.name)
+        try:
+            temp_file.write(cert_data)
+            temp_file.flush()
+            temp_file.close()
+            metadata = import_pfx_and_get_metadata(temp_pfx, cert_password)
+        finally:
+            try:
+                temp_file.close()
+            except Exception:
+                pass
+            try:
+                if temp_pfx.exists():
+                    temp_pfx.unlink()
+            except Exception:
+                pass
         metadata.alias = f"{company.name} (dashboard)"
-        metadata.pfx_path = str(temp_pfx)
+        metadata.pfx_path = ""
         metadata.source = "dashboard_company"
         return metadata
     return None
@@ -1357,28 +1374,7 @@ def resolve_certificate(
         dashboard_certificate = resolve_certificate_from_dashboard(runtime_env, companies)
         if dashboard_certificate:
             return dashboard_certificate
-
-    registry = load_registry(runtime_env.paths.certificates_registry_path)
-    if not registry:
-        return None
-
-    selected: Optional[CertificateMetadata] = None
-    if preferred_thumbprint:
-        selected = next((item for item in registry if item.thumbprint == preferred_thumbprint), None)
-    if selected is None:
-        selected = registry[0]
-    if selected is None:
-        return None
-
-    store_certificate = find_certificate_in_store(
-        subject=selected.subject,
-        issuer=selected.issuer,
-        thumbprint=selected.thumbprint,
-    )
-    store_certificate.alias = selected.alias or store_certificate.subject
-    store_certificate.pfx_path = selected.pfx_path
-    store_certificate.source = selected.source
-    return store_certificate
+    return None
 
 
 def wait_for_certificate_dialog(timeout_seconds: int = 12) -> bool:
@@ -1656,6 +1652,7 @@ certificate_auth = _types_singlefile.SimpleNamespace(
 
 # === ecac_browser ===
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -1689,7 +1686,10 @@ def _playwright_browser_candidates() -> list[Path]:
 def resolve_browser_executable(runtime_env: RuntimeEnvironment) -> Path:
     base_dir = runtime_env.paths.base_dir
     runtime_dir = runtime_env.paths.runtime_dir
+    data_dir = runtime_env.paths.data_dir
     candidates = [
+        data_dir / "Chrome" / "chrome.exe",
+        data_dir / "_internal" / "Chrome" / "chrome.exe",
         base_dir / "Chrome" / "chrome.exe",
         base_dir / "_internal" / "Chrome" / "chrome.exe",
         runtime_dir / "_internal" / "Chrome" / "chrome.exe",
@@ -1720,6 +1720,150 @@ def resolve_browser_executable(runtime_env: RuntimeEnvironment) -> Path:
     raise FileNotFoundError(f"Chrome/Edge não encontrado. Caminhos verificados: {checked}")
 
 
+def _cleanup_profile_runtime_files(profile_dir: Path) -> None:
+    runtime_entries = [
+        "DevToolsActivePort",
+        "SingletonCookie",
+        "SingletonLock",
+        "SingletonSocket",
+        "lockfile",
+        "chrome_debug.log",
+    ]
+    for name in runtime_entries:
+        try:
+            target = profile_dir / name
+            if target.exists():
+                target.unlink()
+        except Exception:
+            pass
+    for nested_name in ("LOCK",):
+        try:
+            for target in profile_dir.rglob(nested_name):
+                if target.is_file():
+                    target.unlink()
+        except Exception:
+            pass
+
+
+def _is_profile_healthy(profile_dir: Path) -> bool:
+    required = [
+        profile_dir / "Local State",
+        profile_dir / "Default" / "Preferences",
+    ]
+    return all(path.exists() for path in required)
+
+
+def _copy_profile_tree(source_dir: Path, target_dir: Path) -> None:
+    ignore_names = {
+        "Cache",
+        "Code Cache",
+        "GPUCache",
+        "GrShaderCache",
+        "GraphiteDawnCache",
+        "DawnGraphiteCache",
+        "DawnWebGPUCache",
+        "ShaderCache",
+        "Crashpad",
+        "BrowserMetrics",
+        "BrowserMetrics-spare.pma",
+        "DevToolsActivePort",
+        "SingletonCookie",
+        "SingletonLock",
+        "SingletonSocket",
+        "lockfile",
+        "chrome_debug.log",
+        "LOCK",
+        "Cookies-journal",
+        "Network Persistent State",
+        "Session Storage",
+        "Sessions",
+        "shared_proto_db",
+    }
+
+    def _ignore(_dir: str, names: list[str]) -> set[str]:
+        return {name for name in names if name in ignore_names}
+
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    shutil.copytree(source_dir, target_dir, ignore=_ignore)
+    _cleanup_profile_runtime_files(target_dir)
+
+
+def _remove_tree_with_retries(target_dir: Path) -> None:
+    for attempt in range(4):
+        try:
+            if target_dir.exists():
+                _cleanup_profile_runtime_files(target_dir)
+                shutil.rmtree(target_dir, ignore_errors=False)
+        except FileNotFoundError:
+            return
+        except Exception:
+            time.sleep(0.8 + attempt * 0.4)
+        if not target_dir.exists():
+            return
+    shutil.rmtree(target_dir, ignore_errors=True)
+    if target_dir.exists():
+        raise RuntimeError(f"Não foi possível remover completamente o perfil Chrome em {target_dir}")
+
+
+def ensure_chrome_profile_ready(runtime_env: RuntimeEnvironment) -> None:
+    profile_dir = runtime_env.paths.chrome_profile_dir
+    backup_dir = runtime_env.paths.chrome_profile_backup_dir
+    profile_dir.parent.mkdir(parents=True, exist_ok=True)
+    backup_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    profile_entries = list(profile_dir.iterdir()) if profile_dir.exists() else []
+    backup_entries = list(backup_dir.iterdir()) if backup_dir.exists() else []
+
+    if not profile_entries and backup_entries:
+        runtime_env.logger.info(f"Perfil de trabalho ausente. Restaurando a partir do backup: {backup_dir}")
+        _copy_profile_tree(backup_dir, profile_dir)
+        return
+
+    if profile_entries and not backup_entries:
+        runtime_env.logger.info(f"Criando backup inicial do perfil Chrome em: {backup_dir}")
+        _copy_profile_tree(profile_dir, backup_dir)
+        return
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _display_runtime_path(runtime_env: RuntimeEnvironment, path: Path) -> str:
+    try:
+        return str(path.relative_to(runtime_env.paths.runtime_dir)).replace("\\", "/")
+    except Exception:
+        return path.name
+
+
+def prepare_chrome_working_profile(runtime_env: RuntimeEnvironment) -> None:
+    profile_dir = runtime_env.paths.chrome_profile_dir
+    backup_dir = runtime_env.paths.chrome_profile_backup_dir
+    ensure_chrome_profile_ready(runtime_env)
+    if _is_profile_healthy(profile_dir):
+        _cleanup_profile_runtime_files(profile_dir)
+        return
+    if _is_profile_healthy(backup_dir):
+        runtime_env.logger.info("Perfil principal indisponível. Restaurando a partir do backup estável.")
+        _remove_tree_with_retries(profile_dir)
+        profile_dir.parent.mkdir(parents=True, exist_ok=True)
+        _copy_profile_tree(backup_dir, profile_dir)
+        return
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+
+def refresh_chrome_profile_backup(runtime_env: RuntimeEnvironment) -> None:
+    profile_dir = runtime_env.paths.chrome_profile_dir
+    backup_dir = runtime_env.paths.chrome_profile_backup_dir
+    if not _is_profile_healthy(profile_dir):
+        return
+    try:
+        _copy_profile_tree(profile_dir, backup_dir)
+        runtime_env.logger.info(f"Backup do perfil Chrome atualizado em: {backup_dir}")
+    except Exception as exc:
+        runtime_env.logger.warning(f"Falha ao atualizar backup do perfil Chrome: {exc}")
+
+
 def launch_browser(runtime_env: RuntimeEnvironment, *, headless: bool = False) -> BrowserSession:
     try:
         from playwright.sync_api import sync_playwright
@@ -1727,28 +1871,38 @@ def launch_browser(runtime_env: RuntimeEnvironment, *, headless: bool = False) -
         raise RuntimeError("Playwright não está disponível no ambiente do robô.") from exc
 
     executable = resolve_browser_executable(runtime_env)
-    runtime_env.paths.chrome_profile_dir.mkdir(parents=True, exist_ok=True)
+    prepare_chrome_working_profile(runtime_env)
+    runtime_env.logger.info(
+        "Chrome persistente configurado com "
+        f"executável={_display_runtime_path(runtime_env, executable)} "
+        f"perfil={_display_runtime_path(runtime_env, runtime_env.paths.chrome_profile_dir)}"
+    )
     playwright = sync_playwright().start()
+    persistent_kwargs = dict(
+        user_data_dir=str(runtime_env.paths.chrome_profile_dir),
+        executable_path=str(executable),
+        headless=headless,
+        ignore_https_errors=True,
+        no_viewport=True,
+        ignore_default_args=[
+            "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
+        ],
+        args=[
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-popup-blocking",
+            "--start-maximized",
+            "--ignore-certificate-errors",
+        ],
+    )
     try:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(runtime_env.paths.chrome_profile_dir),
-            executable_path=str(executable),
-            headless=headless,
-            ignore_https_errors=True,
-            no_viewport=True,
-            args=[
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--disable-gpu",
-                "--disable-popup-blocking",
-                "--start-maximized",
-                "--ignore-certificate-errors",
-            ],
-        )
+        context = playwright.chromium.launch_persistent_context(**persistent_kwargs)
         page = context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(30000)
         context.set_default_navigation_timeout(60000)
@@ -1758,12 +1912,34 @@ def launch_browser(runtime_env: RuntimeEnvironment, *, headless: bool = False) -
             page=page,
             executable_path=str(executable),
         )
-    except Exception:
+    except Exception as exc:
+        runtime_env.logger.warning(f"Falha ao abrir navegador com perfil principal. Tentando restaurar backup: {exc}")
+        try:
+            if _is_profile_healthy(runtime_env.paths.chrome_profile_backup_dir):
+                _remove_tree_with_retries(runtime_env.paths.chrome_profile_dir)
+                runtime_env.paths.chrome_profile_dir.parent.mkdir(parents=True, exist_ok=True)
+                _copy_profile_tree(
+                    runtime_env.paths.chrome_profile_backup_dir,
+                    runtime_env.paths.chrome_profile_dir,
+                )
+                context = playwright.chromium.launch_persistent_context(**persistent_kwargs)
+                page = context.pages[0] if context.pages else context.new_page()
+                page.set_default_timeout(30000)
+                context.set_default_navigation_timeout(60000)
+                runtime_env.logger.info("Navegador reaberto com sucesso após restaurar o backup do perfil Chrome.")
+                return BrowserSession(
+                    playwright=playwright,
+                    context=context,
+                    page=page,
+                    executable_path=str(executable),
+                )
+        except Exception as retry_exc:
+            runtime_env.logger.warning(f"Falha ao restaurar backup do perfil Chrome: {retry_exc}")
         playwright.stop()
         raise
 
 
-def close_browser(session: Optional[BrowserSession]) -> None:
+def close_browser(session: Optional[BrowserSession], runtime_env: Optional[RuntimeEnvironment] = None) -> None:
     if not session:
         return
     try:
@@ -1774,6 +1950,8 @@ def close_browser(session: Optional[BrowserSession]) -> None:
         session.playwright.stop()
     except Exception:
         pass
+    if runtime_env is not None:
+        refresh_chrome_profile_backup(runtime_env)
 
 # === ecac_service ===
 import csv
@@ -1796,6 +1974,32 @@ PROFILE_MENU_LABELS = [
     "Trocar perfil",
     "Selecionar perfil",
 ]
+PROFILE_MODAL_SELECTORS = [
+    "[role='dialog']",
+    "dialog[open]",
+    ".modal.show",
+    ".modal-dialog",
+    ".ui-dialog",
+    ".mat-mdc-dialog-container",
+    ".mat-dialog-container",
+    ".p-dialog",
+    ".swal2-popup",
+    ".offcanvas.show",
+    ".popup.show",
+]
+PROFILE_INPUT_SELECTORS = [
+    "input[name*='cnpj' i]",
+    "input[id*='cnpj' i]",
+    "input[placeholder*='CNPJ' i]",
+    "input[placeholder*='CPF' i]",
+    "input[placeholder*='empresa' i]",
+    "input[placeholder*='pesquisar' i]",
+    "input[placeholder*='buscar' i]",
+    "#txtCnpj",
+    "input[type='search']",
+    "input[type='text']",
+]
+PROFILE_CONFIRM_LABELS = ["OK", "Confirmar", "Pesquisar", "Buscar", "Selecionar", "Aplicar", "Alterar perfil", "Enviar"]
 MAILBOX_ENTRY_LABELS = [
     "Você tem novas mensagens",
     "Novas mensagens",
@@ -1815,6 +2019,7 @@ MESSAGE_ROW_SELECTORS = [
 ]
 NEXT_PAGE_LABELS = ["Próximo", "Próxima", ">", "Avançar"]
 DETAIL_CLOSE_LABELS = ["Fechar", "Voltar", "X", "Cancelar"]
+BACK_TO_LIST_LABELS = ["Lista de Mensagens", "Lista de mensagens", "Mensagens", "Voltar", "Caixa Postal"]
 
 
 def _first_line(text: str) -> str:
@@ -1843,6 +2048,8 @@ class EcacMailboxAutomation:
         self.page = session.page
         self.certificate = certificate
         self.stop_requested = stop_requested
+        self._last_profile_field: Optional[Any] = None
+        self._last_profile_form: Optional[Any] = None
 
     def _iter_scopes(self) -> list[Any]:
         scopes = [self.page]
@@ -1924,19 +2131,78 @@ class EcacMailboxAutomation:
                         continue
         return False
 
-    def _fill_company_search(self, company: CompanyRecord) -> bool:
-        search_terms = [format_document(company.document), only_digits(company.document), company.name]
-        selector_candidates = [
-            "input[placeholder*='CNPJ']",
-            "input[placeholder*='CPF']",
-            "input[placeholder*='Nome']",
-            "input[placeholder*='Pesquisar']",
-            "input[placeholder*='empresa']",
-            "input[type='search']",
-            "input",
-        ]
+    def _log_step(self, message: str) -> None:
+        self.runtime.logger.info(message)
+
+    def _capture_debug_artifacts(self, prefix: str) -> None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", prefix).strip("_") or "ecac_debug"
+        screenshot_path = self.runtime.paths.logs_dir / f"{safe_prefix}_{timestamp}.png"
+        html_path = self.runtime.paths.logs_dir / f"{safe_prefix}_{timestamp}.html"
+        try:
+            self.page.screenshot(path=str(screenshot_path), full_page=True)
+            self.runtime.logger.warning(f"Screenshot salvo para diagnóstico: {screenshot_path}")
+        except Exception as exc:
+            self.runtime.logger.warning(f"Falha ao salvar screenshot de diagnóstico: {exc}")
+        try:
+            html_path.write_text(self.page.content(), encoding="utf-8")
+            self.runtime.logger.warning(f"HTML salvo para diagnóstico: {html_path}")
+        except Exception as exc:
+            self.runtime.logger.warning(f"Falha ao salvar HTML de diagnóstico: {exc}")
+
+    def _visible_modal_scopes(self) -> list[Any]:
+        scopes: list[Any] = []
         for scope in self._iter_scopes():
-            for selector in selector_candidates:
+            for selector in PROFILE_MODAL_SELECTORS:
+                try:
+                    locator = scope.locator(selector)
+                    count = locator.count()
+                except Exception:
+                    continue
+                for index in range(min(count, 4)):
+                    try:
+                        candidate = locator.nth(index)
+                        candidate.wait_for(state="visible", timeout=350)
+                        scopes.append(candidate)
+                    except Exception:
+                        continue
+        return scopes
+
+    def _profile_scopes(self) -> list[Any]:
+        modal_scopes = self._visible_modal_scopes()
+        return modal_scopes + [scope for scope in self._iter_scopes() if scope not in modal_scopes]
+
+    def _find_company_input(self, company: CompanyRecord) -> Optional[Any]:
+        digits = only_digits(company.document)
+        is_cnpj = len(digits) >= 14
+        preferred_pairs = []
+        if is_cnpj:
+            preferred_pairs = [
+                ("form#formPJ", "#txtNIPapel2"),
+                ("form#formMatriz", "#txtNIPapel3"),
+                ("form#formSucessora", "#txtNIPapel4"),
+                ("form#formEnteFederativoVinculado", "#txtNIPapel5"),
+            ]
+        else:
+            preferred_pairs = [("form#formPF", "#txtNIPapel1")]
+
+        for scope in self._profile_scopes():
+            for form_selector, field_selector in preferred_pairs:
+                try:
+                    form = scope.locator(form_selector).first
+                    if form.count() < 1:
+                        continue
+                    form.wait_for(state="visible", timeout=700)
+                    field = form.locator(field_selector).first
+                    field.wait_for(state="visible", timeout=700)
+                    field.scroll_into_view_if_needed(timeout=1000)
+                    self._last_profile_form = form
+                    return field
+                except Exception:
+                    continue
+
+        for scope in self._profile_scopes():
+            for selector in PROFILE_INPUT_SELECTORS:
                 locator = scope.locator(selector)
                 try:
                     count = locator.count()
@@ -1945,18 +2211,75 @@ class EcacMailboxAutomation:
                 for index in range(min(count, 8)):
                     field = locator.nth(index)
                     try:
-                        if not field.is_visible():
-                            continue
-                        field.click()
-                        field.fill("")
-                        for term in search_terms:
-                            if not term:
-                                continue
-                            field.fill(term)
-                            self.page.wait_for_timeout(200)
-                            return True
+                        field.wait_for(state="visible", timeout=500)
+                        field.scroll_into_view_if_needed(timeout=1000)
+                        try:
+                            self._last_profile_form = field.locator("xpath=ancestor::form[1]")
+                        except Exception:
+                            self._last_profile_form = None
+                        return field
                     except Exception:
                         continue
+        return None
+
+    def _fill_with_fallbacks(self, field: Any, value: str) -> bool:
+        attempts: list[Callable[[], None]] = [
+            lambda: (field.click(timeout=1500), field.fill(""), field.fill(value), field.press("Tab")),
+            lambda: field.evaluate(
+                """(el, val) => {
+                    el.focus();
+                    el.value = '';
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.value = val;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.blur();
+                }""",
+                value,
+            ),
+            lambda: (field.click(timeout=1500), field.fill(""), field.type(value, delay=45), field.press("Tab")),
+        ]
+        for attempt in attempts:
+            try:
+                attempt()
+                current_value = ""
+                try:
+                    current_value = str(field.input_value(timeout=800) or "")
+                except Exception:
+                    pass
+                if only_digits(current_value) == only_digits(value):
+                    return True
+                field.dispatch_event("input")
+                field.dispatch_event("change")
+                try:
+                    current_value = str(field.input_value(timeout=800) or "")
+                except Exception:
+                    current_value = ""
+                if only_digits(current_value) == only_digits(value):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _fill_company_search(self, company: CompanyRecord) -> bool:
+        self._last_profile_form = None
+        field = self._find_company_input(company)
+        if field is None:
+            return False
+        self._last_profile_field = field
+        digits = only_digits(company.document)
+        search_terms = [digits, format_document(company.document), company.name]
+        for term in search_terms:
+            if not term:
+                continue
+            if self._fill_with_fallbacks(field, term):
+                target_name = ""
+                try:
+                    target_name = field.get_attribute("id") or field.get_attribute("name") or ""
+                except Exception:
+                    pass
+                self._log_step(f"filled_cnpj term='{term}' field='{target_name or 'unknown'}'")
+                return True
         return False
 
     def _select_company_in_profile(self, company: CompanyRecord) -> bool:
@@ -1965,7 +2288,7 @@ class EcacMailboxAutomation:
             format_document(company.document),
             only_digits(company.document),
         ]
-        for scope in self._iter_scopes():
+        for scope in self._profile_scopes():
             body = self._body_text(scope).lower()
             for target in targets:
                 if target and target.lower() not in body:
@@ -1988,8 +2311,111 @@ class EcacMailboxAutomation:
         return False
 
     def _confirm_profile_switch(self) -> bool:
-        labels = ["Confirmar", "Selecionar", "Aplicar", "Alterar perfil", "OK"]
-        return self._click_by_label(labels, timeout_ms=7000)
+        if self._last_profile_form is not None:
+            try:
+                form = self._last_profile_form
+                submit_candidates = [
+                    form.locator("input.submit"),
+                    form.locator("input[type='button']"),
+                    form.locator("input[type='submit']"),
+                    form.get_by_role("button", name=re.compile("alterar|ok|confirmar|pesquisar", re.IGNORECASE)),
+                    form.get_by_text(re.compile("alterar|ok|confirmar|pesquisar", re.IGNORECASE)),
+                ]
+                for locator in submit_candidates:
+                    if locator.count() < 1:
+                        continue
+                    button = locator.first
+                    button.wait_for(state="visible", timeout=800)
+                    try:
+                        with self.page.expect_response(
+                            lambda response: response.request.method in {"POST", "GET"}
+                            and (
+                                "perfil" in response.url.lower()
+                                or "mudanca" in response.url.lower()
+                                or "captcha" in response.url.lower()
+                                or "alterar" in response.url.lower()
+                            ),
+                            timeout=6000,
+                        ):
+                            button.click(timeout=4000, force=True)
+                        self._log_step("postback_detected")
+                    except Exception:
+                        button.click(timeout=4000, force=True)
+                    try:
+                        self.page.wait_for_load_state("networkidle", timeout=7000)
+                    except Exception:
+                        pass
+                    self._log_step("clicked_confirm")
+                    return True
+            except Exception:
+                pass
+        for scope in self._profile_scopes():
+            for label in PROFILE_CONFIRM_LABELS:
+                pattern = re.compile(re.escape(label), re.IGNORECASE)
+                candidates = [
+                    scope.get_by_role("button", name=pattern),
+                    scope.get_by_role("link", name=pattern),
+                    scope.get_by_text(pattern),
+                    scope.locator(f"button:has-text('{label}')"),
+                    scope.locator(".modal-footer button"),
+                ]
+                for locator in candidates:
+                    try:
+                        if locator.count() < 1:
+                            continue
+                        button = locator.first
+                        button.wait_for(state="visible", timeout=800)
+                        try:
+                            with self.page.expect_response(
+                                lambda response: response.request.method in {"POST", "GET"}
+                                and (
+                                    "perfil" in response.url.lower()
+                                    or "alterar" in response.url.lower()
+                                    or "represent" in response.url.lower()
+                                ),
+                                timeout=5000,
+                            ):
+                                button.click(timeout=4000, force=True)
+                            self._log_step("postback_detected")
+                        except Exception:
+                            button.click(timeout=4000, force=True)
+                        try:
+                            self.page.wait_for_load_state("networkidle", timeout=7000)
+                        except Exception:
+                            pass
+                        self._log_step("clicked_confirm")
+                        return True
+                    except Exception:
+                        continue
+        return False
+
+    def _extract_profile_modal_error(self) -> str:
+        error_candidates = [
+            ".mensagemErro",
+            ".erro",
+            "[role='alert']",
+            ".ui-state-error",
+            ".alert",
+            ".alert-danger",
+        ]
+        for scope in self._visible_modal_scopes():
+            for selector in error_candidates:
+                try:
+                    locator = scope.locator(selector)
+                    count = locator.count()
+                except Exception:
+                    continue
+                for index in range(min(count, 6)):
+                    try:
+                        text = " ".join(locator.nth(index).inner_text(timeout=800).split())
+                    except Exception:
+                        continue
+                    if not text:
+                        continue
+                    lowered = text.lower()
+                    if any(marker in lowered for marker in ["atenção", "atencao", "erro", "não existe", "nao existe", "indisponível", "indisponivel"]):
+                        return text
+        return ""
 
     def _current_profile_context(self) -> str:
         snippets: list[str] = []
@@ -2012,9 +2438,10 @@ class EcacMailboxAutomation:
     def close_blocking_modals(self) -> None:
         for _ in range(6):
             clicked = False
+            modal_scopes = self._visible_modal_scopes()
             for label in MODAL_CLOSE_LABELS:
                 clicked = self._click_by_label([label], timeout_ms=2000) or clicked
-            for scope in self._iter_scopes():
+            for scope in modal_scopes + self._iter_scopes():
                 try:
                     locator = scope.locator("[aria-label*='Fechar'], [aria-label*='close'], .close, .btn-close")
                     if locator.count() > 0:
@@ -2028,7 +2455,7 @@ class EcacMailboxAutomation:
                 pass
             if not clicked:
                 break
-            self.page.wait_for_timeout(250)
+            self._wait_until(lambda: len(self._visible_modal_scopes()) == 0, timeout_ms=1500, interval_ms=150)
 
     def is_authenticated(self) -> bool:
         try:
@@ -2090,43 +2517,134 @@ class EcacMailboxAutomation:
         self.runtime.logger.warning("Sessão do e-CAC não parece autenticada. Tentando reautenticação controlada.")
         self.login()
 
+    def _profile_switch_targets(self, company: CompanyRecord) -> list[str]:
+        return [
+            company.name.lower(),
+            only_digits(company.document),
+            format_document(company.document).lower(),
+        ]
+
+    def _profile_switch_success(self, company: CompanyRecord) -> bool:
+        targets = [target for target in self._profile_switch_targets(company) if target]
+        if self._visible_modal_scopes():
+            return False
+        context_text = self._current_profile_context().lower()
+        body_text = self._body_text().lower()
+        return any(target in context_text or target in body_text for target in targets)
+
+    def _after_profile_switch_cleanup(self) -> str:
+        self.close_blocking_modals()
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        if self._is_message_detail_view():
+            self._log_step("modal_not_closable_navigated_to_message")
+            return "detail_message"
+        if self._message_rows_locator()[0] is not None:
+            return "mailbox_list"
+        return "portal"
+
     def switch_company_profile(self, company: CompanyRecord) -> str:
         self.ensure_logged_in()
-        self.close_blocking_modals()
-        if not self._click_by_label(PROFILE_MENU_LABELS, timeout_ms=7000):
-            raise RuntimeError("Fluxo de 'Alterar perfil de acesso' não foi localizado.")
-        self._wait_until(
-            lambda: self._page_contains("perfil") or self._page_contains("representado") or self._page_contains("CNPJ"),
-            timeout_ms=10000,
-        )
-        if not self._fill_company_search(company):
-            raise RuntimeError("Campo de busca do perfil não foi localizado.")
-        self.page.wait_for_timeout(500)
-        if not self._select_company_in_profile(company):
-            raise RuntimeError(f"Empresa alvo não apareceu no seletor de perfil: {company.name}.")
-        self._confirm_profile_switch()
-
-        targets = [company.name.lower(), only_digits(company.document), format_document(company.document).lower()]
-        changed = self._wait_until(
-            lambda: any(target and target in self._current_profile_context().lower() for target in targets),
-            timeout_ms=15000,
-            interval_ms=400,
-        )
-        context = self._current_profile_context()
-        if not changed and not any(target and target in self._body_text().lower() for target in targets):
-            raise RuntimeError("A troca de perfil não foi validada visualmente no portal.")
-        return context
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                self.close_blocking_modals()
+                self._log_step(f"clicked_alterar_acesso attempt={attempt}")
+                if not self._click_by_label(PROFILE_MENU_LABELS, timeout_ms=7000):
+                    raise RuntimeError("Fluxo de 'Alterar perfil de acesso' não foi localizado.")
+                visible = self._wait_until(
+                    lambda: len(self._visible_modal_scopes()) > 0 or self._find_company_input() is not None,
+                    timeout_ms=15000,
+                )
+                if not visible:
+                    raise RuntimeError("Modal de alteração de perfil não ficou visível.")
+                self._log_step("modal_visible")
+                if not self._fill_company_search(company):
+                    raise RuntimeError("Campo de busca do perfil não foi localizado ou não aceitou o CNPJ.")
+                selected = self._wait_until(lambda: self._select_company_in_profile(company), timeout_ms=4000, interval_ms=350)
+                if selected:
+                    self._log_step("profile_option_selected")
+                confirmed = self._confirm_profile_switch()
+                if not confirmed and not selected:
+                    raise RuntimeError("Botão de confirmação do perfil não foi localizado.")
+                if not confirmed:
+                    self._log_step("clicked_confirm skipped_button_not_found")
+                modal_closed = self._wait_until(
+                    lambda: len(self._visible_modal_scopes()) == 0 or bool(self._extract_profile_modal_error()),
+                    timeout_ms=20000,
+                    interval_ms=350,
+                )
+                if not modal_closed:
+                    raise RuntimeError("O modal de alteração de perfil permaneceu aberto após a confirmação.")
+                modal_error = self._extract_profile_modal_error()
+                if modal_error:
+                    raise RuntimeError(f"Falha retornada pelo portal ao alterar perfil: {modal_error}")
+                cleanup_state = self._after_profile_switch_cleanup()
+                changed = self._wait_until(
+                    lambda: self._profile_switch_success(company),
+                    timeout_ms=15000,
+                    interval_ms=400,
+                )
+                context = self._current_profile_context()
+                if not changed:
+                    raise RuntimeError(
+                        "A troca de perfil não foi validada visualmente no portal para a empresa alvo."
+                    )
+                self._log_step(f"profile_switched attempt={attempt} state={cleanup_state}")
+                return context
+            except Exception as exc:
+                last_error = exc
+                self.runtime.logger.warning(f"profile_switch_failed attempt={attempt} company={company.name}: {exc}")
+                self._capture_debug_artifacts(f"profile_switch_failed_{company.company_id}_attempt_{attempt}")
+                self.close_blocking_modals()
+                if attempt < 3:
+                    try:
+                        self.page.wait_for_timeout(600 * attempt)
+                    except Exception:
+                        pass
+        raise RuntimeError(str(last_error or "Falha desconhecida na troca de perfil."))
 
     def open_mailbox(self) -> None:
         self.close_blocking_modals()
+        if self._is_message_detail_view() or self._message_rows_locator()[0] is not None:
+            return
         if self._click_by_label(MAILBOX_ENTRY_LABELS, timeout_ms=8000):
             ready = self._wait_until(
-                lambda: self._message_rows_locator()[0] is not None or self._page_contains("mensagem"),
+                lambda: self._message_rows_locator()[0] is not None or self._is_message_detail_view() or self._page_contains("mensagem"),
                 timeout_ms=15000,
             )
             if ready:
+                self.close_blocking_modals()
                 return
         raise RuntimeError("A entrada da Caixa Postal / Mensagens não foi localizada.")
+
+    def _is_message_detail_view(self) -> bool:
+        text = self._body_text().lower()
+        indicators = [
+            "id da mensagem",
+            "tipo de comunicação",
+            "tipo de comunicacao",
+            "exibição até",
+            "exibicao ate",
+            "destinatário",
+            "destinatario",
+            "lista de mensagens",
+        ]
+        return sum(1 for indicator in indicators if indicator in text) >= 3
+
+    def _return_to_message_list(self) -> None:
+        if self._message_rows_locator()[0] is not None:
+            return
+        if self._click_by_label(BACK_TO_LIST_LABELS, timeout_ms=3000):
+            self._wait_until(lambda: self._message_rows_locator()[0] is not None, timeout_ms=8000, interval_ms=300)
+        elif self._is_message_detail_view():
+            try:
+                self.page.go_back(wait_until="domcontentloaded", timeout=8000)
+            except Exception:
+                pass
+            self._wait_until(lambda: self._message_rows_locator()[0] is not None, timeout_ms=8000, interval_ms=300)
 
     def _message_rows_locator(self) -> tuple[Optional[Any], Optional[str], Optional[Any]]:
         for scope in self._iter_scopes():
@@ -2186,6 +2704,18 @@ class EcacMailboxAutomation:
             detail_visible_text=detail_text.strip(),
         )
 
+    def _parse_current_detail_message(self, company: CompanyRecord, run_id: str, index: int) -> Optional[MessageRecord]:
+        detail_text = self._collect_detail_text("")
+        if not detail_text:
+            detail_text = self._body_text()
+        normalized = " ".join(detail_text.split())
+        if not normalized or not self._is_message_detail_view():
+            return None
+        message = self._parse_message(company, run_id, index, normalized, detail_text)
+        if not message.subject:
+            message.subject = _first_line(detail_text)
+        return message
+
     def _collect_detail_text(self, original_snapshot: str) -> str:
         overlay_selectors = [
             "[role='dialog']",
@@ -2234,7 +2764,11 @@ class EcacMailboxAutomation:
             self.page.keyboard.press("Escape")
         except Exception:
             pass
-        self.page.wait_for_timeout(300)
+        self._wait_until(
+            lambda: not self._is_message_detail_view() or self._message_rows_locator()[0] is not None,
+            timeout_ms=2000,
+            interval_ms=150,
+        )
 
     def _open_row_detail(self, row: Any) -> str:
         original_snapshot = self._body_text()
@@ -2267,7 +2801,6 @@ class EcacMailboxAutomation:
             )
             detail_text = self._collect_detail_text(original_snapshot)
             if opened and detail_text:
-                self._dismiss_detail_view()
                 return detail_text
             self._dismiss_detail_view()
         return ""
@@ -2276,12 +2809,27 @@ class EcacMailboxAutomation:
         return self._click_by_label(NEXT_PAGE_LABELS, timeout_ms=4000)
 
     def extract_first_messages(self, company: CompanyRecord, run_id: str, limit: int = 20) -> list[MessageRecord]:
+        if self._is_message_detail_view():
+            self._log_step("message_detail_detected_before_list")
         locator, _, _ = self._message_rows_locator()
-        if locator is None:
+        if locator is None and not self._is_message_detail_view():
             raise RuntimeError("Nenhuma tabela/lista de mensagens visível foi encontrada na Caixa Postal.")
 
         messages: list[MessageRecord] = []
         seen: set[str] = set()
+        if self._is_message_detail_view():
+            current_message = self._parse_current_detail_message(company, run_id, 1)
+            if current_message is not None:
+                seen.add(current_message.dedupe_key())
+                messages.append(current_message)
+                self._log_step(f"message_extracted: {current_message.message_id or current_message.subject}")
+            self._return_to_message_list()
+            locator, _, _ = self._message_rows_locator()
+            if locator is None and len(messages) >= limit:
+                return messages[:limit]
+            if locator is None and not messages:
+                raise RuntimeError("A mensagem pós-troca foi aberta, mas a lista da Caixa Postal não pôde ser restaurada.")
+
         page_cycles = 0
         while len(messages) < limit and page_cycles < 4:
             try:
@@ -2304,22 +2852,30 @@ class EcacMailboxAutomation:
                     lowered = raw_text.lower()
                     if "assunto" in lowered and "data" in lowered and len(raw_text) < 120:
                         continue
+                    self._log_step(f"message_opened: index {len(messages) + 1}")
                     detail_text = self._open_row_detail(row)
                     message = self._parse_message(company, run_id, len(messages) + 1, raw_text, detail_text)
                     key = message.dedupe_key()
                     if key in seen:
+                        self._return_to_message_list()
                         continue
                     seen.add(key)
                     messages.append(message)
+                    self._log_step(f"message_extracted: {message.message_id or message.subject}")
+                    self._return_to_message_list()
                 except Exception as exc:
                     self.runtime.logger.warning(f"Falha ao extrair linha de mensagem: {exc}")
+                    self._return_to_message_list()
                     continue
             if len(messages) >= limit:
                 break
             if not self._click_next_page():
                 break
             page_cycles += 1
-            self._wait_until(lambda: True, timeout_ms=800, interval_ms=250)
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
             locator, _, _ = self._message_rows_locator()
             if locator is None:
                 break
@@ -2564,7 +3120,7 @@ def execute_mailbox_run(
                     run_id=run_id,
                 )
         finally:
-            close_browser(session)
+            close_browser(session, runtime_env)
     else:
         for index, company in enumerate(companies, start=1):
             if stop_requested():
@@ -2617,7 +3173,7 @@ def execute_mailbox_run(
                     run_id=run_id,
                 )
             finally:
-                close_browser(session)
+                close_browser(session, runtime_env)
 
     summary["finished_at"] = utc_now_iso()
     summary = _finalize_summary(summary, company_results, responsible_office_result)
