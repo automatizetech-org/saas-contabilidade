@@ -22,6 +22,7 @@ import { persistQueryClient } from "@tanstack/query-persist-client-core";
 import { createIndexedDBPersisterForOffice } from "@/lib/reactQueryPersistenceIndexedDB";
 
 const SIDEBAR_OPEN_KEY = "sidebar-open";
+const QUERY_CACHE_BUSTER = "office-cache-v2-fiscal-fallback";
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -143,7 +144,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     }
 
     const persister = createIndexedDBPersisterForOffice(officeId);
-    const buster = officeId;
+    const buster = `${QUERY_CACHE_BUSTER}:${officeId}`;
     const [unsubscribe] = persistQueryClient({
       queryClient,
       persister,

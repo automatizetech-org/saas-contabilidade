@@ -180,6 +180,17 @@ export function AppSidebar({
     if (window.innerWidth < 768) setMobileOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (companies.length === 0 || selectedCompanyIds.length === 0) return;
+
+    const availableIds = new Set(companies.map((company) => company.id));
+    const nextIds = selectedCompanyIds.filter((id) => availableIds.has(id));
+
+    if (nextIds.length !== selectedCompanyIds.length) {
+      setSelectedCompanyIds(nextIds);
+    }
+  }, [companies, selectedCompanyIds, setSelectedCompanyIds]);
+
   const sidebarContent = (
     <>
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 dark:from-primary/10 dark:to-accent/10 pointer-events-none transition-opacity duration-500" />

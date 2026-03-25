@@ -69,9 +69,10 @@ export type CertidoesOverview = {
 
 let canUseUnifiedDocumentsCursorRpc = true
 let canUseUnifiedDocumentsZipPathsRpc = true
-let canUseFiscalDetailSummaryRpc = true
-let canUseFiscalDetailCursorRpc = true
-let canUseFiscalDetailZipPathsRpc = true
+const preferFiscalDetailFallback = Boolean(import.meta.env.DEV)
+let canUseFiscalDetailSummaryRpc = !preferFiscalDetailFallback
+let canUseFiscalDetailCursorRpc = !preferFiscalDetailFallback
+let canUseFiscalDetailZipPathsRpc = !preferFiscalDetailFallback
 
 function normalizeText(value: unknown) {
   return String(value ?? "")
@@ -342,7 +343,16 @@ function dedupeDocumentsByKey<T extends { chave?: string | null; id: string }>(d
 }
 
 function getFiscalRowsReferenceDate(row: FiscalListRow) {
-  return String(row.document_date ?? row.created_at ?? "").slice(0, 10)
+  const documentDate = String(row.document_date ?? "").slice(0, 10)
+  if (documentDate) return documentDate
+
+  const createdAt = String(row.created_at ?? "").slice(0, 10)
+  if (createdAt) return createdAt
+
+  const period = String(row.periodo ?? "").trim()
+  if (/^\d{4}-\d{2}$/.test(period)) return `${period}-01`
+
+  return ""
 }
 
 function buildMonthSeries(rows: FiscalListRow[], dateFrom?: string, dateTo?: string) {
@@ -397,6 +407,9 @@ export async function getFiscalDetailSummary(filters: Omit<FiscalDetailPageFilte
     if (error) throw error
 
     const payload = (data ?? {}) as FiscalDetailSummary
+    if (Number(payload.cards?.totalDocuments ?? 0) === 0) {
+      throw new Error("Fiscal detail summary RPC returned empty payload")
+    }
     return {
       cards: {
         totalDocuments: Number(payload.cards?.totalDocuments ?? 0),
@@ -415,9 +428,23 @@ export async function getFiscalDetailSummary(filters: Omit<FiscalDetailPageFilte
     const rows = filters.kind === "nfe-nfc"
       ? await getFiscalDocumentsNfeNfc(filters.companyIds?.length ? filters.companyIds : null)
       : await getFiscalDocumentsByType(filters.kind.toUpperCase() as "NFS" | "NFE" | "NFC", filters.companyIds?.length ? filters.companyIds : null)
-    const deduped = filters.kind === "nfe-nfc" || filters.kind === "nfs" ? dedupeDocumentsByKey(rows) : rows
     const filtered = rows.filter((row) => {
-      const referenceDate = String(row.document_date ?? row.created_at ?? "").slice(0, 10)
+      const referenceDate = getFiscalRowsReferenceDate({
+        id: row.id,
+        company_id: row.company_id,
+        empresa: row.empresa ?? "",
+        cnpj: row.cnpj ?? null,
+        type: row.type,
+        chave: row.chave ?? null,
+        periodo: row.periodo ?? null,
+        status: row.status ?? null,
+        document_date: row.document_date ?? null,
+        created_at: row.created_at,
+        file_path: row.file_path ?? null,
+        origem: null,
+        modelo: row.type === "NFE" ? "55" : row.type === "NFC" ? "65" : null,
+        tipo_certidao: null,
+      })
       if (filters.dateFrom && referenceDate < filters.dateFrom) return false
       if (filters.dateTo && referenceDate > filters.dateTo) return false
       return true
@@ -485,7 +512,11 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
     })
     if (error) throw error
 
-    return parseCursorPayload(data, mapFiscalDetailRpcRow)
+    const parsed = parseCursorPayload(data, mapFiscalDetailRpcRow)
+    if (parsed.items.length === 0) {
+      throw new Error("Fiscal detail cursor RPC returned empty payload")
+    }
+    return parsed
   } catch {
     if (filters.kind !== "certidoes") {
       canUseFiscalDetailCursorRpc = false
@@ -554,7 +585,13 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
       return true
     })
 
-    const ordered = [...filtered].sort((left, right) => String(right.document_date ?? right.created_at).localeCompare(String(left.document_date ?? left.created_at)))
+    const ordered = [...filtered].sort((left, right) => {
+      const rightSort = getFiscalRowsReferenceDate(right) || String(right.created_at ?? "")
+      const leftSort = getFiscalRowsReferenceDate(left) || String(left.created_at ?? "")
+      const base = rightSort.localeCompare(leftSort)
+      if (base !== 0) return base
+      return String(right.created_at ?? "").localeCompare(String(left.created_at ?? ""))
+    })
 
     const deduped: FiscalListRow[] = []
     const seenPath = new Set<string>()
@@ -566,7 +603,7 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
     }
 
     function rowBeforeCursor(row: FiscalListRow, cursor: CursorPageToken): boolean {
-      const sortDate = String(row.document_date ?? row.created_at ?? "").slice(0, 10)
+      const sortDate = getFiscalRowsReferenceDate(row)
       const createdAt = String(row.created_at ?? "")
       const id = String(row.id ?? "")
       const cDate = (cursor.sortDate ?? "").slice(0, 10)
@@ -586,7 +623,7 @@ export async function getFiscalDetailDocumentsPage(filters: FiscalDetailPageFilt
     const hasMore = afterCursor.length > filters.limit
     const nextCursor = hasMore && lastItem
       ? {
-          sortDate: String(lastItem.document_date ?? lastItem.created_at ?? "").slice(0, 10),
+          sortDate: getFiscalRowsReferenceDate(lastItem),
           createdAt: String(lastItem.created_at ?? ""),
           id: String(lastItem.id ?? ""),
         }

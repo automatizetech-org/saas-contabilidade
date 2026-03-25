@@ -10,15 +10,19 @@ const INVALID_DOWNLOAD_NAME_PATTERN = new RegExp(
 
 function triggerBlobDownload(blob: Blob, filename: string) {
   const a = document.createElement("a")
-  a.href = URL.createObjectURL(blob)
+  const blobUrl = URL.createObjectURL(blob)
+  a.href = blobUrl
   const safeName = String(filename || "")
     .split(/[\\/]/)
     .pop()
     ?.replace(INVALID_DOWNLOAD_NAME_PATTERN, "")
     .trim()
   a.download = safeName || "arquivo"
+  a.style.display = "none"
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(a.href)
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000)
 }
 
 /** Uma renovação em voo por vez (vários polls em paralelo não disparam vários refresh_token). */

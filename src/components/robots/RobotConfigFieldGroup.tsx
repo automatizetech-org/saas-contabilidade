@@ -21,6 +21,15 @@ import {
 } from "@/lib/robotConfigSchemas";
 
 type TargetValues = Partial<Record<RobotConfigTarget, Record<string, Json>>>;
+type CompanyOption = {
+  id: string;
+  name: string;
+  document: string | null;
+};
+
+function normalizeDigits(value: string | null | undefined): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
 
 export function RobotConfigFieldGroup({
   fields,
@@ -29,6 +38,7 @@ export function RobotConfigFieldGroup({
   globalLogins,
   onChangeGlobalLogins,
   cityNames = [],
+  companies = [],
   disabled = false,
   loginLabelByCpf,
 }: {
@@ -38,6 +48,7 @@ export function RobotConfigFieldGroup({
   globalLogins?: CompanySefazLogin[];
   onChangeGlobalLogins?: (next: CompanySefazLogin[]) => void;
   cityNames?: Array<string | null | undefined>;
+  companies?: CompanyOption[];
   disabled?: boolean;
   loginLabelByCpf?: Map<string, string>;
 }) {
@@ -163,6 +174,40 @@ export function RobotConfigFieldGroup({
                     {options.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {field.help_text ? <p className="text-[10px] text-muted-foreground">{field.help_text}</p> : null}
+              </div>
+            );
+          }
+
+          if (field.type === "company_select") {
+            const options = companies.filter((company) => {
+              if (field.company_option_filter === "valid_cnpj") {
+                return normalizeDigits(company.document).length === 14;
+              }
+              return true;
+            });
+
+            return (
+              <div key={`${target}:${field.key}`} className="space-y-2">
+                <Label>{field.label}</Label>
+                <Select
+                  value={String(currentValue || "__empty__")}
+                  onValueChange={(next) => onChangeField(target, field.key, next === "__empty__" ? "" : next)}
+                  disabled={disabled}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={field.placeholder || "Selecione"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__empty__">Sem selecao</SelectItem>
+                    {options.map((company) => (
+                      <SelectItem key={company.id} value={company.id}>
+                        {company.name}
+                        {company.document ? ` • ${company.document}` : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>

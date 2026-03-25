@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """e-CAC - Caixa Postal
 
-Implementa??o consolidada em arquivo ?nico.
+Implementação consolidada em arquivo único.
 """
 
 # === models ===
@@ -21,7 +21,6 @@ class RuntimePaths:
     data_dir: Path
     json_dir: Path
     logs_dir: Path
-    output_dir: Path
     chrome_profile_dir: Path
     certificates_registry_path: Path
     runtime_log_path: Path
@@ -56,6 +55,17 @@ class CompanyRecord:
     def search_text(self) -> str:
         return f"{self.name} {self.document}".strip().lower()
 
+    @property
+    def has_valid_cnpj(self) -> bool:
+        return len(only_digits(self.document)) == 14
+
+    @property
+    def has_certificate_credentials(self) -> bool:
+        return bool(
+            str(self.cert_password or "").strip()
+            and (str(self.cert_blob_b64 or "").strip() or str(self.cert_path or "").strip())
+        )
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["raw"] = dict(self.raw)
@@ -86,6 +96,16 @@ class JobPayload:
     company_ids: list[str] = field(default_factory=list)
     companies: list[dict[str, Any]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RobotMailboxConfig:
+    use_responsible_office: bool = False
+    responsible_office_company_id: str = ""
+    source: str = "default"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(slots=True)
@@ -134,6 +154,7 @@ class CompanyRunResult:
     company_id: str
     company_name: str
     company_document: str
+    context_type: str = "company"
     status: str = "pending"
     eligible: bool = True
     block_reason: str = ""
@@ -144,7 +165,6 @@ class CompanyRunResult:
     errors: list[str] = field(default_factory=list)
     started_at: str = ""
     finished_at: str = ""
-    output_dir: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -164,11 +184,14 @@ class RunSummary:
     total_messages: int = 0
     interrupted_at_company: str = ""
     company_results: list[CompanyRunResult] = field(default_factory=list)
-    output_dir: str = ""
+    responsible_office_result: Optional[CompanyRunResult] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["company_results"] = [item.to_dict() for item in self.company_results]
+        payload["responsible_office_result"] = (
+            self.responsible_office_result.to_dict() if self.responsible_office_result else None
+        )
         return payload
 
 # === runtime ===
@@ -340,10 +363,9 @@ def bootstrap_environment() -> RuntimePaths:
     data_dir = runtime_dir / "data"
     json_dir = data_dir / "json"
     logs_dir = data_dir / "logs"
-    output_dir = data_dir / "output"
     chrome_profile_dir = runtime_dir / "chrome_profile"
 
-    for folder in (data_dir, json_dir, logs_dir, output_dir, chrome_profile_dir):
+    for folder in (data_dir, json_dir, logs_dir, chrome_profile_dir):
         folder.mkdir(parents=True, exist_ok=True)
 
     playwright_dir = data_dir / "ms-playwright"
@@ -357,7 +379,6 @@ def bootstrap_environment() -> RuntimePaths:
         data_dir=data_dir,
         json_dir=json_dir,
         logs_dir=logs_dir,
-        output_dir=output_dir,
         chrome_profile_dir=chrome_profile_dir,
         certificates_registry_path=json_dir / "certificates.json",
         runtime_log_path=logs_dir / "runtime.log",
@@ -477,6 +498,8 @@ class JsonRobotRuntime:
         summary: dict[str, Any],
         payload: Optional[dict[str, Any]] = None,
         error_message: Optional[str] = None,
+        company_results: Optional[list[dict[str, Any]]] = None,
+        responsible_office_result: Optional[dict[str, Any]] = None,
     ) -> None:
         execution_request_id = job.execution_request_id if job else None
         job_id = job.job_id if job else None
@@ -492,6 +515,8 @@ class JsonRobotRuntime:
             "finished_at": summary.get("finished_at") or utc_now_iso(),
             "error_message": error_message,
             "summary": summary,
+            "company_results": company_results or summary.get("company_results") or summary.get("companies") or [],
+            "responsible_office_result": responsible_office_result or summary.get("responsible_office_result"),
             "payload": payload or {},
         }
         write_json_atomic(self.result_path, result_payload)
@@ -524,11 +549,6 @@ class RuntimeEnvironment:
 
     def generate_run_id(self) -> str:
         return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
-
-    def create_run_output_dir(self, run_id: str) -> Path:
-        path = self.paths.output_dir / run_id
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     def mark_inactive(self, reason: str = "application_exit") -> None:
         try:
@@ -663,6 +683,32 @@ class DashboardClient:
             client.table("robots").update(update_payload).eq("technical_id", ROBOT_TECHNICAL_ID).execute()
         except Exception as exc:
             self.runtime.logger.warning(f"Falha ao atualizar heartbeat do robô na tabela robots: {exc}")
+
+    def fetch_mailbox_runtime_config(self, office_context: OfficeContext) -> RobotMailboxConfig:
+        if not office_context.office_id:
+            return RobotMailboxConfig()
+        try:
+            client = self._supabase()
+            response = (
+                client.table("office_robot_configs")
+                .select("admin_settings")
+                .eq("office_id", office_context.office_id)
+                .eq("robot_technical_id", ROBOT_TECHNICAL_ID)
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(response, "data", None) or []
+            admin_settings = rows[0].get("admin_settings") if rows else {}
+            if not isinstance(admin_settings, dict):
+                admin_settings = {}
+            return RobotMailboxConfig(
+                use_responsible_office=bool(admin_settings.get("use_responsible_office")),
+                responsible_office_company_id=str(admin_settings.get("responsible_office_company_id") or "").strip(),
+                source="office_robot_configs" if rows else "default",
+            )
+        except Exception as exc:
+            self.runtime.logger.warning(f"Falha ao carregar admin_settings do robô: {exc}")
+            return RobotMailboxConfig(source="default")
 
     def resolve_office_context(self, job: Optional[JobPayload] = None, force_refresh: bool = False) -> OfficeContext:
         if self._office_context and not force_refresh:
@@ -805,7 +851,7 @@ class DashboardClient:
             config_by_company[company_id] = normalized_row
             enabled_company_ids.append(company_id)
 
-        target_company_ids = enabled_company_ids or wanted_ids
+        target_company_ids = wanted_ids or enabled_company_ids
         companies_query = (
             client.table("companies")
             .select("id,name,document,active,office_id,auth_mode,cert_blob_b64,cert_password")
@@ -840,7 +886,10 @@ class DashboardClient:
                 cert_password = ""
                 cert_blob_b64 = ""
                 cert_path = ""
-            if enabled_company_ids:
+            if wanted_ids:
+                eligible = active
+                block_reason = "" if active else "Empresa inativa no dashboard."
+            elif enabled_company_ids:
                 eligible = active and bool(cfg)
                 block_reason = ""
                 if not active:
@@ -858,7 +907,7 @@ class DashboardClient:
                     active=active,
                     eligible=eligible,
                     block_reason=block_reason,
-                    source="company_robot_config" if enabled_company_ids else "companies_fallback",
+                    source="job_scope" if wanted_ids else ("company_robot_config" if enabled_company_ids else "companies_fallback"),
                     auth_mode=auth_mode,
                     cert_password=cert_password,
                     cert_blob_b64=cert_blob_b64,
@@ -886,6 +935,13 @@ class DashboardClient:
 
         normalized.sort(key=lambda item: item.name.lower())
         return normalized
+
+    def load_company_by_id(self, office_context: OfficeContext, company_id: str) -> Optional[CompanyRecord]:
+        company_id = str(company_id or "").strip()
+        if not company_id:
+            return None
+        rows = self.load_companies(office_context, job=None, company_ids=[company_id])
+        return rows[0] if rows else None
 
 # === certificate_auth ===
 import json
@@ -1162,7 +1218,7 @@ def resolve_certificate_from_dashboard(
         else:
             cert_path = Path(str(company.cert_path or "")).expanduser()
             if not cert_path.is_file():
-                raise RuntimeError(f"Caminho de certificado do dashboard invÃ¡lido para {company.name}: {cert_path}")
+                raise RuntimeError(f"Caminho de certificado do dashboard inválido para {company.name}: {cert_path}")
             cert_data = cert_path.read_bytes()
 
         cert_dir = runtime_env.paths.data_dir / "temp_certificates"
@@ -2020,22 +2076,91 @@ class EcacMailboxAutomation:
             detail_visible_text=detail_text.strip(),
         )
 
-    def _open_row_detail(self, row: Any) -> str:
-        original_snapshot = self._body_text()
-        try:
-            row.click(timeout=4000, force=True)
-        except Exception:
-            return ""
-        self._wait_until(lambda: self._body_text() != original_snapshot or self._page_contains("Fechar"), timeout_ms=4000)
-        detail_text = self._body_text()
+    def _collect_detail_text(self, original_snapshot: str) -> str:
+        overlay_selectors = [
+            "[role='dialog']",
+            "dialog[open]",
+            ".modal.show",
+            ".modal-dialog",
+            ".ui-dialog",
+            ".mat-mdc-dialog-container",
+            ".mat-dialog-container",
+            ".p-dialog",
+            ".swal2-popup",
+            ".offcanvas.show",
+        ]
+        for scope in self._iter_scopes():
+            for selector in overlay_selectors:
+                try:
+                    locator = scope.locator(selector)
+                    if locator.count() <= 0:
+                        continue
+                    for idx in range(min(locator.count(), 3)):
+                        candidate = locator.nth(idx)
+                        if not candidate.is_visible():
+                            continue
+                        text = " ".join(candidate.inner_text(timeout=1500).split())
+                        if text and text != " ".join(original_snapshot.split()):
+                            return text
+                except Exception:
+                    continue
+
+        for frame in self.page.frames:
+            if frame == self.page.main_frame:
+                continue
+            text = " ".join(self._body_text(frame).split())
+            if text and text != " ".join(original_snapshot.split()):
+                return text
+
+        current = " ".join(self._body_text().split())
+        if current and current != " ".join(original_snapshot.split()):
+            return current
+        return ""
+
+    def _dismiss_detail_view(self) -> None:
         for label in DETAIL_CLOSE_LABELS:
             self._click_by_label([label], timeout_ms=1500)
         try:
             self.page.keyboard.press("Escape")
         except Exception:
             pass
-        self.page.wait_for_timeout(200)
-        return detail_text if detail_text != original_snapshot else ""
+        self.page.wait_for_timeout(300)
+
+    def _open_row_detail(self, row: Any) -> str:
+        original_snapshot = self._body_text()
+        click_attempts: list[Callable[[], None]] = []
+        try:
+            clickable = row.locator("a, button, [role='button'], [role='link']")
+            if clickable.count() > 0:
+                click_attempts.append(lambda: clickable.first.click(timeout=3000, force=True))
+        except Exception:
+            pass
+        click_attempts.extend(
+            [
+                lambda: row.click(timeout=4000, force=True),
+                lambda: row.dblclick(timeout=4000),
+            ]
+        )
+        try:
+            click_attempts.append(lambda: (row.focus(), self.page.keyboard.press("Enter")))
+        except Exception:
+            pass
+
+        for attempt in click_attempts:
+            try:
+                attempt()
+            except Exception:
+                continue
+            opened = self._wait_until(
+                lambda: bool(self._collect_detail_text(original_snapshot)) or self._page_contains("Fechar"),
+                timeout_ms=6000,
+            )
+            detail_text = self._collect_detail_text(original_snapshot)
+            if opened and detail_text:
+                self._dismiss_detail_view()
+                return detail_text
+            self._dismiss_detail_view()
+        return ""
 
     def _click_next_page(self) -> bool:
         return self._click_by_label(NEXT_PAGE_LABELS, timeout_ms=4000)
@@ -2090,11 +2215,19 @@ class EcacMailboxAutomation:
                 break
         return messages[:limit]
 
-    def process_company(self, company: CompanyRecord, run_id: str) -> CompanyRunResult:
+    def collect_current_mailbox(
+        self,
+        company: CompanyRecord,
+        run_id: str,
+        *,
+        switch_profile: bool = False,
+        context_type: str = "company",
+    ) -> CompanyRunResult:
         result = CompanyRunResult(
             company_id=company.company_id,
             company_name=company.name,
             company_document=format_document(company.document),
+            context_type=context_type,
             eligible=company.eligible,
             block_reason=company.block_reason,
             started_at=utc_now_iso(),
@@ -2106,9 +2239,12 @@ class EcacMailboxAutomation:
             return result
 
         try:
-            profile_context = self.switch_company_profile(company)
-            result.profile_switched = True
-            result.company_profile_context = profile_context
+            if switch_profile:
+                profile_context = self.switch_company_profile(company)
+                result.profile_switched = True
+                result.company_profile_context = profile_context
+            else:
+                result.company_profile_context = self._current_profile_context()
             self.open_mailbox()
             result.mailbox_opened = True
             result.messages = self.extract_first_messages(company, run_id, limit=20)
@@ -2123,36 +2259,74 @@ class EcacMailboxAutomation:
         return result
 
 
-def _persist_company_result(run_dir: Path, result: CompanyRunResult) -> None:
-    company_folder = run_dir / "companies" / f"{result.company_id}_{slugify(result.company_name or result.company_document)}"
-    company_folder.mkdir(parents=True, exist_ok=True)
-    result.output_dir = str(company_folder)
-
-    messages_json = company_folder / "messages.json"
-    messages_csv = company_folder / "messages.csv"
-    result_json = company_folder / "result.json"
-
-    write_json_atomic(messages_json, {"messages": [message.to_dict() for message in result.messages]})
-    write_json_atomic(result_json, result.to_dict())
-
-    fieldnames = list(MessageRecord.__dataclass_fields__.keys())
-    with messages_csv.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for message in result.messages:
-            row = message.to_dict()
-            row["attachments"] = json.dumps(row["attachments"], ensure_ascii=False)
-            writer.writerow(row)
+def _apply_mailbox_eligibility(
+    companies: list[CompanyRecord],
+    mailbox_config: RobotMailboxConfig,
+) -> list[CompanyRecord]:
+    normalized: list[CompanyRecord] = []
+    for company in companies:
+        updated = CompanyRecord(**company.to_dict())
+        updated.block_reason = ""
+        if mailbox_config.use_responsible_office:
+            updated.eligible = updated.has_valid_cnpj
+            if not updated.eligible:
+                updated.block_reason = "Empresa sem CNPJ válido para operar via escritório responsável."
+        else:
+            updated.eligible = updated.has_certificate_credentials and str(updated.auth_mode or "").strip().lower() == "certificate"
+            if not updated.eligible:
+                updated.block_reason = "Empresa sem certificado digital configurado no dashboard."
+        normalized.append(updated)
+    return normalized
 
 
-def _finalize_summary(summary: dict[str, Any], company_results: list[CompanyRunResult]) -> dict[str, Any]:
+def _resolve_company_certificate(runtime_env: RuntimeEnvironment, company: CompanyRecord) -> CertificateMetadata:
+    metadata = resolve_certificate_from_dashboard(runtime_env, [company])
+    if not metadata:
+        raise RuntimeError(f"Certificado digital não encontrado para {company.name}.")
+    return metadata
+
+
+def _resolve_responsible_office_company(
+    dashboard_client: DashboardClient,
+    office_context: OfficeContext,
+    companies: list[CompanyRecord],
+    mailbox_config: RobotMailboxConfig,
+) -> CompanyRecord:
+    responsible_id = str(mailbox_config.responsible_office_company_id or "").strip()
+    if not responsible_id:
+        raise RuntimeError("Configuração dinâmica inválida: responsible_office_company_id não definido.")
+    company = next((item for item in companies if item.company_id == responsible_id), None)
+    if company is None:
+        company = dashboard_client.load_company_by_id(office_context, responsible_id)
+    if company is None:
+        raise RuntimeError("Empresa definida como escritório responsável não foi encontrada no dashboard.")
+    if not company.has_valid_cnpj:
+        raise RuntimeError("A empresa escolhida como escritório responsável precisa ter CNPJ válido.")
+    if not company.has_certificate_credentials or str(company.auth_mode or "").strip().lower() != "certificate":
+        raise RuntimeError("A empresa escolhida como escritório responsável precisa ter certificado digital configurado.")
+    company.eligible = True
+    company.block_reason = ""
+    return company
+
+
+def _finalize_summary(
+    summary: dict[str, Any],
+    company_results: list[CompanyRunResult],
+    responsible_office_result: Optional[CompanyRunResult] = None,
+) -> dict[str, Any]:
     total_messages = sum(len(result.messages) for result in company_results)
+    if responsible_office_result:
+        total_messages += len(responsible_office_result.messages)
     total_success = sum(1 for result in company_results if result.status in {"success", "empty"})
     total_failed = sum(1 for result in company_results if result.status not in {"success", "empty"})
     status = summary.get("status") or "completed"
     if total_failed and total_success:
         status = "partial"
     elif total_failed and not total_success:
+        status = "failed"
+    elif responsible_office_result and responsible_office_result.status not in {"success", "empty"} and company_results:
+        status = "partial"
+    elif responsible_office_result and responsible_office_result.status not in {"success", "empty"}:
         status = "failed"
     elif status == "stopped":
         status = "partial"
@@ -2162,10 +2336,12 @@ def _finalize_summary(summary: dict[str, Any], company_results: list[CompanyRunR
         {
             "status": status,
             "total_companies": len(company_results),
+            "total_contexts_processed": len(company_results) + (1 if responsible_office_result else 0),
             "total_success": total_success,
             "total_failed": total_failed,
             "total_messages": total_messages,
-            "companies": [result.to_dict() for result in company_results],
+            "company_results": [result.to_dict() for result in company_results],
+            "responsible_office_result": responsible_office_result.to_dict() if responsible_office_result else None,
         }
     )
     return summary
@@ -2175,90 +2351,159 @@ def execute_mailbox_run(
     runtime_env: RuntimeEnvironment,
     *,
     companies: list[CompanyRecord],
-    certificate: CertificateMetadata,
+    dashboard_client: DashboardClient,
+    office_context: OfficeContext,
+    mailbox_config: RobotMailboxConfig,
     job: Optional[JobPayload] = None,
     stop_requested: Callable[[], bool],
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
     headless: bool = False,
 ) -> dict[str, Any]:
     if not companies:
-        raise RuntimeError("Nenhuma empresa selecionada/elegível para execução.")
+        raise RuntimeError("Nenhuma empresa informada pelo job.json para execução.")
 
     run_id = runtime_env.generate_run_id()
-    run_dir = runtime_env.create_run_output_dir(run_id)
     summary: dict[str, Any] = {
         "run_id": run_id,
         "started_at": utc_now_iso(),
         "finished_at": "",
         "status": "processing",
-        "output_dir": str(run_dir),
         "robot_technical_id": ROBOT_TECHNICAL_ID,
+        "execution_request_id": job.execution_request_id if job else None,
+        "job_id": job.job_id if job else None,
+        "use_responsible_office": mailbox_config.use_responsible_office,
+        "responsible_office_company_id": mailbox_config.responsible_office_company_id or None,
         "interrupted_at_company": "",
     }
+    total_steps = len(companies) + (1 if mailbox_config.use_responsible_office else 0)
     runtime_env.json_runtime.write_heartbeat(
         status="processing",
         current_job_id=job.job_id if job else None,
         current_execution_request_id=job.execution_request_id if job else None,
         message="run_started",
-        progress={"current": 0, "total": len(companies)},
+        progress={"current": 0, "total": total_steps},
         extra={"run_id": run_id},
     )
 
-    run_log_path = run_dir / "run.log"
     company_results: list[CompanyRunResult] = []
-    run_log_path.write_text("", encoding="utf-8")
+    responsible_office_result: Optional[CompanyRunResult] = None
 
-    def append_run_log(line: str) -> None:
-        with run_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(line.rstrip() + "\n")
-
-    session: Optional[BrowserSession] = None
-    try:
-        session = launch_browser(runtime_env, headless=headless)
-        runtime_env.logger.info(f"Navegador iniciado em {session.executable_path}")
-        append_run_log(f"[browser] {session.executable_path}")
-        automation = EcacMailboxAutomation(
-            runtime_env,
-            session,
-            certificate,
-            stop_requested=stop_requested,
+    if mailbox_config.use_responsible_office:
+        responsible_company = _resolve_responsible_office_company(
+            dashboard_client,
+            office_context,
+            companies,
+            mailbox_config,
         )
-        automation.login()
+        target_companies = [company for company in companies if company.company_id != responsible_company.company_id]
+        session: Optional[BrowserSession] = None
+        try:
+            certificate = _resolve_company_certificate(runtime_env, responsible_company)
+            session = launch_browser(runtime_env, headless=headless)
+            runtime_env.logger.info(f"Navegador iniciado em {session.executable_path}")
+            automation = EcacMailboxAutomation(
+                runtime_env,
+                session,
+                certificate,
+                stop_requested=stop_requested,
+            )
+            automation.login()
+            responsible_office_result = automation.collect_current_mailbox(
+                responsible_company,
+                run_id,
+                switch_profile=False,
+                context_type="responsible_office",
+            )
+            runtime_env.json_runtime.write_heartbeat(
+                status="processing",
+                current_job_id=job.job_id if job else None,
+                current_execution_request_id=job.execution_request_id if job else None,
+                message=f"processing_company:{responsible_company.company_id}",
+                progress={"current": 1, "total": total_steps, "company_id": responsible_company.company_id},
+                extra={"run_id": run_id, "company_name": responsible_company.name, "context_type": "responsible_office"},
+            )
+            if progress_callback:
+                progress_callback({"current": 1, "total": total_steps, "company_name": responsible_company.name})
 
+            for index, company in enumerate(target_companies, start=2):
+                if stop_requested():
+                    summary["status"] = "stopped"
+                    summary["interrupted_at_company"] = company.name
+                    break
+                runtime_env.logger.info(f"Processando empresa por procuração: {company.name}")
+                runtime_env.json_runtime.write_heartbeat(
+                    status="processing",
+                    current_job_id=job.job_id if job else None,
+                    current_execution_request_id=job.execution_request_id if job else None,
+                    message=f"processing_company:{company.company_id}",
+                    progress={"current": index, "total": total_steps, "company_id": company.company_id},
+                    extra={"run_id": run_id, "company_name": company.name},
+                )
+                if progress_callback:
+                    progress_callback({"current": index, "total": total_steps, "company_name": company.name})
+                result = automation.collect_current_mailbox(company, run_id, switch_profile=True, context_type="company")
+                company_results.append(result)
+        finally:
+            close_browser(session)
+    else:
         for index, company in enumerate(companies, start=1):
             if stop_requested():
                 summary["status"] = "stopped"
                 summary["interrupted_at_company"] = company.name
                 break
-            runtime_env.logger.info(f"Processando empresa {index}/{len(companies)}: {company.name}")
             runtime_env.json_runtime.write_heartbeat(
                 status="processing",
                 current_job_id=job.job_id if job else None,
                 current_execution_request_id=job.execution_request_id if job else None,
                 message=f"processing_company:{company.company_id}",
-                progress={"current": index, "total": len(companies), "company_id": company.company_id},
+                progress={"current": index, "total": total_steps, "company_id": company.company_id},
                 extra={"run_id": run_id, "company_name": company.name},
             )
             if progress_callback:
-                progress_callback({"current": index, "total": len(companies), "company_name": company.name})
-            append_run_log(f"[company] {company.company_id} {company.name}")
-            result = automation.process_company(company, run_id)
-            company_results.append(result)
-            _persist_company_result(run_dir, result)
-            append_run_log(
-                f"[result] {company.company_id} status={result.status} mensagens={len(result.messages)} erros={'; '.join(result.errors)}"
-            )
-    finally:
-        close_browser(session)
+                progress_callback({"current": index, "total": total_steps, "company_name": company.name})
+            if not company.eligible:
+                company_results.append(
+                    CompanyRunResult(
+                        company_id=company.company_id,
+                        company_name=company.name,
+                        company_document=format_document(company.document),
+                        context_type="company",
+                        status="blocked",
+                        eligible=False,
+                        block_reason=company.block_reason,
+                        errors=[company.block_reason or "Empresa não elegível para execução isolada."],
+                        started_at=utc_now_iso(),
+                        finished_at=utc_now_iso(),
+                    )
+                )
+                continue
+            session = None
+            try:
+                certificate = _resolve_company_certificate(runtime_env, company)
+                session = launch_browser(runtime_env, headless=headless)
+                runtime_env.logger.info(f"Navegador iniciado em {session.executable_path} para {company.name}")
+                automation = EcacMailboxAutomation(
+                    runtime_env,
+                    session,
+                    certificate,
+                    stop_requested=stop_requested,
+                )
+                automation.login()
+                result = automation.collect_current_mailbox(company, run_id, switch_profile=False, context_type="company")
+                company_results.append(result)
+            finally:
+                close_browser(session)
 
     summary["finished_at"] = utc_now_iso()
-    summary = _finalize_summary(summary, company_results)
-    write_json_atomic(run_dir / "summary.json", summary)
+    summary = _finalize_summary(summary, company_results, responsible_office_result)
     runtime_env.json_runtime.write_result(
         job=job,
         success=summary["status"] in {"completed", "partial"},
         summary=summary,
         error_message=None if summary["status"] != "failed" else "Falha geral na execução do robô.",
+        company_results=[result.to_dict() for result in company_results],
+        responsible_office_result=responsible_office_result.to_dict() if responsible_office_result else None,
+        payload={"mailbox_config": mailbox_config.to_dict()},
     )
     return summary
 
@@ -2285,7 +2530,6 @@ def run_mailbox_job(
     runtime_env: RuntimeEnvironment,
     *,
     companies: list[CompanyRecord],
-    certificate_thumbprint: str = "",
     job: Optional[JobPayload] = None,
     headless: bool = False,
     stop_requested: Optional[Callable[[], bool]] = None,
@@ -2296,9 +2540,12 @@ def run_mailbox_job(
     if log_callback:
         runtime_env.logger.bind_sink(log_callback)
     certificate_auth.ensure_windows_environment()
+    if not job:
+        raise RuntimeError("job.json obrigatório não encontrado para o robô da Caixa Postal.")
 
     dashboard_client = DashboardClient(runtime_env)
     office_context = dashboard_client.resolve_office_context(job)
+    mailbox_config = dashboard_client.fetch_mailbox_runtime_config(office_context)
     dashboard_robot_id = dashboard_client.register_robot_presence(status="processing")
     runtime_env.json_runtime.register_robot(
         extra={
@@ -2310,23 +2557,16 @@ def run_mailbox_job(
     if not office_context.office_id:
         raise RuntimeError("office_id não resolvido. Verifique /api/robot-config, CONNECTOR_SECRET e a VM do escritório.")
 
-    selected_companies = [company for company in companies if company.eligible]
-    if not selected_companies:
-        raise RuntimeError("Nenhuma empresa elegível/selecionada para execução.")
+    scoped_companies = _apply_mailbox_eligibility(companies, mailbox_config)
+    if not scoped_companies:
+        raise RuntimeError("Nenhuma empresa carregada a partir do job.json.")
 
-    certificate = certificate_auth.resolve_certificate(
-        runtime_env,
-        companies=selected_companies,
-        preferred_thumbprint=certificate_thumbprint,
-    )
-    if not certificate:
-        raise RuntimeError(
-            "Certificado não configurado. O robô procura nesta ordem: ECAC_CERT_* do .env, certificado do dashboard (cert_blob_b64/cert_password) das empresas selecionadas e registro local em data/json/certificates.json."
-        )
+    if not mailbox_config.use_responsible_office and not any(company.eligible for company in scoped_companies):
+        raise RuntimeError("Nenhuma empresa do job possui certificado digital configurado.")
 
     heartbeat_state: dict[str, Any] = {
         "current": 0,
-        "total": len(selected_companies),
+        "total": len(scoped_companies) + (1 if mailbox_config.use_responsible_office else 0),
         "company_name": "",
     }
     stop_flag = threading.Event()
@@ -2353,8 +2593,10 @@ def run_mailbox_job(
     try:
         summary = execute_mailbox_run(
             runtime_env,
-            companies=selected_companies,
-            certificate=certificate,
+            companies=scoped_companies,
+            dashboard_client=dashboard_client,
+            office_context=office_context,
+            mailbox_config=mailbox_config,
             job=job,
             stop_requested=stop_requested,
             progress_callback=on_progress,
@@ -2367,20 +2609,23 @@ def run_mailbox_job(
             "started_at": utc_now_iso(),
             "finished_at": utc_now_iso(),
             "status": "failed",
-            "output_dir": str(runtime_env.create_run_output_dir(datetime.now().strftime("%Y%m%d_%H%M%S_fail"))),
             "robot_technical_id": "ecac_caixa_postal",
-            "total_companies": len(selected_companies),
+            "total_companies": len(scoped_companies),
             "total_success": 0,
-            "total_failed": len(selected_companies),
+            "total_failed": len(scoped_companies),
             "total_messages": 0,
             "error": str(exc),
-            "companies": [],
+            "company_results": [],
+            "responsible_office_result": None,
         }
         runtime_env.json_runtime.write_result(
             job=job,
             success=False,
             summary=failed_summary,
             error_message=str(exc),
+            company_results=[],
+            responsible_office_result=None,
+            payload={"mailbox_config": mailbox_config.to_dict()},
         )
         runtime_env.json_runtime.write_heartbeat(
             status="active",
@@ -2408,14 +2653,12 @@ class EcacMailboxWorker(QThread):  # type: ignore[misc]
         runtime_env: RuntimeEnvironment,
         *,
         companies: list[CompanyRecord],
-        certificate_thumbprint: str = "",
         job: Optional[JobPayload] = None,
         headless: bool = False,
     ) -> None:
         super().__init__()
         self.runtime = runtime_env
         self.companies = companies
-        self.certificate_thumbprint = certificate_thumbprint
         self.job = job
         self.headless = headless
         self._stop_requested = False
@@ -2433,7 +2676,6 @@ class EcacMailboxWorker(QThread):  # type: ignore[misc]
             summary = run_mailbox_job(
                 self.runtime,
                 companies=self.companies,
-                certificate_thumbprint=self.certificate_thumbprint,
                 job=self.job,
                 headless=self.headless,
                 stop_requested=lambda: self._stop_requested,
@@ -2457,11 +2699,8 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QFileDialog,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -2472,7 +2711,6 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QCheckBox,
 )
 
 
@@ -2484,6 +2722,7 @@ class MainWindow(QMainWindow):
         self.robot_dashboard_id: Optional[str] = None
         self.job: Optional[JobPayload] = self.runtime.json_runtime.load_job()
         self.office_context = self.dashboard.resolve_office_context(self.job)
+        self.mailbox_config = RobotMailboxConfig()
         self.worker: Optional[EcacMailboxWorker] = None
         self.companies: list[CompanyRecord] = []
         self.filtered_companies: list[CompanyRecord] = []
@@ -2528,19 +2767,15 @@ class MainWindow(QMainWindow):
         companies_layout.addWidget(self.search_input)
 
         self.company_list = QListWidget()
-        self.company_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.company_list.setSelectionMode(QAbstractItemView.NoSelection)
         self.company_list.setAlternatingRowColors(True)
         self.company_list.setUniformItemSizes(False)
-        self.company_list.itemSelectionChanged.connect(self._refresh_certificate_status)
         companies_layout.addWidget(self.company_list, 1)
 
         company_buttons = QHBoxLayout()
-        self.refresh_button = QPushButton("Atualizar empresas")
+        self.refresh_button = QPushButton("Recarregar job")
         self.refresh_button.clicked.connect(self.reload_companies)
-        self.select_job_button = QPushButton("Selecionar job.json")
-        self.select_job_button.clicked.connect(self._select_job_companies)
         company_buttons.addWidget(self.refresh_button)
-        company_buttons.addWidget(self.select_job_button)
         companies_layout.addLayout(company_buttons)
         top_row.addWidget(companies_box, 2)
 
@@ -2548,34 +2783,23 @@ class MainWindow(QMainWindow):
         side_column.setSpacing(12)
         top_row.addLayout(side_column, 1)
 
-        certificate_box = QGroupBox("Certificado do Operador")
-        certificate_layout = QVBoxLayout(certificate_box)
-        self.certificate_status = QLabel("Nenhum certificado configurado.")
-        self.certificate_status.setWordWrap(True)
-        self.certificate_registry_input = QLineEdit()
-        self.certificate_registry_input.setPlaceholderText("Thumbprint do certificado salvo (opcional)")
-        self.import_certificate_button = QPushButton("Importar certificado PFX")
-        self.import_certificate_button.clicked.connect(self.import_certificate)
-        certificate_layout.addWidget(self.certificate_status)
-        certificate_layout.addWidget(self.certificate_registry_input)
-        certificate_layout.addWidget(self.import_certificate_button)
-        side_column.addWidget(certificate_box)
-
-        runtime_box = QGroupBox("Runtime")
-        runtime_layout = QGridLayout(runtime_box)
-        self.job_mode_checkbox = QCheckBox("Usar job.json / modo painel")
-        self.job_mode_checkbox.setChecked(self.job is not None)
         self.status_label = QLabel("Pronto")
         self.progress_label = QLabel("0 / 0")
         self.office_label = QLabel(self.office_context.office_id or "office_id não resolvido")
-        runtime_layout.addWidget(QLabel("Status"), 0, 0)
-        runtime_layout.addWidget(self.status_label, 0, 1)
-        runtime_layout.addWidget(QLabel("Progresso"), 1, 0)
-        runtime_layout.addWidget(self.progress_label, 1, 1)
-        runtime_layout.addWidget(QLabel("office_id"), 2, 0)
-        runtime_layout.addWidget(self.office_label, 2, 1)
-        runtime_layout.addWidget(self.job_mode_checkbox, 3, 0, 1, 2)
-        side_column.addWidget(runtime_box)
+        self.job_label = QLabel("job.json não carregado")
+        status_panel = QWidget()
+        status_layout = QVBoxLayout(status_panel)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(6)
+        status_layout.addWidget(QLabel("Status"))
+        status_layout.addWidget(self.status_label)
+        status_layout.addWidget(QLabel("Progresso"))
+        status_layout.addWidget(self.progress_label)
+        status_layout.addWidget(QLabel("office_id"))
+        status_layout.addWidget(self.office_label)
+        status_layout.addWidget(QLabel("job_id"))
+        status_layout.addWidget(self.job_label)
+        side_column.addWidget(status_panel)
 
         controls = QHBoxLayout()
         self.start_button = QPushButton("Iniciar")
@@ -2595,7 +2819,7 @@ class MainWindow(QMainWindow):
         self.log_panel = QTextEdit()
         self.log_panel.setReadOnly(True)
         self.log_panel.setLineWrapMode(QTextEdit.NoWrap)
-        self.log_panel.setPlaceholderText("Logs da execuÃ§Ã£o aparecerÃ£o aqui.")
+        self.log_panel.setPlaceholderText("Logs da execução aparecerão aqui.")
         self.clear_log_button.clicked.connect(self.log_panel.clear)
         log_layout.addWidget(self.log_panel)
         layout.addWidget(log_box, 1)
@@ -2694,54 +2918,42 @@ class MainWindow(QMainWindow):
     def _load_initial_state(self) -> None:
         self.append_log("Carregando estado inicial do robô.")
         self.reload_companies()
-        if self.job and self.job.company_ids:
-            self._select_companies_by_ids(self.job.company_ids)
-        self._refresh_certificate_status()
-
-    def _refresh_certificate_status(self) -> None:
-        env_cert = certificate_auth.peek_certificate_configuration_from_env()
-        if env_cert:
-            text = f"Via .env: {env_cert.alias or env_cert.subject or env_cert.pfx_path}"
-            if env_cert.subject:
-                text += f"\nSubject: {env_cert.subject}"
-            self.certificate_status.setText(text)
-            return
-
-        companies = self._selected_companies() or self.companies
-        dashboard_cert = certificate_auth.peek_certificate_configuration_from_dashboard(companies)
-        if dashboard_cert:
-            self.certificate_status.setText(
-                f"Via dashboard: {dashboard_cert.display_label()}\nOrigem: cert_blob_b64/cert_password da empresa selecionada."
-            )
-            return
-
-        registry = certificate_auth.load_registry(self.runtime.paths.certificates_registry_path)
-        if registry:
-            first = registry[0]
-            self.certificate_status.setText(
-                f"Cadastrado localmente: {first.display_label()}\nThumbprint: {first.thumbprint or '(não informado)'}"
-            )
-            if not self.certificate_registry_input.text().strip() and first.thumbprint:
-                self.certificate_registry_input.setText(first.thumbprint)
-            return
-
-        self.certificate_status.setText(
-            "Nenhum certificado configurado. O robÃ´ procura em ECAC_CERT_* no .env, no dashboard (cert_blob_b64/cert_password) e no registro local."
-        )
+        if self.job:
+            self.job_label.setText(self.job.job_id or self.job.execution_request_id or "(sem job_id)")
+        else:
+            self.job_label.setText("job.json pendente ou já consumido")
 
     def reload_companies(self) -> None:
         try:
+            self.job = self.runtime.json_runtime.load_job()
             self.office_context = self.dashboard.resolve_office_context(self.job, force_refresh=True)
-            company_ids = self.job.company_ids if self.job_mode_checkbox.isChecked() and self.job else None
+            company_ids = self.job.company_ids or None if self.job else None
+            self.mailbox_config = self.dashboard.fetch_mailbox_runtime_config(self.office_context)
             self.companies = self.dashboard.load_companies(self.office_context, job=self.job, company_ids=company_ids)
+            self.companies = _apply_mailbox_eligibility(self.companies, self.mailbox_config)
             self.office_label.setText(self.office_context.office_id or "office_id não resolvido")
-            self._refresh_certificate_status()
             self._apply_company_filter()
             self.append_log(f"{len(self.companies)} empresas carregadas do dashboard.")
+            if self.job:
+                self.job_label.setText(self.job.job_id or self.job.execution_request_id or "(sem job_id)")
+                self.status_label.setText("Pronto para executar job")
+                self.progress_label.setText(f"0 / {len(self.companies)}")
+            else:
+                self.job_label.setText("job.json pendente ou já consumido")
+                self.status_label.setText("Conectado ao dashboard")
+                self.progress_label.setText(f"0 / {len(self.companies)}")
+                self.append_log("Nenhum job.json pendente encontrado. Empresas exibidas a partir do dashboard.")
+            self.append_log(
+                "Configuração dinâmica: "
+                + (
+                    "com escritório responsável."
+                    if self.mailbox_config.use_responsible_office
+                    else "sem escritório responsável."
+                )
+            )
         except Exception as exc:
             self.append_log(f"Falha ao carregar empresas: {exc}")
             self.companies = []
-            self._refresh_certificate_status()
             self._apply_company_filter()
 
     def _apply_company_filter(self) -> None:
@@ -2764,68 +2976,19 @@ class MainWindow(QMainWindow):
                 item.setText(item.text() + f"\nMotivo: {company.block_reason}")
             self.company_list.addItem(item)
 
-    def _select_companies_by_ids(self, company_ids: list[str]) -> None:
-        wanted = {str(item).strip() for item in company_ids if str(item).strip()}
-        for index in range(self.company_list.count()):
-            item = self.company_list.item(index)
-            if item.data(Qt.UserRole) in wanted:
-                item.setSelected(True)
-        self._refresh_certificate_status()
-
-    def _select_job_companies(self) -> None:
-        if not self.job or not self.job.company_ids:
-            QMessageBox.information(self, "Job", "Nenhum job.json carregado com company_ids.")
-            return
-        self._select_companies_by_ids(self.job.company_ids)
-        self.append_log("Empresas do job.json selecionadas na lista.")
-
-    def import_certificate(self) -> None:
-        pfx_path, _ = QFileDialog.getOpenFileName(self, "Selecionar certificado PFX", "", "Certificados (*.pfx);;Todos os arquivos (*)")
-        if not pfx_path:
-            return
-        alias, ok = QInputDialog.getText(self, "Alias do Certificado", "Nome/alias para exibir na interface:")
-        if not ok:
-            return
-        password, ok = QInputDialog.getText(
-            self,
-            "Senha do PFX",
-            "Senha do certificado:",
-            QLineEdit.Password,
-        )
-        if not ok:
-            return
-        try:
-            metadata = certificate_auth.register_certificate(
-                self.runtime,
-                alias=alias,
-                pfx_path=Path(pfx_path),
-                password=password,
-            )
-            if metadata.thumbprint:
-                self.certificate_registry_input.setText(metadata.thumbprint)
-            self.append_log(f"Certificado importado com sucesso: {metadata.display_label()}")
-            self._refresh_certificate_status()
-        except Exception as exc:
-            QMessageBox.critical(self, "Certificado", str(exc))
-
-    def _selected_companies(self) -> list[CompanyRecord]:
-        selected_ids = {item.data(Qt.UserRole) for item in self.company_list.selectedItems()}
-        if not selected_ids and self.job_mode_checkbox.isChecked() and self.job and self.job.company_ids:
-            selected_ids = set(self.job.company_ids)
-        return [company for company in self.companies if company.company_id in selected_ids]
-
     def start_worker(self) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
-        selected = self._selected_companies()
-        if not selected:
-            QMessageBox.warning(self, "Empresas", "Selecione ao menos uma empresa elegível.")
+        if not self.job:
+            QMessageBox.warning(self, "Job", "job.json obrigatório não encontrado ou já consumido.")
+            return
+        if not self.companies:
+            QMessageBox.warning(self, "Empresas", "Nenhuma empresa foi carregada a partir do job.json.")
             return
         self.worker = EcacMailboxWorker(
             self.runtime,
-            companies=selected,
-            certificate_thumbprint=self.certificate_registry_input.text().strip(),
-            job=self.job if self.job_mode_checkbox.isChecked() else None,
+            companies=list(self.companies),
+            job=self.job,
             headless=False,
         )
         self.worker.log.connect(self.append_log)
@@ -2860,10 +3023,11 @@ class MainWindow(QMainWindow):
         if not isinstance(summary, dict):
             return
         self.append_log(
-            f"Resumo final: status={summary.get('status')} empresas={summary.get('total_companies')} mensagens={summary.get('total_messages')}"
+            f"Resumo final: status={summary.get('status')} contextos={summary.get('total_contexts_processed', summary.get('total_companies'))} mensagens={summary.get('total_messages')}"
         )
         self.status_label.setText(str(summary.get("status") or "Concluído"))
-        self.progress_label.setText(f"{summary.get('total_companies', 0)} / {summary.get('total_companies', 0)}")
+        total_contexts = int(summary.get("total_contexts_processed", summary.get("total_companies", 0)) or 0)
+        self.progress_label.setText(f"{total_contexts} / {total_contexts}")
         self.dashboard.update_robot_presence(status="active", robot_id=self.robot_dashboard_id or "")
 
     def _on_error(self, message: str) -> None:
@@ -2905,27 +3069,24 @@ if str(SCRIPT_DIR) not in sys.path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="e-CAC - Caixa Postal")
     parser.add_argument("--no-ui", action="store_true", help="Executa sem interface gráfica.")
-    parser.add_argument("--job-mode", action="store_true", help="Força leitura de job.json.")
     parser.add_argument("--headless", action="store_true", help="Executa o navegador em headless.")
-    parser.add_argument("--company-id", action="append", default=[], help="Restringe a execução a um company_id.")
-    parser.add_argument("--certificate-thumbprint", default="", help="Thumbprint salvo localmente para priorizar um certificado.")
     return parser.parse_args()
 
 
 def _run_cli(args: argparse.Namespace) -> int:
     runtime_env = build_runtime()
-    job = runtime_env.json_runtime.load_job() if args.job_mode or args.company_id else runtime_env.json_runtime.load_job()
+    job = runtime_env.json_runtime.load_job()
+    if not job:
+        raise RuntimeError("job.json obrigatório não encontrado para o robô da Caixa Postal.")
     dashboard = DashboardClient(runtime_env)
     robot_id = dashboard.register_robot_presence(status="active")
     office_context = dashboard.resolve_office_context(job)
-    company_ids = args.company_id or (job.company_ids if args.job_mode and job else None)
-    companies = dashboard.load_companies(office_context, job=job if args.job_mode else job, company_ids=company_ids)
+    companies = dashboard.load_companies(office_context, job=job, company_ids=job.company_ids or None)
     try:
         summary = run_mailbox_job(
             runtime_env,
             companies=companies,
-            certificate_thumbprint=args.certificate_thumbprint,
-            job=job if args.job_mode else job,
+            job=job,
             headless=args.headless,
             log_callback=lambda line: print(line, flush=True),
         )
@@ -2952,3 +3113,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

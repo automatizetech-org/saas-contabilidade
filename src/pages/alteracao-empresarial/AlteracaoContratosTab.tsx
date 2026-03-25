@@ -75,8 +75,11 @@ export function AlteracaoContratosTab() {
       const a = document.createElement("a");
       a.href = url;
       a.download = "Contrato-preenchido.docx";
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
       toast.success("Contrato gerado. Download iniciado.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar DOCX");

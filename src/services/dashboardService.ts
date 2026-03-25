@@ -1,6 +1,11 @@
 import { supabase } from "./supabaseClient"
 import { fetchAllPages } from "./supabasePagination"
 
+const preferDashboardFallback = Boolean(import.meta.env.DEV)
+let canUseFiscalOverviewAnalyticsRpc = !preferDashboardFallback
+let canUseDashboardOverviewRpc = !preferDashboardFallback
+let canUseNfsStatsRangeSummaryRpc = !preferDashboardFallback
+
 function buildMonthKeys(monthsBack: number) {
   const now = new Date()
   return Array.from({ length: monthsBack }).map((_, index) => {
@@ -12,8 +17,17 @@ function buildMonthKeys(monthsBack: number) {
   })
 }
 
-function resolveDocumentReferenceDate(document: { document_date?: string | null; created_at?: string | null }) {
-  return String(document.document_date || document.created_at || "").slice(0, 10)
+function resolveDocumentReferenceDate(document: { document_date?: string | null; created_at?: string | null; periodo?: string | null }) {
+  const documentDate = String(document.document_date || "").slice(0, 10)
+  if (documentDate) return documentDate
+
+  const createdAt = String(document.created_at || "").slice(0, 10)
+  if (createdAt) return createdAt
+
+  const period = String(document.periodo || "").trim()
+  if (/^\d{4}-\d{2}$/.test(period)) return `${period}-01`
+
+  return ""
 }
 
 function isWithinDateRange(value: string, dateFrom?: string, dateTo?: string) {
@@ -598,6 +612,7 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
     return getEmptyNfsStats(months.length === 1 ? months[0] : `${months[0]} a ${months[months.length - 1]}`)
   }
   try {
+    if (!canUseNfsStatsRangeSummaryRpc) throw new Error("NFS stats range RPC disabled for this session")
     const { data, error } = await supabase.rpc("get_nfs_stats_range_summary", {
       company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
       date_from: dateFrom,
@@ -614,6 +629,9 @@ export async function getNfsStatsByDateRange(companyIds: string[] | null, dateFr
       previousValorRecebidas?: number
       serviceCodesRankingPrestadas?: ServiceCodeStat[]
       serviceCodesRankingTomadas?: ServiceCodeStat[]
+    }
+    if (Number(payload.totalQty ?? 0) === 0 && activePairs.size > 0) {
+      throw new Error("NFS stats range RPC returned empty payload")
     }
 
     return {
@@ -1204,6 +1222,7 @@ function normalizeRpcMonthSeries(
 
 export async function getFiscalOverviewAnalytics(companyIds: string[] | null, dateFrom: string, dateTo: string) {
   try {
+    if (!canUseFiscalOverviewAnalyticsRpc) throw new Error("Fiscal overview analytics RPC disabled for this session")
     const { data, error } = await supabase.rpc("get_fiscal_overview_analytics_summary", {
       company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
       date_from: dateFrom,
@@ -1223,6 +1242,7 @@ export async function getFiscalOverviewAnalytics(companyIds: string[] | null, da
       byStatus?: Array<{ name?: string; value?: number }>
       byTypeSummary?: { NFS?: number; NFE?: number; NFC?: number; outros?: number }
     }
+    if (Number(payload.cards?.totalDocumentos ?? 0) === 0) throw new Error("Fiscal overview analytics RPC returned empty payload")
 
     const monthLabels = new Map(buildMonthsBetween(dateFrom, dateTo).map((item) => [item.key, item.label]))
     return {
@@ -1252,12 +1272,14 @@ export async function getFiscalOverviewAnalytics(companyIds: string[] | null, da
       },
     }
   } catch {
+    canUseFiscalOverviewAnalyticsRpc = false
     return getFiscalOverviewAnalyticsLegacy(companyIds, dateFrom, dateTo)
   }
 }
 
 export async function getDashboardOverview(companyIds: string[] | null) {
   try {
+    if (!canUseDashboardOverviewRpc) throw new Error("Dashboard overview RPC disabled for this session")
     const { data, error } = await supabase.rpc("get_dashboard_overview_summary", {
       company_ids: companyIds && companyIds.length > 0 ? companyIds : null,
     })
@@ -1305,6 +1327,7 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       syncSummary?: { totalEventos?: number; falhas?: number; sucessos?: number }
       syncEvents?: Array<{ id?: string; company_id?: string | null; tipo?: string; status?: string; created_at?: string; companyName?: string }>
     }
+    if (Number(payload.totalNotasFiscais ?? payload.documentsCount ?? 0) === 0) throw new Error("Dashboard overview RPC returned empty payload")
 
     const monthLabels = new Map(buildMonthKeys(6).map((item) => [item.key, item.label]))
     const totalNotasFiscais = Number(payload.totalNotasFiscais ?? payload.documentsCount ?? 0)
@@ -1391,6 +1414,7 @@ export async function getDashboardOverview(companyIds: string[] | null) {
       })),
     }
   } catch {
+    canUseDashboardOverviewRpc = false
     return getDashboardOverviewLegacy(companyIds)
   }
 }

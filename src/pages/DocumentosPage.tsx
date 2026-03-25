@@ -42,8 +42,11 @@ function exportToCsv(data: ExportableDocument[]) {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `documentos-pagina-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 function getCategoryKey(doc: { source?: string; type?: string }) {

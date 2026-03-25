@@ -14,6 +14,7 @@ export type RobotConfigFieldType =
   | "textarea"
   | "boolean"
   | "select"
+  | "company_select"
   | "number"
   | "city_select"
   | "auth_mode"
@@ -34,6 +35,7 @@ export type RobotConfigFieldSchema = {
   help_text?: string;
   required?: boolean;
   options?: RobotConfigFieldOption[];
+  company_option_filter?: "valid_cnpj";
   default_value?: Json;
   visible_when?: {
     key: string;
@@ -83,6 +85,7 @@ function normalizeFieldSchema(value: Json): RobotConfigFieldSchema | null {
     "textarea",
     "boolean",
     "select",
+    "company_select",
     "number",
     "city_select",
     "auth_mode",
@@ -115,6 +118,7 @@ function normalizeFieldSchema(value: Json): RobotConfigFieldSchema | null {
     help_text: String(row.help_text ?? "").trim() || undefined,
     required: Boolean(row.required),
     options: asArray(row.options).map(normalizeFieldOption).filter((item): item is RobotConfigFieldOption => Boolean(item)),
+    company_option_filter: row.company_option_filter === "valid_cnpj" ? "valid_cnpj" : undefined,
     default_value: row.default_value,
     visible_when: visibleWhenRaw
       ? {
@@ -226,6 +230,34 @@ function getFallbackAdminSchema(robot: Robot): RobotConfigFieldSchema[] {
         type: "boolean",
         target: "admin_settings",
         help_text: "Se marcado, o robô não captura débitos de ISS.",
+      },
+    );
+  }
+
+  if (robot.technical_id === "ecac_caixa_postal") {
+    fields.push(
+      {
+        key: "use_responsible_office",
+        label: "Usar escritório responsável",
+        type: "boolean",
+        target: "admin_settings",
+        help_text:
+          "Quando marcado, o robô autentica com o certificado da empresa escolhida como escritório responsável, lê primeiro a própria Caixa Postal e depois troca o acesso por procuração para as empresas do job.",
+      },
+      {
+        key: "responsible_office_company_id",
+        label: "Escritório responsável",
+        type: "company_select",
+        target: "admin_settings",
+        company_option_filter: "valid_cnpj",
+        placeholder: "Selecione a empresa do escritório responsável",
+        help_text:
+          "Lista apenas empresas com CNPJ válido. A empresa escolhida precisa ter certificado digital configurado para autenticação inicial.",
+        visible_when: {
+          key: "use_responsible_office",
+          equals: true,
+          target: "admin_settings",
+        },
       },
     );
   }

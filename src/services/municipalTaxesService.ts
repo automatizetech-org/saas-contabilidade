@@ -67,6 +67,14 @@ export type MunicipalTaxSummary = {
 }
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
+let canUseMunicipalTaxOverviewRpc = true
+let canUseMunicipalTaxDebtsPageRpc = true
+
+function isMissingSearchTextNormalizedColumn(error: unknown) {
+  if (!error || typeof error !== "object") return false
+  const row = error as { code?: unknown; message?: unknown }
+  return row.code === "42703" && String(row.message ?? "").includes("search_text_normalized")
+}
 
 function normalizeBaseDate() {
   const today = new Date()
@@ -180,6 +188,7 @@ function compareMunicipalDebtItems(a: MunicipalTaxDebtView, b: MunicipalTaxDebtV
 
 export async function getMunicipalTaxOverview(filters: MunicipalTaxFilters = {}): Promise<MunicipalTaxOverview> {
   try {
+    if (!canUseMunicipalTaxOverviewRpc) throw new Error("Municipal tax overview RPC disabled for this session")
     const { data, error } = await supabase.rpc("get_municipal_tax_overview_summary", {
       company_ids: filters.companyIds?.length ? filters.companyIds : null,
       year_filter: filters.year ?? null,
@@ -231,7 +240,10 @@ export async function getMunicipalTaxOverview(filters: MunicipalTaxFilters = {})
       })),
       years: (payload.years ?? []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
     }
-  } catch {
+  } catch (error) {
+    if (isMissingSearchTextNormalizedColumn(error)) {
+      canUseMunicipalTaxOverviewRpc = false
+    }
     const items = await getMunicipalTaxDebts(filters)
     const cards = getMunicipalTaxSummary(items)
     const today = new Date().toISOString().slice(0, 10)
@@ -261,6 +273,7 @@ export async function getMunicipalTaxOverview(filters: MunicipalTaxFilters = {})
 
 export async function getMunicipalTaxDebtsPage(params: MunicipalTaxPageParams): Promise<MunicipalTaxDebtsPageResult> {
   try {
+    if (!canUseMunicipalTaxDebtsPageRpc) throw new Error("Municipal tax debts page RPC disabled for this session")
     const { data, error } = await supabase.rpc("get_municipal_tax_debts_page", {
       company_ids: params.companyIds?.length ? params.companyIds : null,
       year_filter: params.year ?? null,
@@ -287,7 +300,10 @@ export async function getMunicipalTaxDebtsPage(params: MunicipalTaxPageParams): 
       items: rows,
       total: Number(rows[0]?.total_count ?? 0),
     }
-  } catch {
+  } catch (error) {
+    if (isMissingSearchTextNormalizedColumn(error)) {
+      canUseMunicipalTaxDebtsPageRpc = false
+    }
     const items = await getMunicipalTaxDebts(params)
     const sorted = [...items].sort((left, right) => compareMunicipalDebtItems(left, right, params.sortKey ?? null, params.sortDirection ?? null))
     const from = Math.max(0, (params.page - 1) * params.pageSize)

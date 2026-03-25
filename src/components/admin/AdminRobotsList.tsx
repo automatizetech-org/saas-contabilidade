@@ -676,6 +676,11 @@ export function AdminRobotsList({
                   globalLogins={globalLogins}
                   onChangeGlobalLogins={setGlobalLogins}
                   cityNames={companies.map((company) => company.city_name)}
+                  companies={companies.map((company) => ({
+                    id: company.id,
+                    name: company.name,
+                    document: company.document,
+                  }))}
                   disabled={saving}
                 />
               </div>
