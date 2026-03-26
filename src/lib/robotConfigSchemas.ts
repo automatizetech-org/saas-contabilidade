@@ -234,7 +234,12 @@ function getFallbackAdminSchema(robot: Robot): RobotConfigFieldSchema[] {
     );
   }
 
-  if (robot.technical_id === "ecac_caixa_postal") {
+  if (
+    robot.technical_id === "ecac_caixa_postal" ||
+    robot.technical_id === "ecac_simples_emitir_guia" ||
+    robot.technical_id === "ecac_simples_consulta_extratos_defis" ||
+    robot.technical_id === "ecac_simples_debitos"
+  ) {
     fields.push(
       {
         key: "use_responsible_office",
@@ -242,7 +247,7 @@ function getFallbackAdminSchema(robot: Robot): RobotConfigFieldSchema[] {
         type: "boolean",
         target: "admin_settings",
         help_text:
-          "Quando marcado, o robô autentica com o certificado da empresa escolhida como escritório responsável, lê primeiro a própria Caixa Postal e depois troca o acesso por procuração para as empresas do job.",
+          "Quando marcado, o robô autentica com o certificado da empresa escolhida como escritório responsável e usa esse contexto para operar nas empresas do job por troca de perfil/procuração.",
       },
       {
         key: "responsible_office_company_id",
@@ -258,64 +263,6 @@ function getFallbackAdminSchema(robot: Robot): RobotConfigFieldSchema[] {
           equals: true,
           target: "admin_settings",
         },
-      },
-    );
-  }
-
-  const robotText = `${robot.technical_id} ${robot.display_name} ${robot.segment_path ?? ""}`
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
-  const looksLikeSimplesRobot =
-    robotText.includes("simples") || robotText.includes("defis");
-  const looksLikeMeiRobot = robotText.includes("mei");
-
-  if (looksLikeSimplesRobot) {
-    fields.push(
-      {
-        key: "declaration_output_simples_emitir_guia",
-        label: "Subpasta da emissao de guia",
-        type: "text",
-        target: "admin_settings",
-        placeholder: "Guias",
-        help_text: "Subpasta final usada pela tela de Declaracoes para localizar guias do Simples dentro do segment_path do robo.",
-      },
-      {
-        key: "declaration_output_simples_extrato",
-        label: "Subpasta do extrato",
-        type: "text",
-        target: "admin_settings",
-        placeholder: "Extrato do Simples",
-        help_text: "Mapeia a rotina de extrato para a pasta final correspondente, incluindo a date_rule do leaf configurado.",
-      },
-      {
-        key: "declaration_output_simples_defis",
-        label: "Subpasta da DEFIS",
-        type: "text",
-        target: "admin_settings",
-        placeholder: "DEFIS",
-        help_text: "Usada pela tela de Declaracoes para localizar DEFIS no Base Path do escritorio.",
-      },
-    );
-  }
-
-  if (looksLikeMeiRobot) {
-    fields.push(
-      {
-        key: "declaration_output_mei_declaracao_anual",
-        label: "Subpasta da declaracao anual",
-        type: "text",
-        target: "admin_settings",
-        placeholder: "Declaracao Anual",
-        help_text: "Subpasta final da declaracao anual do MEI dentro do segment_path deste robo.",
-      },
-      {
-        key: "declaration_output_mei_guias_mensais",
-        label: "Subpasta das guias mensais",
-        type: "text",
-        target: "admin_settings",
-        placeholder: "Guias Mensais",
-        help_text: "Subpasta final usada para localizar guias e comprovantes mensais do MEI.",
       },
     );
   }
@@ -376,19 +323,29 @@ export function normalizeRobotConfigSchema(value: Json | null | undefined): Robo
   return asArray(value).map(normalizeFieldSchema).filter((field): field is RobotConfigFieldSchema => Boolean(field));
 }
 
+function mergeMissingFallbackFields(
+  schema: RobotConfigFieldSchema[],
+  fallback: RobotConfigFieldSchema[],
+): RobotConfigFieldSchema[] {
+  if (schema.length === 0) return fallback;
+  const keys = new Set(schema.map((field) => `${field.target ?? "company_settings"}:${field.key}`));
+  const missing = fallback.filter((field) => !keys.has(`${field.target ?? "company_settings"}:${field.key}`));
+  return [...schema, ...missing];
+}
+
 export function getRobotAdminFormSchema(robot: Robot): RobotConfigFieldSchema[] {
   const dbSchema = normalizeRobotConfigSchema(robot.admin_form_schema);
-  return dbSchema.length > 0 ? dbSchema : getFallbackAdminSchema(robot);
+  return mergeMissingFallbackFields(dbSchema, getFallbackAdminSchema(robot));
 }
 
 export function getRobotCompanyFormSchema(robot: Robot): RobotConfigFieldSchema[] {
   const dbSchema = normalizeRobotConfigSchema(robot.company_form_schema);
-  return dbSchema.length > 0 ? dbSchema : getFallbackCompanySchema(robot);
+  return mergeMissingFallbackFields(dbSchema, getFallbackCompanySchema(robot));
 }
 
 export function getRobotScheduleFormSchema(robot: Robot): RobotConfigFieldSchema[] {
   const dbSchema = normalizeRobotConfigSchema(robot.schedule_form_schema);
-  return dbSchema.length > 0 ? dbSchema : getFallbackScheduleSchema(robot);
+  return mergeMissingFallbackFields(dbSchema, getFallbackScheduleSchema(robot));
 }
 
 export function getRobotConfigFieldDefaultValue(field: RobotConfigFieldSchema): Json {

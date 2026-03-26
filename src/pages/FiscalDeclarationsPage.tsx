@@ -2,10 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
 import {
   BadgeAlert,
-  CalendarRange,
   FileArchive,
-  FileSpreadsheet,
-  Landmark,
   Loader2,
   ReceiptText,
   ShieldCheck,
@@ -13,8 +10,6 @@ import {
 import { toast } from "sonner";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
@@ -47,6 +42,7 @@ import { OverdueGuidesCard } from "@/features/fiscal-declaracoes/components/Over
 
 const initialGuideModalState: DeclarationGuideModalState = {
   open: false,
+  action: "simples_emitir_guia",
   source: "card",
   presetCompanyId: null,
   presetCompetence: null,
@@ -61,18 +57,18 @@ const SIMPLES_DOCUMENT_ACTIONS: Array<{
 }> = [
   {
     action: "simples_emitir_guia",
-    title: "Documentos de Guias",
-    description: "Lista os arquivos da subpasta final configurada para emissao e recalculo do Simples Nacional.",
+    title: "Emitir Guia",
+    description: "Lista os arquivos ja salvos no segmento configurado e permite abrir o fluxo de emissao/recalculo.",
   },
   {
     action: "simples_extrato",
-    title: "Documentos de Extrato",
-    description: "Consulta os extratos ja salvos no disco, respeitando o leaf date rule da pasta final.",
+    title: "Extrato do Simples Nacional",
+    description: "Lista os extratos ja salvos no segmento configurado e permite solicitar a coleta completa.",
   },
   {
     action: "simples_defis",
-    title: "Documentos de DEFIS",
-    description: "Mostra declaracoes e comprovantes que o robo passar a gravar na pasta final desta rotina.",
+    title: "DEFIS",
+    description: "Lista declaracoes e recibos disponiveis no segmento configurado e permite solicitar nova coleta.",
   },
 ];
 
@@ -84,7 +80,7 @@ const MEI_DOCUMENT_ACTIONS: Array<{
   {
     action: "mei_declaracao_anual",
     title: "Documentos da Declaracao Anual",
-    description: "Prepara a leitura dos arquivos anuais do MEI pela mesma regra central de base path e estrutura.",
+    description: "Prepara a leitura dos arquivos anuais do MEI pela mesma regra central de base path e estrutura do SaaS.",
   },
   {
     action: "mei_guias_mensais",
@@ -96,10 +92,10 @@ const MEI_DOCUMENT_ACTIONS: Array<{
 export default function FiscalDeclarationsPage() {
   const { data: companies = [] } = useCompanies();
   const { selectedCompanyIds } = useSelectedCompanyIds();
-  const { isSuperAdmin, officeRole, profile } = useProfile();
+  const { isSuperAdmin, officeRole } = useProfile();
   const [selectedTab, setSelectedTab] = useState<"simples-nacional" | "mei">("simples-nacional");
   const [guideModalState, setGuideModalState] = useState<DeclarationGuideModalState>(initialGuideModalState);
-  const [defaultCompetence, setDefaultCompetence] = useState(() => getDefaultDeclarationCompetence());
+  const defaultCompetence = useMemo(() => getDefaultDeclarationCompetence(), []);
   const [activeRun, setActiveRun] = useState<DeclarationRunState | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
@@ -156,12 +152,11 @@ export default function FiscalDeclarationsPage() {
   const documentCompanyIds = availableCompanies.map((company) => company.id);
   const documentQueries = useQueries({
     queries: [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map(({ action }) => ({
-      queryKey: ["fiscal-declaracoes-documents", action, defaultCompetence, documentCompanyIds.join(",")],
+      queryKey: ["fiscal-declaracoes-documents", action, documentCompanyIds.join(",")],
       queryFn: () =>
         listDeclarationArtifacts({
           action,
           companyIds: documentCompanyIds,
-          competence: defaultCompetence,
           limit: 150,
         }),
       enabled: documentCompanyIds.length > 0,
@@ -203,7 +198,7 @@ export default function FiscalDeclarationsPage() {
     action: DeclarationActionKind;
     mode: "emitir" | "recalcular";
     companyIds: string[];
-    competence: string;
+    competence?: string | null;
     recalculateDueDate?: string | null;
   }) => {
     if (!canOperate) {
@@ -223,7 +218,7 @@ export default function FiscalDeclarationsPage() {
         companies: availableCompanies,
         input: {
           companyIds: params.companyIds,
-          competence: params.competence,
+          competence: params.competence ?? null,
           recalculate: params.mode === "recalcular",
           recalculateDueDate: params.mode === "recalcular" ? params.recalculateDueDate ?? null : null,
         },
@@ -244,34 +239,20 @@ export default function FiscalDeclarationsPage() {
     }
   };
 
-  const handleGuideSubmit = async (input: {
+  const handleSimpleModalSubmit = async (input: {
     companyIds: string[];
     competence: string;
     recalculate: boolean;
     recalculateDueDate?: string | null;
   }) => {
     await executeBatch({
-      action: "simples_emitir_guia",
-      mode: input.recalculate ? "recalcular" : "emitir",
+      action: guideModalState.action,
+      mode: guideModalState.action === "simples_emitir_guia" && input.recalculate ? "recalcular" : "emitir",
       companyIds: input.companyIds,
       competence: input.competence,
-      recalculateDueDate: input.recalculateDueDate ?? null,
+      recalculateDueDate: guideModalState.action === "simples_emitir_guia" ? input.recalculateDueDate ?? null : null,
     });
     setGuideModalState((current) => ({ ...current, open: false }));
-  };
-
-  const handleQuickAction = async (action: DeclarationActionKind) => {
-    const companyIds = availableCompanies.map((company) => company.id);
-    if (companyIds.length === 0) {
-      toast.error("Selecione ao menos uma empresa no painel lateral para executar esta rotina.");
-      return;
-    }
-    await executeBatch({
-      action,
-      mode: "emitir",
-      companyIds,
-      competence: defaultCompetence,
-    });
   };
 
   const handleDownloadArtifact = async (item: DeclarationRunItem) => {
@@ -312,7 +293,6 @@ export default function FiscalDeclarationsPage() {
       await downloadDeclarationArtifact({
         action,
         companyId: item.company_id,
-        competence: defaultCompetence,
         artifactKey: item.artifact_key,
         suggestedName: item.file_name,
       });
@@ -344,14 +324,10 @@ export default function FiscalDeclarationsPage() {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-1">
             <div className="rounded-2xl border border-border bg-background/70 px-4 py-3">
               <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Escopo atual</p>
               <p className="mt-1 text-sm font-semibold">{selectionLabel}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-background/70 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Competência padrão</p>
-              <p className="mt-1 text-sm font-semibold">{defaultCompetence.slice(5, 7)}/{defaultCompetence.slice(0, 4)}</p>
             </div>
           </div>
         </div>
@@ -378,31 +354,14 @@ export default function FiscalDeclarationsPage() {
       ) : null}
 
       <Tabs value={selectedTab} onValueChange={(value) => setSelectedTab(value as "simples-nacional" | "mei")} className="space-y-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <TabsList className="h-auto rounded-2xl bg-muted/70 p-1">
-            <TabsTrigger value="simples-nacional" className="rounded-xl px-5 py-2.5">
-              Simples Nacional
-            </TabsTrigger>
-            <TabsTrigger value="mei" className="rounded-xl px-5 py-2.5">
-              MEI
-            </TabsTrigger>
-          </TabsList>
-
-          <div className="rounded-2xl border border-border bg-card/80 px-4 py-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <CalendarRange className="h-4 w-4 text-primary-icon" />
-                Competência padrão da tela
-              </div>
-              <Input
-                type="month"
-                value={defaultCompetence}
-                onChange={(event) => setDefaultCompetence(event.target.value)}
-                className="h-9 w-full sm:w-[180px]"
-              />
-            </div>
-          </div>
-        </div>
+        <TabsList className="h-auto rounded-2xl bg-muted/70 p-1">
+          <TabsTrigger value="simples-nacional" className="rounded-xl px-5 py-2.5">
+            Simples Nacional
+          </TabsTrigger>
+          <TabsTrigger value="mei" className="rounded-xl px-5 py-2.5">
+            MEI
+          </TabsTrigger>
+        </TabsList>
 
         <TabsContent value="simples-nacional" className="space-y-6">
           <GlassCard className="border border-border/70 p-6">
@@ -410,7 +369,7 @@ export default function FiscalDeclarationsPage() {
               <div className="space-y-2">
                 <h2 className="text-xl font-semibold font-display tracking-tight">Operações do Simples Nacional</h2>
                 <p className="text-sm text-muted-foreground">
-                  A competência abaixo vale para emissão normal. Guias vencidas ignoram esse filtro e sempre mostram tudo que estiver em atraso.
+                  A emissão usa os dados informados no modal do SaaS, enquanto extratos e DEFIS fazem a coleta completa do que estiver disponível no portal.
                 </p>
               </div>
               <div className="rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm">
@@ -420,59 +379,13 @@ export default function FiscalDeclarationsPage() {
             </div>
           </GlassCard>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <DeclarationActionCard
-              eyebrow="Rotina principal"
-              title="Emitir Guia"
-              description="Abre um fluxo único para emissão normal ou recálculo, sempre respeitando as empresas selecionadas no painel lateral."
-              icon={<ReceiptText className="h-5 w-5" />}
-              ctaLabel="Abrir emissão"
-              busy={dispatching}
-              disabled={!isActionEnabled("simples_emitir_guia")}
-              disabledReason={resolveActionDisabledReason("simples_emitir_guia")}
-              onClick={() =>
-                setGuideModalState({
-                  open: true,
-                  source: "card",
-                  presetCompanyId: availableCompanies[0]?.id ?? null,
-                  presetCompetence: defaultCompetence,
-                  presetDueDate: null,
-                  recalculateByDefault: false,
-                })
-              }
-            />
-            <DeclarationActionCard
-              eyebrow="Consulta"
-              title="Extrato do Simples Nacional"
-              description="Solicita o extrato da rotina no mesmo escopo visual da tela, com retorno consolidado por empresa."
-              icon={<FileSpreadsheet className="h-5 w-5" />}
-              ctaLabel="Solicitar extrato"
-              busy={dispatching}
-              disabled={!isActionEnabled("simples_extrato")}
-              disabledReason={resolveActionDisabledReason("simples_extrato")}
-              onClick={() => handleQuickAction("simples_extrato")}
-              toneClassName="from-background to-sky-500/5"
-            />
-            <DeclarationActionCard
-              eyebrow="Entrega"
-              title="DEFIS"
-              description="Dispara a geração/solicitação da DEFIS com o mesmo padrão visual, controle de estado e tratamento seguro de erros."
-              icon={<Landmark className="h-5 w-5" />}
-              ctaLabel="Solicitar DEFIS"
-              busy={dispatching}
-              disabled={!isActionEnabled("simples_defis")}
-              disabledReason={resolveActionDisabledReason("simples_defis")}
-              onClick={() => handleQuickAction("simples_defis")}
-              toneClassName="from-background to-emerald-500/5"
-            />
-          </div>
-
           <OverdueGuidesCard
             guides={overdueGuides}
             busy={isBusy}
             onRecalculate={(guide) =>
               setGuideModalState({
                 open: true,
+                action: "simples_emitir_guia",
                 source: "overdue-guide",
                 presetCompanyId: guide.companyId,
                 presetCompetence: guide.competence,
@@ -489,10 +402,29 @@ export default function FiscalDeclarationsPage() {
                 action={item.action}
                 title={item.title}
                 description={item.description}
-                competence={defaultCompetence}
                 loading={documentLoadingByAction.get(item.action) ?? false}
                 response={documentResponseByAction.get(item.action)}
                 busyArtifactKey={downloadingArtifactKey}
+                ctaLabel={
+                  item.action === "simples_emitir_guia"
+                    ? "Abrir emissão"
+                    : item.action === "simples_extrato"
+                      ? "Solicitar extrato"
+                      : "Solicitar DEFIS"
+                }
+                actionBusy={dispatching}
+                actionDisabled={!canOperate}
+                onPrimaryAction={() => {
+                  setGuideModalState({
+                    open: true,
+                    action: item.action,
+                    source: "card",
+                    presetCompanyId: availableCompanies[0]?.id ?? null,
+                    presetCompetence: defaultCompetence,
+                    presetDueDate: null,
+                    recalculateByDefault: false,
+                  });
+                }}
                 onDownload={(artifact) => handleDownloadDeclarationDocument(item.action, artifact)}
               />
             ))}
@@ -519,7 +451,14 @@ export default function FiscalDeclarationsPage() {
               busy={dispatching}
               disabled={!isActionEnabled("mei_declaracao_anual")}
               disabledReason={resolveActionDisabledReason("mei_declaracao_anual")}
-              onClick={() => handleQuickAction("mei_declaracao_anual")}
+              onClick={() => {
+                void executeBatch({
+                  action: "mei_declaracao_anual",
+                  mode: "emitir",
+                  companyIds: availableCompanies.map((company) => company.id),
+                  competence: null,
+                });
+              }}
               toneClassName="from-background to-amber-500/5"
             />
             <DeclarationActionCard
@@ -531,7 +470,14 @@ export default function FiscalDeclarationsPage() {
               busy={dispatching}
               disabled={!isActionEnabled("mei_guias_mensais")}
               disabledReason={resolveActionDisabledReason("mei_guias_mensais")}
-              onClick={() => handleQuickAction("mei_guias_mensais")}
+              onClick={() => {
+                void executeBatch({
+                  action: "mei_guias_mensais",
+                  mode: "emitir",
+                  companyIds: availableCompanies.map((company) => company.id),
+                  competence: defaultCompetence,
+                });
+              }}
               toneClassName="from-background to-primary/5"
             />
           </div>
@@ -543,7 +489,6 @@ export default function FiscalDeclarationsPage() {
                 action={item.action}
                 title={item.title}
                 description={item.description}
-                competence={defaultCompetence}
                 loading={documentLoadingByAction.get(item.action) ?? false}
                 response={documentResponseByAction.get(item.action)}
                 busyArtifactKey={downloadingArtifactKey}
@@ -568,7 +513,7 @@ export default function FiscalDeclarationsPage() {
         defaultCompetence={defaultCompetence}
         busy={dispatching}
         onOpenChange={(open) => setGuideModalState((current) => ({ ...current, open }))}
-        onSubmit={handleGuideSubmit}
+        onSubmit={handleSimpleModalSubmit}
       />
 
       {bootstrapQuery.isLoading ? (

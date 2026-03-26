@@ -1,10 +1,8 @@
-import { Download, FileText, FolderSearch, Loader2 } from "lucide-react";
+import { ArrowRight, Download, FileText, FolderSearch, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { GlassCard } from "@/components/dashboard/GlassCard";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/utils";
 import type {
   DeclarationActionKind,
   DeclarationArtifactListItem,
@@ -18,94 +16,64 @@ function formatBytes(value: number | null) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function statusTone(status: DeclarationArtifactListResponse["source"]["status"]) {
-  if (status === "ready") return "border-emerald-500/20 bg-emerald-500/5 text-emerald-100";
-  if (status === "folder_missing" || status === "mapping_missing") {
-    return "border-amber-500/20 bg-amber-500/5 text-amber-100";
-  }
-  return "border-border bg-background text-muted-foreground";
-}
-
-function statusLabel(status: DeclarationArtifactListResponse["source"]["status"]) {
-  if (status === "ready") return "Origem pronta";
-  if (status === "robot_missing") return "Robo nao encontrado";
-  if (status === "segment_missing") return "Segmento nao configurado";
-  if (status === "mapping_missing") return "Mapeamento pendente";
-  if (status === "folder_missing") return "Pasta final ausente";
-  return "Indisponivel";
-}
-
 export function DeclarationArtifactsCard({
   action,
   title,
   description,
-  competence,
   loading,
   response,
   onDownload,
   busyArtifactKey,
+  ctaLabel,
+  onPrimaryAction,
+  actionBusy,
+  actionDisabled,
 }: {
   action: DeclarationActionKind;
   title: string;
   description: string;
-  competence: string;
   loading: boolean;
   response?: DeclarationArtifactListResponse;
   onDownload: (item: DeclarationArtifactListItem) => void;
   busyArtifactKey?: string | null;
+  ctaLabel?: string;
+  onPrimaryAction?: () => void;
+  actionBusy?: boolean;
+  actionDisabled?: boolean;
 }) {
   const items = response?.items ?? [];
-  const source = response?.source;
 
   return (
     <GlassCard className="border border-border/70 p-5">
       <div className="space-y-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base font-semibold font-display tracking-tight">{title}</h3>
-              {source ? (
-                <Badge className={cn("border", statusTone(source.status))}>
-                  {statusLabel(source.status)}
-                </Badge>
-              ) : null}
-            </div>
+            <h3 className="text-base font-semibold font-display tracking-tight">{title}</h3>
             <p className="text-sm text-muted-foreground">{description}</p>
           </div>
-          <div className="rounded-2xl border border-border bg-background/70 px-4 py-3 text-right">
-            <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Competencia</p>
-            <p className="mt-1 text-sm font-semibold">
-              {competence.slice(5, 7)}/{competence.slice(0, 4)}
-            </p>
-          </div>
+          {ctaLabel && onPrimaryAction ? (
+            <Button
+              type="button"
+              onClick={onPrimaryAction}
+              disabled={actionDisabled || actionBusy}
+              className="shrink-0 gap-2"
+            >
+              {actionBusy ? "Processando..." : ctaLabel}
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          ) : null}
         </div>
-
-        {source ? (
-          <div className="rounded-2xl border border-border bg-background/50 px-4 py-3 text-xs text-muted-foreground">
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              <span>Robo: {source.robot_display_name || source.robot_technical_id || "Nao configurado"}</span>
-              <span>Segmento: {source.segment_path || "Nao configurado"}</span>
-              <span>Subpasta: {source.subfolder_path || "Nao configurada"}</span>
-              <span>Regra de data: {source.date_rule || "Sem segmentacao"}</span>
-            </div>
-            {source.reason ? <p className="mt-2 text-amber-200">{source.reason}</p> : null}
-          </div>
-        ) : null}
 
         {loading ? (
           <div className="flex items-center gap-2 rounded-2xl border border-dashed border-border bg-background/50 px-4 py-5 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Localizando documentos desta rotina no servidor...
           </div>
-        ) : source?.status !== "ready" ? (
-          <div className="rounded-2xl border border-dashed border-border bg-background/50 px-4 py-5 text-sm text-muted-foreground">
-            A listagem desta rotina fica disponivel assim que o robo tiver `segment_path`, mapeamento da subpasta final e a estrutura correspondente no escritorio.
-          </div>
         ) : items.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border bg-background/50 px-4 py-5 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <FolderSearch className="h-4 w-4" />
-              Nenhum documento localizado para esta competencia no disco do servidor.
+              Nenhum documento localizado ate o momento.
             </div>
           </div>
         ) : (

@@ -42,17 +42,25 @@ const ACTION_TITLES: Record<DeclarationActionKind, string> = {
 
 const ACTION_ROBOT_CANDIDATES: Record<DeclarationActionKind, string[]> = {
   simples_emitir_guia: [
+    "ecac_simples_emitir_guia",
     "simples_nacional_emitir_guia",
     "simples_nacional_guia",
     "simples_nacional_das",
     "simples_nacional",
   ],
   simples_extrato: [
+    "ecac_simples_consulta_extratos_defis",
     "simples_nacional_extrato",
+    "simples_nacional_consulta_extratos_defis",
     "simples_extrato",
     "simples_nacional",
   ],
-  simples_defis: ["simples_nacional_defis", "defis"],
+  simples_defis: [
+    "ecac_simples_consulta_extratos_defis",
+    "simples_nacional_consulta_extratos_defis",
+    "simples_nacional_defis",
+    "defis",
+  ],
   mei_declaracao_anual: ["mei_declaracao_anual", "mei_anual", "mei"],
   mei_guias_mensais: ["mei_guias_mensais", "mei_das", "mei"],
 };
@@ -217,6 +225,7 @@ export async function getFiscalDeclarationsBootstrap(params: {
 }
 
 export function validateDeclarationGuideSubmitInput(params: {
+  action: DeclarationActionKind;
   input: DeclarationGuideSubmitInput;
   availableCompanies: DeclarationCompany[];
 }) {
@@ -228,10 +237,16 @@ export function validateDeclarationGuideSubmitInput(params: {
   if (companyIds.length === 0) {
     throw new Error("Selecione ao menos uma empresa disponível no escopo atual.");
   }
-  if (!isValidCompetence(params.input.competence)) {
+  const rawCompetence = String(params.input.competence ?? "").trim();
+  const requiresCompetence =
+    params.action === "simples_emitir_guia"
+    || params.action === "simples_extrato"
+    || params.action === "simples_defis"
+    || params.action === "mei_guias_mensais";
+  if (requiresCompetence && !isValidCompetence(rawCompetence)) {
     throw new Error("Informe uma competência válida no formato MM/AAAA.");
   }
-  if (params.input.recalculate) {
+  if (params.action === "simples_emitir_guia" && params.input.recalculate) {
     if (!params.input.recalculateDueDate || !isValidIsoDate(params.input.recalculateDueDate)) {
       throw new Error("Informe uma nova data de vencimento válida para o recálculo.");
     }
@@ -239,9 +254,9 @@ export function validateDeclarationGuideSubmitInput(params: {
 
   return {
     companyIds,
-    competence: params.input.competence,
-    recalculate: params.input.recalculate,
-    recalculateDueDate: params.input.recalculate
+    competence: rawCompetence || null,
+    recalculate: params.action === "simples_emitir_guia" ? params.input.recalculate : false,
+    recalculateDueDate: params.action === "simples_emitir_guia" && params.input.recalculate
       ? params.input.recalculateDueDate ?? null
       : null,
   };
@@ -299,6 +314,7 @@ export async function startDeclarationRun(
   params: StartDeclarationRunParams,
 ): Promise<DeclarationRunState> {
   const validatedInput = validateDeclarationGuideSubmitInput({
+    action: params.action,
     input: params.input,
     availableCompanies: params.companies,
   });
@@ -377,7 +393,10 @@ export async function startDeclarationRun(
       continue;
     }
 
-    const { periodStart, periodEnd } = toPeriodRange(validatedInput.competence);
+    const shouldUsePeriod = Boolean(validatedInput.competence && isValidCompetence(validatedInput.competence));
+    const { periodStart, periodEnd } = shouldUsePeriod
+      ? toPeriodRange(validatedInput.competence!)
+      : { periodStart: null, periodEnd: null };
     try {
       const request = await createExecutionRequest({
         companyIds: [company.id],
@@ -522,7 +541,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
 export async function listDeclarationArtifacts(params: {
   action: DeclarationActionKind;
   companyIds: string[];
-  competence: string;
+  competence?: string | null;
   limit?: number;
 }): Promise<DeclarationArtifactListResponse> {
   return postOfficeServerJson<DeclarationArtifactListResponse>(
@@ -539,7 +558,7 @@ export async function listDeclarationArtifacts(params: {
 export async function downloadDeclarationArtifact(params: {
   action: DeclarationActionKind;
   companyId: string;
-  competence: string;
+  competence?: string | null;
   artifactKey: string;
   suggestedName?: string;
 }): Promise<void> {

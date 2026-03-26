@@ -1,0 +1,26 @@
+{
+  "event_id": "be4d22b1-b113-45a9-b13c-778bb3c3406b",
+  "job_id": "be4d22b1-b113-45a9-b13c-778bb3c3406b",
+  "execution_request_id": null,
+  "robot_technical_id": "ecac_simples_debitos",
+  "display_name": "e-CAC - Simples Nacional - Consulta Debitos",
+  "status": "failed",
+  "started_at": "2026-03-26T01:48:32.484639+00:00",
+  "finished_at": "2026-03-26T01:48:32.484716+00:00",
+  "error_message": "RuntimeError: office_id nao resolvido. Verifique o conector da VM e /api/robot-config.",
+  "summary": {
+    "run_id": "20260325_224832_c673ceff",
+    "technical_id": "ecac_simples_debitos",
+    "display_name": "e-CAC - Simples Nacional - Consulta Debitos",
+    "started_at": "2026-03-26T01:48:32.484639+00:00",
+    "finished_at": "2026-03-26T01:48:32.484716+00:00",
+    "status": "failed",
+    "company_results": [],
+    "metadata": {
+      "error": "RuntimeError: office_id nao resolvido. Verifique o conector da VM e /api/robot-config."
+    }
+  },
+  "company_results": [],
+  "responsible_office_result": null,
+  "payload": {}
+}

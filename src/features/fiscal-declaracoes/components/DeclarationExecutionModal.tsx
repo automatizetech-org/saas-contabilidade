@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/utils";
 import type {
+  DeclarationActionKind,
   DeclarationCompany,
   DeclarationGuideModalState,
   DeclarationGuideSubmitInput,
@@ -32,6 +33,34 @@ type DeclarationExecutionModalProps = {
   onSubmit: (input: DeclarationGuideSubmitInput) => void | Promise<void>;
 };
 
+function getModalCopy(action: DeclarationActionKind, recalculateByDefault: boolean) {
+  if (action === "simples_extrato") {
+    return {
+      title: "Solicitar extrato",
+      description: "Selecione as empresas e a competência desejada para solicitar o extrato do Simples Nacional.",
+      confirmLabel: "Solicitar extrato",
+      summaryFlow: "Solicitação de extrato",
+      showRecalculate: false,
+    };
+  }
+  if (action === "simples_defis") {
+    return {
+      title: "Solicitar DEFIS",
+      description: "Selecione as empresas e a competência de referência para solicitar a DEFIS.",
+      confirmLabel: "Solicitar DEFIS",
+      summaryFlow: "Solicitação de DEFIS",
+      showRecalculate: false,
+    };
+  }
+  return {
+    title: recalculateByDefault ? "Recalcular guia" : "Emitir guia",
+    description: "Selecione as empresas e a competência para emissão normal ou recálculo da guia.",
+    confirmLabel: recalculateByDefault ? "Confirmar recálculo" : "Confirmar emissão",
+    summaryFlow: recalculateByDefault ? "Recálculo" : "Emissão padrão",
+    showRecalculate: true,
+  };
+}
+
 export function DeclarationExecutionModal({
   open,
   state,
@@ -41,6 +70,7 @@ export function DeclarationExecutionModal({
   onOpenChange,
   onSubmit,
 }: DeclarationExecutionModalProps) {
+  const modalCopy = getModalCopy(state.action, state.recalculateByDefault);
   const [search, setSearch] = useState("");
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [competence, setCompetence] = useState(defaultCompetence);
@@ -58,15 +88,15 @@ export function DeclarationExecutionModal({
     setSearch("");
     setSelectedCompanyIds(presetCompanyId ? [presetCompanyId] : []);
     setCompetence(state.presetCompetence || defaultCompetence);
-    setRecalculate(state.recalculateByDefault);
-    setRecalculateDueDate(state.presetDueDate || "");
+    setRecalculate(state.action === "simples_emitir_guia" ? state.recalculateByDefault : false);
+    setRecalculateDueDate(state.action === "simples_emitir_guia" ? state.presetDueDate || "" : "");
   }, [companies, defaultCompetence, open, state]);
 
   useEffect(() => {
-    if (!open || !recalculate) return;
+    if (!open || !recalculate || !modalCopy.showRecalculate) return;
     const timer = window.setTimeout(() => dueDateRef.current?.focus(), 60);
     return () => window.clearTimeout(timer);
-  }, [open, recalculate]);
+  }, [modalCopy.showRecalculate, open, recalculate]);
 
   const filteredCompanies = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -88,8 +118,8 @@ export function DeclarationExecutionModal({
     onSubmit({
       companyIds: selectedCompanyIds,
       competence,
-      recalculate,
-      recalculateDueDate: recalculate ? recalculateDueDate : null,
+      recalculate: modalCopy.showRecalculate ? recalculate : false,
+      recalculateDueDate: modalCopy.showRecalculate && recalculate ? recalculateDueDate : null,
     });
   };
 
@@ -97,12 +127,8 @@ export function DeclarationExecutionModal({
     <Dialog open={open} onOpenChange={(next) => (!busy ? onOpenChange(next) : undefined)}>
       <DialogContent className="max-w-3xl gap-0 overflow-hidden border-border bg-card p-0">
         <DialogHeader className="space-y-2 border-b border-border px-6 py-5">
-          <DialogTitle className="text-xl font-display tracking-tight">
-            {state.recalculateByDefault ? "Recalcular guia" : "Emitir guia"}
-          </DialogTitle>
-          <DialogDescription className="text-sm">
-            Use o mesmo fluxo para emissão normal e recálculo. O escopo respeita a seleção atual de empresas do painel lateral.
-          </DialogDescription>
+          <DialogTitle className="text-xl font-display tracking-tight">{modalCopy.title}</DialogTitle>
+          <DialogDescription className="text-sm">{modalCopy.description}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-0 lg:grid-cols-[1.25fr_0.9fr]">
@@ -213,42 +239,46 @@ export function DeclarationExecutionModal({
                 </p>
               </div>
 
-              <Separator />
+              {modalCopy.showRecalculate ? (
+                <>
+                  <Separator />
 
-              <div className="rounded-2xl border border-border bg-background/60 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <Label htmlFor="declaration-recalculate" className="text-sm">
-                      Recalcular guia
-                    </Label>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Ative quando precisar reemitir com uma nova data de vencimento.
-                    </p>
+                  <div className="rounded-2xl border border-border bg-background/60 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Label htmlFor="declaration-recalculate" className="text-sm">
+                          Recalcular guia
+                        </Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Ative quando precisar reemitir com uma nova data de vencimento.
+                        </p>
+                      </div>
+                      <Switch
+                        id="declaration-recalculate"
+                        checked={recalculate}
+                        disabled={busy}
+                        onCheckedChange={setRecalculate}
+                      />
+                    </div>
+
+                    <div className={cn("mt-4 space-y-2", !recalculate && "opacity-60")}>
+                      <Label htmlFor="declaration-recalculate-date">Nova data de vencimento</Label>
+                      <Input
+                        id="declaration-recalculate-date"
+                        ref={dueDateRef}
+                        type="date"
+                        value={recalculateDueDate}
+                        disabled={!recalculate || busy}
+                        onChange={(event) => setRecalculateDueDate(event.target.value)}
+                      />
+                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <RefreshCcw className="h-3.5 w-3.5" />
+                        O recálculo usa a mesma estrutura da emissão, com ajustes de vencimento.
+                      </p>
+                    </div>
                   </div>
-                  <Switch
-                    id="declaration-recalculate"
-                    checked={recalculate}
-                    disabled={busy}
-                    onCheckedChange={setRecalculate}
-                  />
-                </div>
-
-                <div className={cn("mt-4 space-y-2", !recalculate && "opacity-60")}>
-                  <Label htmlFor="declaration-recalculate-date">Nova data de vencimento</Label>
-                  <Input
-                    id="declaration-recalculate-date"
-                    ref={dueDateRef}
-                    type="date"
-                    value={recalculateDueDate}
-                    disabled={!recalculate || busy}
-                    onChange={(event) => setRecalculateDueDate(event.target.value)}
-                  />
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <RefreshCcw className="h-3.5 w-3.5" />
-                    O recálculo usa a mesma estrutura da emissão, com ajustes de vencimento.
-                  </p>
-                </div>
-              </div>
+                </>
+              ) : null}
 
               <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4">
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
@@ -268,7 +298,7 @@ export function DeclarationExecutionModal({
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-muted-foreground">Fluxo</span>
-                    <strong>{recalculate ? "Recálculo" : "Emissão padrão"}</strong>
+                    <strong>{modalCopy.showRecalculate && recalculate ? "Recálculo" : modalCopy.summaryFlow}</strong>
                   </div>
                 </div>
               </div>
@@ -281,7 +311,7 @@ export function DeclarationExecutionModal({
             Cancelar
           </Button>
           <Button type="button" disabled={busy || selectedCompanyIds.length === 0} onClick={submit}>
-            {busy ? "Enviando..." : recalculate ? "Confirmar recálculo" : "Confirmar emissão"}
+            {busy ? "Enviando..." : modalCopy.showRecalculate && recalculate ? "Confirmar recálculo" : modalCopy.confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

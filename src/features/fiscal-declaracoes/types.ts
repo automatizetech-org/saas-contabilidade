@@ -46,7 +46,6 @@ export type DeclarationDocumentSourceStatus =
   | "ready"
   | "robot_missing"
   | "segment_missing"
-  | "mapping_missing"
   | "folder_missing";
 
 export type DeclarationDocumentSource = {
@@ -56,7 +55,6 @@ export type DeclarationDocumentSource = {
   robot_display_name?: string | null;
   action_key?: string | null;
   segment_path?: string | null;
-  subfolder_path?: string | null;
   logical_folder_path?: string | null;
   date_rule?: string | null;
   competence?: string | null;
@@ -116,6 +114,7 @@ export type DeclarationRunState = {
 
 export type DeclarationGuideModalState = {
   open: boolean;
+  action: DeclarationActionKind;
   source: "card" | "overdue-guide";
   presetCompanyId?: string | null;
   presetCompetence?: string | null;
@@ -125,7 +124,7 @@ export type DeclarationGuideModalState = {
 
 export type DeclarationGuideSubmitInput = {
   companyIds: string[];
-  competence: string;
+  competence?: string | null;
   recalculate: boolean;
   recalculateDueDate?: string | null;
 };

@@ -20,8 +20,76 @@ function findCnpjInText(s: string): string | undefined {
   return m?.[1]
 }
 
+function findExactCnpjValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const digits = onlyDigits(value)
+  return digits.length === 14 ? digits : undefined
+}
+
+function collectNestedStrings(value: unknown, output: string[]) {
+  if (typeof value === "string") {
+    if (value) output.push(value)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectNestedStrings(item, output)
+    return
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectNestedStrings(item, output)
+    }
+  }
+}
+
+function extractCnpjFromSubjectAltName(cert: forge.pki.Certificate | undefined): string | undefined {
+  if (!cert) return undefined
+  try {
+    const exts = (cert as unknown as { extensions?: unknown[] }).extensions ?? []
+    const exactCandidates: string[] = []
+    const looseCandidates: string[] = []
+    for (const ext of exts as Array<Record<string, unknown>>) {
+      if (ext.name !== "subjectAltName") continue
+      const altNames = Array.isArray(ext.altNames) ? ext.altNames : []
+      for (const alt of altNames) {
+        const nested: string[] = []
+        collectNestedStrings(alt, nested)
+        for (const item of nested) {
+          const exact = findExactCnpjValue(item)
+          if (exact) exactCandidates.push(exact)
+          const loose = findCnpjInText(item)
+          if (loose) looseCandidates.push(loose)
+        }
+      }
+    }
+    return exactCandidates[0] || looseCandidates[0]
+  } catch {
+    return undefined
+  }
+}
+
+function extractCnpjFromCommonName(cert: forge.pki.Certificate | undefined): string | undefined {
+  if (!cert) return undefined
+  try {
+    const attrs = cert.subject?.attributes ?? []
+    const commonName = attrs.find((attr) => attr?.shortName === "CN" || attr?.name === "commonName")?.value
+    if (typeof commonName !== "string" || !commonName) return undefined
+    const suffixMatch = commonName.match(/:(\d{14})\s*$/)
+    if (suffixMatch?.[1]) return suffixMatch[1]
+    return findCnpjInText(commonName)
+  } catch {
+    return undefined
+  }
+}
+
 function extractCnpjFromCert(cert: forge.pki.Certificate | undefined): string | undefined {
   if (!cert) return undefined
+
+  const sanCnpj = extractCnpjFromSubjectAltName(cert)
+  if (sanCnpj) return sanCnpj
+
+  const commonNameCnpj = extractCnpjFromCommonName(cert)
+  if (commonNameCnpj) return commonNameCnpj
 
   const candidates: string[] = []
 
@@ -57,7 +125,6 @@ function extractCnpjFromCert(cert: forge.pki.Certificate | undefined): string | 
     // ignore
   }
 
-  // alguns certificados colocam o CNPJ no CN como "...:12345678000190"
   for (const c of candidates) {
     const m = findCnpjInText(c)
     if (m) return m

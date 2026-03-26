@@ -1267,17 +1267,25 @@ const ACTION_TITLES = {
 
 const ACTION_ROBOT_CANDIDATES = {
   simples_emitir_guia: [
+    "ecac_simples_emitir_guia",
     "simples_nacional_emitir_guia",
     "simples_nacional_guia",
     "simples_nacional_das",
     "simples_nacional",
   ],
   simples_extrato: [
+    "ecac_simples_consulta_extratos_defis",
     "simples_nacional_extrato",
+    "simples_nacional_consulta_extratos_defis",
     "simples_extrato",
     "simples_nacional",
   ],
-  simples_defis: ["simples_nacional_defis", "defis"],
+  simples_defis: [
+    "ecac_simples_consulta_extratos_defis",
+    "simples_nacional_consulta_extratos_defis",
+    "simples_nacional_defis",
+    "defis",
+  ],
   mei_declaracao_anual: ["mei_declaracao_anual", "mei_anual", "mei"],
   mei_guias_mensais: ["mei_guias_mensais", "mei_das", "mei"],
 };
@@ -1288,22 +1296,6 @@ const ACTION_TEXT_MATCHERS = {
   simples_defis: ["defis"],
   mei_declaracao_anual: ["mei", "declaracao", "anual"],
   mei_guias_mensais: ["mei", "guia"],
-};
-
-const ACTION_OUTPUT_KEYS = {
-  simples_emitir_guia: "declaration_output_simples_emitir_guia",
-  simples_extrato: "declaration_output_simples_extrato",
-  simples_defis: "declaration_output_simples_defis",
-  mei_declaracao_anual: "declaration_output_mei_declaracao_anual",
-  mei_guias_mensais: "declaration_output_mei_guias_mensais",
-};
-
-const ACTION_DEFAULT_SUBFOLDERS = {
-  simples_emitir_guia: "Guias",
-  simples_extrato: "Extrato do Simples",
-  simples_defis: "DEFIS",
-  mei_declaracao_anual: "Declaracao Anual",
-  mei_guias_mensais: "Guias Mensais",
 };
 
 function coerceJsonObject(value) {
@@ -1499,7 +1491,7 @@ async function resolveDeclarationSource({
       status: "robot_missing",
       reason: "Nenhum robo compativel foi configurado para esta rotina.",
       robotTechnicalId: null,
-      actionKey: ACTION_OUTPUT_KEYS[action],
+      actionKey: action,
     };
   }
 
@@ -1509,25 +1501,12 @@ async function resolveDeclarationSource({
       status: "segment_missing",
       reason: "O robo desta rotina ainda nao possui segment_path configurado.",
       robotTechnicalId: robot.technical_id,
-      actionKey: ACTION_OUTPUT_KEYS[action],
+      actionKey: action,
     };
   }
 
-  const adminSettings = coerceJsonObject(robot.admin_settings);
-  const actionKey = ACTION_OUTPUT_KEYS[action];
-  const configuredSubfolder = String(adminSettings[actionKey] || "").trim();
-  const fallbackSubfolder = ACTION_DEFAULT_SUBFOLDERS[action];
-  const subfolderPath = configuredSubfolder || fallbackSubfolder || "";
-  if (!subfolderPath) {
-    return {
-      status: "mapping_missing",
-      reason: "A subpasta final desta rotina ainda nao foi configurada no robo.",
-      robotTechnicalId: robot.technical_id,
-      actionKey,
-    };
-  }
-
-  const logicalFolderPath = [...splitLogicalSegments(segmentPath), ...splitLogicalSegments(subfolderPath)].join("/");
+  const actionKey = action;
+  const logicalFolderPath = splitLogicalSegments(segmentPath).join("/");
   const { data: folderNodes, error: folderNodesError } = await supabase
     .from("folder_structure_nodes")
     .select("id, parent_id, name, slug, date_rule, position")
@@ -1540,11 +1519,10 @@ async function resolveDeclarationSource({
   if (!leafNode) {
     return {
       status: "folder_missing",
-      reason: "A subpasta final desta rotina nao foi encontrada na estrutura de pastas do escritorio.",
+      reason: "O segment_path desta rotina nao foi encontrado na estrutura de pastas do escritorio.",
       robotTechnicalId: robot.technical_id,
       actionKey,
       segmentPath,
-      subfolderPath,
       logicalFolderPath,
     };
   }
@@ -1556,7 +1534,6 @@ async function resolveDeclarationSource({
     robotDisplayName: robot.display_name,
     actionKey,
     segmentPath,
-    subfolderPath,
     logicalFolderPath,
     dateRule: leafNode.date_rule ?? null,
   };
@@ -1573,7 +1550,6 @@ function buildArtifactResponse(source, items, competence) {
       robot_display_name: source.robotDisplayName ?? null,
       action_key: source.actionKey ?? null,
       segment_path: source.segmentPath ?? null,
-      subfolder_path: source.subfolderPath ?? null,
       logical_folder_path: source.logicalFolderPath ?? null,
       date_rule: source.dateRule ?? null,
       competence: competence?.raw ?? null,
@@ -1632,7 +1608,9 @@ async function listDeclarationArtifacts({
 
   const logicalSegments = splitLogicalSegments(source.logicalFolderPath);
   const dateSegments = buildDateSegments(source.dateRule, parsedCompetence);
-  const recursive = source.dateRule === "year_month_day";
+  const recursive = !parsedCompetence
+    ? Boolean(source.dateRule)
+    : source.dateRule === "year_month_day";
   const items = [];
 
   for (const company of companies ?? []) {
