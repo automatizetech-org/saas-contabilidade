@@ -12,7 +12,7 @@ import {
   probeServerFileByPath,
 } from "@/services/serverFileService";
 import { supabase } from "@/services/supabaseClient";
-import type { Json } from "@/types/database";
+import type { Database, Json } from "@/types/database";
 import {
   asArray,
   asObject,
@@ -31,10 +31,13 @@ import type {
   DeclarationArtifactListResponse,
   DeclarationCompany,
   DeclarationGuideSubmitInput,
+  DeclarationRunHistoryPage,
   DeclarationRunItem,
   DeclarationRunState,
   OverdueGuide,
 } from "./types";
+
+type DeclarationRunHistoryRow = Database["public"]["Tables"]["declaration_run_history"]["Row"];
 
 const ACTION_TITLES: Record<DeclarationActionKind, string> = {
   simples_emitir_guia: "Emissão de guia do Simples Nacional",
@@ -368,6 +371,69 @@ function buildRunState(params: {
     startedAt: params.startedAt,
     finishedAt: terminal ? (params.finishedAt ?? new Date().toISOString()) : null,
     terminal,
+  };
+}
+
+function getRunCounters(items: DeclarationRunItem[]) {
+  const successCount = items.filter((item) => item.status === "sucesso").length;
+  const errorCount = items.filter((item) => item.status === "erro").length;
+  const processingCount = items.filter((item) => item.status === "processando").length;
+  return {
+    itemsTotal: items.length,
+    itemsSuccess: successCount,
+    itemsError: errorCount,
+    itemsProcessing: processingCount,
+  };
+}
+
+function getRunHistoryStatus(run: DeclarationRunState): "processando" | "sucesso" | "divergente" {
+  if (!run.terminal) return "processando";
+  return run.items.some((item) => item.status === "erro") ? "divergente" : "sucesso";
+}
+
+function sanitizeRunItems(value: Json | null | undefined): DeclarationRunItem[] {
+  return asArray(value).map((entry) => {
+    const row = asObject(entry);
+    const artifactRaw = asObject(row.artifact ?? null);
+    const artifact =
+      Object.keys(artifactRaw).length > 0
+        ? {
+            label: String(artifactRaw.label ?? "").trim(),
+            filePath: artifactRaw.filePath == null ? null : String(artifactRaw.filePath ?? ""),
+            url: artifactRaw.url == null ? null : String(artifactRaw.url ?? ""),
+            artifactKey: artifactRaw.artifactKey == null ? null : String(artifactRaw.artifactKey ?? ""),
+          }
+        : null;
+    return {
+      companyId: String(row.companyId ?? ""),
+      companyName: String(row.companyName ?? ""),
+      companyDocument: row.companyDocument == null ? null : String(row.companyDocument ?? ""),
+      status: (["pendente", "processando", "sucesso", "erro"].includes(String(row.status ?? ""))
+        ? String(row.status)
+        : "pendente") as DeclarationRunItem["status"],
+      message: String(row.message ?? ""),
+      executionRequestId: row.executionRequestId == null ? null : String(row.executionRequestId ?? ""),
+      artifact,
+      meta: (row.meta as Json | undefined) ?? null,
+    };
+  });
+}
+
+function mapHistoryRowToRun(row: DeclarationRunHistoryRow): DeclarationRunState {
+  const payload = asObject(row.payload);
+  const action = String(payload.action ?? row.action) as DeclarationRunState["action"];
+  const mode = String(payload.mode ?? row.mode) as DeclarationRunState["mode"];
+  const requestIds = Array.isArray(row.request_ids) ? row.request_ids.map((value) => String(value)) : [];
+  return {
+    runId: String(row.run_id),
+    action,
+    mode,
+    title: String(payload.title ?? row.title ?? ACTION_TITLES[action]),
+    requestIds,
+    items: sanitizeRunItems(payload.items),
+    startedAt: String(payload.startedAt ?? row.started_at ?? row.created_at),
+    finishedAt: payload.finishedAt == null ? row.finished_at : String(payload.finishedAt ?? ""),
+    terminal: Boolean(payload.terminal ?? row.status !== "processando"),
   };
 }
 
@@ -1143,6 +1209,76 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       : null,
     runId: current.runId,
   });
+}
+
+export async function persistDeclarationRunState(run: DeclarationRunState): Promise<void> {
+  const counters = getRunCounters(run.items);
+  const companyIds = run.items.map((item) => item.companyId).filter(Boolean);
+  const payload: Json = {
+    runId: run.runId,
+    action: run.action,
+    mode: run.mode,
+    title: run.title,
+    requestIds: run.requestIds,
+    items: run.items as unknown as Json,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    terminal: run.terminal,
+  };
+
+  const { error } = await supabase.from("declaration_run_history").upsert(
+    {
+      run_id: run.runId,
+      action: run.action,
+      mode: run.mode,
+      title: run.title,
+      status: getRunHistoryStatus(run),
+      company_ids: companyIds,
+      request_ids: run.requestIds,
+      items_total: counters.itemsTotal,
+      items_success: counters.itemsSuccess,
+      items_error: counters.itemsError,
+      items_processing: counters.itemsProcessing,
+      payload,
+      started_at: run.startedAt,
+      finished_at: run.finishedAt,
+      last_event_at: run.finishedAt ?? new Date().toISOString(),
+    },
+    { onConflict: "office_id,run_id" },
+  );
+
+  if (error) throw error;
+}
+
+export async function listDeclarationRunHistory(params: {
+  page: number;
+  pageSize: number;
+}): Promise<DeclarationRunHistoryPage> {
+  const page = Math.max(1, Number(params.page) || 1);
+  const pageSize = Math.min(50, Math.max(1, Number(params.pageSize) || 10));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data, error, count } = await supabase
+    .from("declaration_run_history")
+    .select("*", { count: "exact" })
+    .order("started_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(from, to);
+
+  if (error) throw error;
+
+  return {
+    items: (data ?? []).map((row) => mapHistoryRowToRun(row as DeclarationRunHistoryRow)),
+    total: Number(count ?? 0),
+  };
+}
+
+export async function deleteDeclarationRunHistory(runId: string): Promise<void> {
+  const normalizedRunId = String(runId ?? "").trim();
+  if (!normalizedRunId) return;
+  const { error } = await supabase.from("declaration_run_history").delete().eq("run_id", normalizedRunId);
+  if (error) throw error;
 }
 
 export async function listDeclarationArtifacts(params: {

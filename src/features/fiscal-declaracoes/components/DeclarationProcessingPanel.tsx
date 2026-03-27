@@ -10,9 +10,9 @@ import { getProgressMetrics } from "../helpers";
 type DeclarationProcessingPanelProps = {
   run: DeclarationRunState | null;
   loading?: boolean;
-  onOpenArtifact?: (item: DeclarationRunItem) => void;
-  onDownloadArtifact?: (item: DeclarationRunItem) => void;
-  onClearHistory?: () => void;
+  onOpenArtifact?: (run: DeclarationRunState, item: DeclarationRunItem) => void;
+  onDownloadArtifact?: (run: DeclarationRunState, item: DeclarationRunItem) => void;
+  onClearHistory?: (runId: string) => void;
 };
 
 export function DeclarationProcessingPanel({
@@ -76,7 +76,7 @@ export function DeclarationProcessingPanel({
             </div>
             {onClearHistory ? (
               <div className="flex justify-end">
-                <Button type="button" variant="outline" size="sm" onClick={onClearHistory}>
+                <Button type="button" variant="outline" size="sm" onClick={() => onClearHistory(run.runId)}>
                   {run.terminal ? "Limpar historico" : "Limpar acompanhamento"}
                 </Button>
               </div>
@@ -134,11 +134,11 @@ export function DeclarationProcessingPanel({
                     )}
                     {hasArtifact ? (
                       <>
-                        <Button type="button" variant="outline" size="sm" onClick={() => onOpenArtifact?.(item)}>
+                        <Button type="button" variant="outline" size="sm" onClick={() => onOpenArtifact?.(run, item)}>
                           <Eye className="h-4 w-4" />
                           Visualizar
                         </Button>
-                        <Button type="button" size="sm" onClick={() => onDownloadArtifact?.(item)}>
+                        <Button type="button" size="sm" onClick={() => onDownloadArtifact?.(run, item)}>
                           <Download className="h-4 w-4" />
                           {item.artifact?.label || "Baixar"}
                         </Button>

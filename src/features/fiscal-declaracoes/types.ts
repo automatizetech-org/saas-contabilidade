@@ -113,6 +113,11 @@ export type DeclarationRunState = {
   terminal: boolean;
 };
 
+export type DeclarationRunHistoryPage = {
+  items: DeclarationRunState[];
+  total: number;
+};
+
 export type DeclarationGuideModalState = {
   open: boolean;
   action: DeclarationActionKind;

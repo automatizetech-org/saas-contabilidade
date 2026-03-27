@@ -272,6 +272,28 @@ export type Database = {
         created_at: string;
         created_by: string | null;
       }>;
+      declaration_run_history: TableDef<{
+        id: string;
+        office_id: string;
+        run_id: string;
+        action: string;
+        mode: string;
+        title: string;
+        status: "processando" | "sucesso" | "divergente";
+        company_ids: string[];
+        request_ids: string[];
+        items_total: number;
+        items_success: number;
+        items_error: number;
+        items_processing: number;
+        payload: Json;
+        started_at: string;
+        finished_at: string | null;
+        last_event_at: string;
+        created_by: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
       robot_display_config: TableDef<{
         office_id: string;
         robot_technical_id: string;

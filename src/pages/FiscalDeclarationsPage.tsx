@@ -24,10 +24,13 @@ import {
 } from "@/features/fiscal-declaracoes/helpers";
 import {
   downloadDeclarationArtifact,
+  deleteDeclarationRunHistory,
   getDeclarationRunState,
   getFiscalDeclarationsBootstrap,
   listDeclarationArtifacts,
+  listDeclarationRunHistory,
   openDeclarationArtifact,
+  persistDeclarationRunState,
   startDeclarationRun,
 } from "@/features/fiscal-declaracoes/service";
 import type {
@@ -41,9 +44,16 @@ import { DeclarationActionCard } from "@/features/fiscal-declaracoes/components/
 import { DeclarationArtifactsCard } from "@/features/fiscal-declaracoes/components/DeclarationArtifactsCard";
 import { DeclarationExecutionModal } from "@/features/fiscal-declaracoes/components/DeclarationExecutionModal";
 import { DeclarationProcessingPanel } from "@/features/fiscal-declaracoes/components/DeclarationProcessingPanel";
+import { DeclarationRunHistoryTable } from "@/features/fiscal-declaracoes/components/DeclarationRunHistoryTable";
 import { OverdueGuidesCard } from "@/features/fiscal-declaracoes/components/OverdueGuidesCard";
 
-const DECLARATION_RUN_STORAGE_KEY = "fiscal-declaracoes-active-run";
+function upsertRunHistory(
+  current: DeclarationRunState[],
+  incoming: DeclarationRunState,
+): DeclarationRunState[] {
+  const next = [incoming, ...current.filter((run) => run.runId !== incoming.runId)];
+  return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+}
 
 const initialGuideModalState: DeclarationGuideModalState = {
   open: false,
@@ -97,36 +107,17 @@ const MEI_DOCUMENT_ACTIONS: Array<{
 export default function FiscalDeclarationsPage() {
   const { data: companies = [] } = useCompanies();
   const { selectedCompanyIds } = useSelectedCompanyIds();
-  const { isSuperAdmin, officeRole } = useProfile();
+  const { isSuperAdmin, officeId, officeRole } = useProfile();
   const [selectedTab, setSelectedTab] = useState<"simples-nacional" | "mei">("simples-nacional");
   const [guideModalState, setGuideModalState] = useState<DeclarationGuideModalState>(initialGuideModalState);
   const defaultCompetence = useMemo(() => getDefaultDeclarationCompetence(), []);
-  const [activeRun, setActiveRun] = useState<DeclarationRunState | null>(null);
+  const [runHistory, setRunHistory] = useState<DeclarationRunState[]>([]);
+  const [runHistoryTotal, setRunHistoryTotal] = useState(0);
+  const [runHistoryPage, setRunHistoryPage] = useState(1);
+  const [runHistoryPageSize, setRunHistoryPageSize] = useState(10);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const stored = window.localStorage.getItem(DECLARATION_RUN_STORAGE_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored) as DeclarationRunState | null;
-      if (parsed && typeof parsed === "object" && Array.isArray(parsed.requestIds) && Array.isArray(parsed.items)) {
-        setActiveRun(parsed);
-      }
-    } catch {
-      window.localStorage.removeItem(DECLARATION_RUN_STORAGE_KEY);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!activeRun) {
-      window.localStorage.removeItem(DECLARATION_RUN_STORAGE_KEY);
-      return;
-    }
-    window.localStorage.setItem(DECLARATION_RUN_STORAGE_KEY, JSON.stringify(activeRun));
-  }, [activeRun]);
 
   const canOperate = isSuperAdmin || officeRole === "owner" || officeRole === "admin" || officeRole === "operator";
   const visibleCompanies = useMemo(() => {
@@ -157,23 +148,58 @@ export default function FiscalDeclarationsPage() {
     placeholderData: keepPreviousData,
   });
 
-  const runStatusQuery = useQuery({
-    queryKey: ["fiscal-declaracoes-run", activeRun?.runId, activeRun?.requestIds.join(",")],
-    queryFn: () => getDeclarationRunState(activeRun!),
-    enabled: Boolean(activeRun && activeRun.requestIds.length > 0 && !activeRun.terminal),
-    refetchInterval: (query) => {
-      const data = query.state.data as DeclarationRunState | undefined;
-      return data?.terminal ? false : 2500;
-    },
+  const runHistoryQuery = useQuery({
+    queryKey: ["fiscal-declaracoes-run-history", officeId, runHistoryPage, runHistoryPageSize],
+    queryFn: () => listDeclarationRunHistory({ page: runHistoryPage, pageSize: runHistoryPageSize }),
+    enabled: Boolean(officeId),
+    placeholderData: keepPreviousData,
+    refetchInterval: 5_000,
     refetchIntervalInBackground: true,
   });
 
   useEffect(() => {
-    if (runStatusQuery.data) setActiveRun(runStatusQuery.data);
-  }, [runStatusQuery.data]);
+    if (!runHistoryQuery.data) return;
+    setRunHistory(runHistoryQuery.data.items);
+    setRunHistoryTotal(runHistoryQuery.data.total);
+    setSelectedRunId((current) =>
+      current && runHistoryQuery.data.items.some((run) => run.runId === current)
+        ? current
+        : runHistoryQuery.data.items[0]?.runId ?? null,
+    );
+  }, [runHistoryQuery.data]);
 
-  const hasRunningBatch = Boolean(activeRun && !activeRun.terminal);
-  const isBusy = dispatching || hasRunningBatch;
+  const openRuns = useMemo(
+    () => runHistory.filter((run) => run.requestIds.length > 0 && !run.terminal),
+    [runHistory],
+  );
+  const runStatusQueries = useQueries({
+    queries: openRuns.map((run) => ({
+      queryKey: ["fiscal-declaracoes-run", run.runId, run.requestIds.join(",")],
+      queryFn: () => getDeclarationRunState(run),
+      enabled: true,
+      refetchInterval: (query: { state: { data?: DeclarationRunState } }) => {
+        const data = query.state.data as DeclarationRunState | undefined;
+        return data?.terminal ? false : 2500;
+      },
+      refetchIntervalInBackground: true,
+    })),
+  });
+  const runQuerySignature = runStatusQueries
+    .map((query) => `${query.dataUpdatedAt}:${query.data?.runId ?? ""}:${query.isFetching ? "1" : "0"}`)
+    .join("|");
+
+  useEffect(() => {
+    const updates = runStatusQueries
+      .map((query) => query.data)
+      .filter((entry): entry is DeclarationRunState => Boolean(entry));
+    if (updates.length === 0) return;
+    setRunHistory((current) => updates.reduce((runs, update) => upsertRunHistory(runs, update), current));
+    for (const update of updates) {
+      void persistDeclarationRunState(update).catch(() => null);
+    }
+  }, [runQuerySignature]);
+
+  const isBusy = dispatching;
   const availableCompanies = bootstrapQuery.data?.availableCompanies ?? declarationCompanies;
   const overdueGuides = bootstrapQuery.data?.overdueGuides ?? [];
   const actionAvailability = bootstrapQuery.data?.actionAvailability;
@@ -293,14 +319,24 @@ export default function FiscalDeclarationsPage() {
     };
   };
 
+  const applyRunUpdate = (run: DeclarationRunState, options?: { incrementTotal?: boolean; select?: boolean }) => {
+    setRunHistory((current) => upsertRunHistory(current, run).slice(0, runHistoryPageSize));
+    if (options?.incrementTotal) {
+      setRunHistoryTotal((current) => current + 1);
+    }
+    if (options?.select !== false) {
+      setSelectedRunId(run.runId);
+    }
+    void persistDeclarationRunState(run).catch(() => null);
+  };
+
   const resolveActionDisabledReason = (action: DeclarationActionKind) => {
     if (!canOperate) return "Seu perfil tem acesso somente para consulta nesta área.";
-    if (hasRunningBatch) return "Aguarde o processamento atual terminar para iniciar uma nova rotina.";
     return actionAvailability?.[action]?.reason ?? null;
   };
 
   const isActionEnabled = (action: DeclarationActionKind) =>
-    canOperate && !hasRunningBatch && Boolean(actionAvailability?.[action]?.enabled);
+    canOperate && Boolean(actionAvailability?.[action]?.enabled);
 
   const executeBatch = async (params: {
     action: DeclarationActionKind;
@@ -313,13 +349,10 @@ export default function FiscalDeclarationsPage() {
       toast.error("Seu perfil não pode executar rotinas fiscais nesta área.");
       return;
     }
-    if (hasRunningBatch) {
-      toast.error("Já existe um processamento em andamento. Aguarde a conclusão para iniciar outro.");
-      return;
-    }
 
     setDispatching(true);
     try {
+      setRunHistoryPage(1);
       const run = await startDeclarationRun({
         action: params.action,
         mode: params.mode,
@@ -330,9 +363,9 @@ export default function FiscalDeclarationsPage() {
           recalculate: params.mode === "recalcular",
           recalculateDueDate: params.mode === "recalcular" ? params.recalculateDueDate ?? null : null,
         },
-        onProgress: setActiveRun,
+        onProgress: (run) => applyRunUpdate(run),
       });
-      setActiveRun(run);
+      applyRunUpdate(run, { incrementTotal: true });
       if (run.requestIds.length > 0) {
         toast.success("Solicitações enviadas. O painel abaixo acompanhará o andamento por empresa.");
       } else {
@@ -359,7 +392,8 @@ export default function FiscalDeclarationsPage() {
       reference: input.competence,
     });
     if (preloadedRun) {
-      setActiveRun(preloadedRun);
+      setRunHistoryPage(1);
+      applyRunUpdate(preloadedRun, { incrementTotal: true });
       setGuideModalState((current) => ({ ...current, open: false }));
       toast.success("Documento localizado na pasta da empresa.");
       return;
@@ -375,7 +409,7 @@ export default function FiscalDeclarationsPage() {
     setGuideModalState((current) => ({ ...current, open: false }));
   };
 
-  const handleDownloadArtifact = async (item: DeclarationRunItem) => {
+  const handleDownloadArtifact = async (run: DeclarationRunState, item: DeclarationRunItem) => {
     if (item.artifact?.filePath) {
       try {
         await downloadServerFileByPath(item.artifact.filePath, item.artifact.label);
@@ -396,7 +430,7 @@ export default function FiscalDeclarationsPage() {
       ).trim();
       try {
         await downloadDeclarationArtifact({
-          action: activeRun?.action ?? "simples_emitir_guia",
+          action: run.action,
           companyId: item.companyId,
           competence: isValidCompetence(rawReference) ? rawReference : null,
           artifactKey: item.artifact.artifactKey,
@@ -419,7 +453,7 @@ export default function FiscalDeclarationsPage() {
     toast.error("Nenhum artefato disponível para esta empresa.");
   };
 
-  const handleOpenArtifact = async (item: DeclarationRunItem) => {
+  const handleOpenArtifact = async (run: DeclarationRunState, item: DeclarationRunItem) => {
     if (item.artifact?.url) {
       window.open(item.artifact.url, "_blank", "noopener,noreferrer");
       return;
@@ -444,7 +478,7 @@ export default function FiscalDeclarationsPage() {
       ).trim();
       try {
         await openDeclarationArtifact({
-          action: activeRun?.action ?? "simples_emitir_guia",
+          action: run.action,
           companyId: item.companyId,
           competence: isValidCompetence(rawReference) ? rawReference : null,
           artifactKey: item.artifact.artifactKey,
@@ -483,12 +517,34 @@ export default function FiscalDeclarationsPage() {
     }
   };
 
-  const handleClearRunHistory = () => {
-    setActiveRun(null);
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(DECLARATION_RUN_STORAGE_KEY);
+  const handleOpenPrimaryRunArtifact = async (run: DeclarationRunState) => {
+    const primaryItem =
+      run.items.find((item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey) ?? null;
+    if (!primaryItem) {
+      toast.error("Nenhum PDF disponivel para esta solicitacao.");
+      return;
+    }
+    await handleOpenArtifact(run, primaryItem);
+  };
+
+  const handleClearRunHistory = async (runId: string) => {
+    setRunHistory((current) => current.filter((run) => run.runId !== runId));
+    setRunHistoryTotal((current) => Math.max(0, current - 1));
+    setSelectedRunId((current) => (current === runId ? null : current));
+    try {
+      await deleteDeclarationRunHistory(runId);
+      await runHistoryQuery.refetch();
+    } catch (error) {
+      toast.error(
+        sanitizeDeclarationError(error, "Nao foi possivel limpar o historico selecionado."),
+      );
     }
   };
+
+  const selectedRun = useMemo(
+    () => runHistory.find((run) => run.runId === selectedRunId) ?? runHistory[0] ?? null,
+    [runHistory, selectedRunId],
+  );
 
   return (
     <div className="space-y-6">
@@ -702,9 +758,28 @@ export default function FiscalDeclarationsPage() {
         </TabsContent>
       </Tabs>
 
+      <DeclarationRunHistoryTable
+        runs={runHistory}
+        loading={runHistoryQuery.isLoading || runHistoryQuery.isFetching}
+        totalItems={runHistoryTotal}
+        currentPage={runHistoryPage}
+        pageSize={runHistoryPageSize}
+        onPageChange={setRunHistoryPage}
+        onPageSizeChange={(pageSize) => {
+          setRunHistoryPageSize(pageSize);
+          setRunHistoryPage(1);
+        }}
+        selectedRunId={selectedRunId}
+        onSelectRun={setSelectedRunId}
+        onOpenPrimaryArtifact={(run) => {
+          setSelectedRunId(run.runId);
+          void handleOpenPrimaryRunArtifact(run);
+        }}
+      />
+
       <DeclarationProcessingPanel
-        run={activeRun}
-        loading={runStatusQuery.isFetching}
+        run={selectedRun}
+        loading={Boolean(selectedRun && runStatusQueries.some((query) => query.data?.runId === selectedRun.runId && query.isFetching))}
         onOpenArtifact={handleOpenArtifact}
         onDownloadArtifact={handleDownloadArtifact}
         onClearHistory={handleClearRunHistory}
