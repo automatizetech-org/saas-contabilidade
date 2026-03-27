@@ -670,9 +670,12 @@ def select_certificate_dialog_strong(certificate: CertificateMetadata, timeout_m
           public int Y;
         }}
         public class NativeCertUi {{
+          [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+          [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+          [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+          [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
           [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
           [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-          [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
         }}
         "@
 
@@ -692,16 +695,40 @@ def select_certificate_dialog_strong(certificate: CertificateMetadata, timeout_m
         }}
 
         if (-not $dialog) {{
-            throw 'Janela "Selecione um certificado" nao apareceu dentro do timeout.'
+            throw 'Janela de selecao de certificado nao apareceu.'
         }}
 
         function Matches-Target([string]$name, $targets) {{
             if (-not $name) {{ return $false }}
             foreach ($target in $targets) {{
                 if (-not $target) {{ continue }}
-                if ($name -eq $target -or $name.Contains($target) -or $target.Contains($name)) {{
+                if ($name -eq $target -or $target.Contains($name) -or $name.Contains($target)) {{
                     return $true
                 }}
+            }}
+            return $false
+        }}
+
+        function Get-OkButton($dialog) {{
+            $condition = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty,
+                'OK'
+            )
+            return $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        }}
+
+        function Wait-Closed($root, $dialogTitle) {{
+            $closeDeadline = (Get-Date).AddSeconds(8)
+            while ((Get-Date) -lt $closeDeadline) {{
+                $condition = New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::NameProperty,
+                    $dialogTitle
+                )
+                $stillOpen = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+                if (-not $stillOpen) {{
+                    return $true
+                }}
+                Start-Sleep -Milliseconds 180
             }}
             return $false
         }}
@@ -715,66 +742,114 @@ def select_certificate_dialog_strong(certificate: CertificateMetadata, timeout_m
             [NativeCertUi]::SetCursorPos($x, $y) | Out-Null
             Start-Sleep -Milliseconds 80
             [NativeCertUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 25
+            Start-Sleep -Milliseconds 40
             [NativeCertUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 180
             return $true
         }}
 
-        function Wait-Closed($root, $dialogTitle) {{
-            $closeDeadline = (Get-Date).AddSeconds(12)
-            while ((Get-Date) -lt $closeDeadline) {{
-                $condition = New-Object System.Windows.Automation.PropertyCondition(
-                    [System.Windows.Automation.AutomationElement]::NameProperty,
-                    $dialogTitle
-                )
-                $stillOpen = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-                if (-not $stillOpen) {{
-                    return $true
+        function Find-DialogList($dialog) {{
+            $all = $dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            foreach ($item in $all) {{
+                $type = [string]$item.Current.ControlType.ProgrammaticName
+                if ($type -in @('ControlType.DataGrid', 'ControlType.List', 'ControlType.Table')) {{
+                    return $item
                 }}
-                Start-Sleep -Milliseconds 200
             }}
-            return $false
+            return $dialog
         }}
 
+        function Find-ChromeWindow($root) {{
+            $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+            $preferred = @()
+            for ($i = 0; $i -lt $wins.Count; $i++) {{
+                $w = $wins.Item($i)
+                $name = [string]$w.Current.Name
+                if (-not $name) {{ continue }}
+                $lname = $name.ToLower()
+                if ($lname.Contains('gov.br') -and ($lname.Contains('chrome') -or $lname.Contains('edge'))) {{
+                    $preferred += $w
+                }}
+            }}
+            if ($preferred.Count -gt 0) {{ return $preferred[0] }}
+            for ($i = 0; $i -lt $wins.Count; $i++) {{
+                $w = $wins.Item($i)
+                $name = [string]$w.Current.Name
+                if (-not $name) {{ continue }}
+                $lname = $name.ToLower()
+                if ($lname.Contains('google chrome') -or $lname.Contains('chrome') -or $lname.Contains('microsoft edge') -or $lname.Contains('edge')) {{
+                    return $w
+                }}
+            }}
+            return $null
+        }}
+
+        $previousWindow = [NativeCertUi]::GetForegroundWindow()
         $cursor = New-Object POINT
         [NativeCertUi]::GetCursorPos([ref]$cursor) | Out-Null
-        try {{
-            while ((Get-Date) -lt $deadline) {{
-                $all = $dialog.FindAll(
-                    [System.Windows.Automation.TreeScope]::Descendants,
-                    [System.Windows.Automation.Condition]::TrueCondition
-                )
-                $matches = @()
-                $okButton = $null
-                for ($i = 0; $i -lt $all.Count; $i++) {{
-                    $item = $all.Item($i)
-                    $type = [string]$item.Current.ControlType.ProgrammaticName
-                    if ($type -eq 'ControlType.DataItem' -and (Matches-Target ([string]$item.Current.Name) $targets)) {{
-                        $matches += $item
-                    }}
-                    if ($type -eq 'ControlType.Button' -and [string]$item.Current.Name -eq 'OK') {{
-                        $okButton = $item
-                    }}
-                }}
 
-                if ($matches -and $matches.Count -gt 0 -and $okButton) {{
-                    foreach ($row in $matches) {{
-                        Click-Center $row | Out-Null
-                        Click-Center $row | Out-Null
-                        Click-Center $okButton | Out-Null
-                        if (Wait-Closed $root $dialogTitle) {{
-                            exit 0
-                        }}
-                    }}
+        try {{
+            $listHost = Find-DialogList $dialog
+            if (-not (Click-Center $listHost)) {{
+                $chromeWindow = Find-ChromeWindow $root
+                if (-not $chromeWindow) {{
+                    throw 'Nao encontrei uma janela do Chrome/Edge para focar. Deixe o navegador visivel e tente novamente.'
                 }}
-                Start-Sleep -Milliseconds 250
+                $chromeHandle = [IntPtr]$chromeWindow.Current.NativeWindowHandle
+                if ($chromeHandle -eq [IntPtr]::Zero) {{
+                    throw 'A janela principal do Chrome nao possui handle valido.'
+                }}
+                [NativeCertUi]::ShowWindow($chromeHandle, 5) | Out-Null
+                [NativeCertUi]::SetForegroundWindow($chromeHandle) | Out-Null
+                Start-Sleep -Milliseconds 150
+                $rect = $chromeWindow.Current.BoundingRectangle
+                $clickX = [int]($rect.Left + ($rect.Width * 0.48))
+                $clickY = [int]($rect.Top + ($rect.Height * 0.31))
+                [NativeCertUi]::SetCursorPos($clickX, $clickY) | Out-Null
+                Start-Sleep -Milliseconds 80
+                [NativeCertUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 40
+                [NativeCertUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 180
             }}
+
+            $okButton = Get-OkButton $dialog
+            $wsh = New-Object -ComObject WScript.Shell
+            $wsh.SendKeys('{{HOME}}')
+            Start-Sleep -Milliseconds 220
+
+            for ($step = 0; $step -lt 60; $step++) {{
+                $focusedName = ''
+                try {{
+                    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+                    if ($focused) {{
+                        $focusedName = [string]$focused.Current.Name
+                    }}
+                }} catch {{}}
+                if (Matches-Target $focusedName $targets) {{
+                    if ($okButton) {{
+                        Click-Center $okButton | Out-Null
+                    }} else {{
+                        $wsh.SendKeys('~')
+                    }}
+                    if (Wait-Closed $root $dialogTitle) {{
+                        exit 0
+                    }}
+                    throw ('O seletor permaneceu aberto apos confirmar o certificado: ' + $focusedName)
+                }}
+                if ($step -lt 59) {{
+                    $wsh.SendKeys('{{DOWN}}')
+                    Start-Sleep -Milliseconds 180
+                }}
+            }}
+
+            throw 'Nao foi possivel alcancar o certificado alvo navegando pela lista nativa.'
         }} finally {{
             [NativeCertUi]::SetCursorPos($cursor.X, $cursor.Y) | Out-Null
+            if ($previousWindow -ne [IntPtr]::Zero) {{
+                [NativeCertUi]::SetForegroundWindow($previousWindow) | Out-Null
+            }}
         }}
-
-        throw 'Nao foi possivel selecionar o certificado alvo na janela nativa.'
         """
     )
     ecac_base.certificate_auth.run_powershell(script, timeout_ms=timeout_ms + 15000)

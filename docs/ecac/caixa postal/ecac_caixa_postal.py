@@ -1433,7 +1433,7 @@ def select_certificate_dialog(certificate: CertificateMetadata, timeout_ms: int 
         $targets = {powershell_targets}
         $dialogTitle = 'Selecione um certificado'
         $root = [System.Windows.Automation.AutomationElement]::RootElement
-        $deadline = (Get-Date).AddSeconds(35)
+        $deadline = (Get-Date).AddMilliseconds({timeout_ms})
         $dialog = $null
 
         while ((Get-Date) -lt $deadline -and -not $dialog) {{
@@ -1446,7 +1446,7 @@ def select_certificate_dialog(certificate: CertificateMetadata, timeout_ms: int 
         }}
 
         if (-not $dialog) {{
-            throw 'Janela "Selecione um certificado" não apareceu dentro do timeout.'
+            throw 'Janela de selecao de certificado nao apareceu.'
         }}
 
         function Matches-Target([string]$name, $targets) {{
@@ -1460,74 +1460,12 @@ def select_certificate_dialog(certificate: CertificateMetadata, timeout_ms: int 
             return $false
         }}
 
-        function Find-DialogRows($dialog) {{
-            $all = $dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-            $rows = @()
-            for ($i = 0; $i -lt $all.Count; $i++) {{
-                $item = $all.Item($i)
-                $type = [string]$item.Current.ControlType.ProgrammaticName
-                if ($type -in @('ControlType.DataItem', 'ControlType.ListItem')) {{
-                    $rows += $item
-                }}
-            }}
-            return $rows
-        }}
-
-        function Try-Select($element) {{
-            if (-not $element) {{ return $false }}
-            foreach ($pattern in $element.GetSupportedPatterns()) {{
-                try {{
-                    $programmatic = [string]$pattern.ProgrammaticName
-                    if ($programmatic -eq 'ScrollItemPatternIdentifiers.Pattern') {{
-                        $scrollItem = $element.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern)
-                        $scrollItem.ScrollIntoView()
-                    }}
-                    if ($programmatic -eq 'SelectionItemPatternIdentifiers.Pattern') {{
-                        $selectionItem = $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
-                        $selectionItem.Select()
-                        return $true
-                    }}
-                    if ($programmatic -eq 'LegacyIAccessiblePatternIdentifiers.Pattern') {{
-                        $legacy = $element.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
-                        $legacy.DoDefaultAction()
-                        return $true
-                    }}
-                }} catch {{}}
-            }}
-            try {{
-                $element.SetFocus()
-                return $true
-            }} catch {{
-                return $false
-            }}
-        }}
-
         function Get-OkButton($dialog) {{
             $condition = New-Object System.Windows.Automation.PropertyCondition(
                 [System.Windows.Automation.AutomationElement]::NameProperty,
                 'OK'
             )
             return $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-        }}
-
-        function Try-ClickOk($button) {{
-            if (-not $button) {{ return $false }}
-            foreach ($pattern in $button.GetSupportedPatterns()) {{
-                try {{
-                    $programmatic = [string]$pattern.ProgrammaticName
-                    if ($programmatic -eq 'InvokePatternIdentifiers.Pattern') {{
-                        $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-                        $invoke.Invoke()
-                        return $true
-                    }}
-                    if ($programmatic -eq 'LegacyIAccessiblePatternIdentifiers.Pattern') {{
-                        $legacy = $button.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern)
-                        $legacy.DoDefaultAction()
-                        return $true
-                    }}
-                }} catch {{}}
-            }}
-            return $false
         }}
 
         function Wait-Closed() {{
@@ -1546,88 +1484,126 @@ def select_certificate_dialog(certificate: CertificateMetadata, timeout_ms: int 
             return $false
         }}
 
-        $rows = Find-DialogRows $dialog
-        $matched = $null
-        foreach ($row in $rows) {{
-            $text = [string]$row.Current.Name
-            if (Matches-Target $text $targets) {{
-                $matched = $row
-                break
+        function Click-Center($element) {{
+            if (-not $element) {{ return $false }}
+            $rect = $element.Current.BoundingRectangle
+            if ($rect.Width -le 0 -or $rect.Height -le 0) {{ return $false }}
+            $x = [int]($rect.Left + ($rect.Width / 2))
+            $y = [int]($rect.Top + ($rect.Height / 2))
+            [NativeCertUi]::SetCursorPos($x, $y) | Out-Null
+            Start-Sleep -Milliseconds 80
+            [NativeCertUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 40
+            [NativeCertUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 180
+            return $true
+        }}
+
+        function Find-DialogList($dialog) {{
+            $all = $dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            foreach ($item in $all) {{
+                $type = [string]$item.Current.ControlType.ProgrammaticName
+                if ($type -in @('ControlType.DataGrid', 'ControlType.List', 'ControlType.Table')) {{
+                    return $item
+                }}
             }}
+            return $dialog
         }}
 
-        $okButton = Get-OkButton $dialog
-        if ($matched -and (Try-Select $matched) -and $okButton -and (Try-ClickOk $okButton) -and (Wait-Closed)) {{
-            exit 0
-        }}
-
-        $chromeWindow = $null
-        $children = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
-        for ($i = 0; $i -lt $children.Count; $i++) {{
-            $candidate = $children.Item($i)
-            $title = ([string]$candidate.Current.Name).ToLower()
-            if ($title.Contains('chrome') -or $title.Contains('edge') -or $title.Contains('gov.br')) {{
-                $chromeWindow = $candidate
-                break
+        function Find-ChromeWindow($root) {{
+            $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+            $preferred = @()
+            for ($i = 0; $i -lt $wins.Count; $i++) {{
+                $w = $wins.Item($i)
+                $name = [string]$w.Current.Name
+                if (-not $name) {{ continue }}
+                $lname = $name.ToLower()
+                if ($lname.Contains('gov.br') -and ($lname.Contains('chrome') -or $lname.Contains('edge'))) {{
+                    $preferred += $w
+                }}
             }}
-        }}
-        if (-not $chromeWindow) {{
-            throw 'Falha na UI Automation direta e nenhuma janela Chrome/Edge foi localizada para fallback.'
-        }}
-        $handle = [IntPtr]$chromeWindow.Current.NativeWindowHandle
-        if ($handle -eq [IntPtr]::Zero) {{
-            throw 'A janela principal do navegador não possui handle válido para fallback.'
+            if ($preferred.Count -gt 0) {{ return $preferred[0] }}
+            for ($i = 0; $i -lt $wins.Count; $i++) {{
+                $w = $wins.Item($i)
+                $name = [string]$w.Current.Name
+                if (-not $name) {{ continue }}
+                $lname = $name.ToLower()
+                if ($lname.Contains('google chrome') -or $lname.Contains('chrome') -or $lname.Contains('microsoft edge') -or $lname.Contains('edge')) {{
+                    return $w
+                }}
+            }}
+            return $null
         }}
 
-        $previous = [NativeCertUi]::GetForegroundWindow()
+        $previousWindow = [NativeCertUi]::GetForegroundWindow()
         $cursor = New-Object POINT
         [NativeCertUi]::GetCursorPos([ref]$cursor) | Out-Null
 
         try {{
-            [NativeCertUi]::ShowWindow($handle, 5) | Out-Null
-            [NativeCertUi]::SetForegroundWindow($handle) | Out-Null
-            Start-Sleep -Milliseconds 200
-            $rect = $chromeWindow.Current.BoundingRectangle
-            $clickX = [int]($rect.Left + ($rect.Width * 0.48))
-            $clickY = [int]($rect.Top + ($rect.Height * 0.31))
-            [NativeCertUi]::SetCursorPos($clickX, $clickY) | Out-Null
-            Start-Sleep -Milliseconds 80
-            [NativeCertUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 30
-            [NativeCertUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 120
+            $listHost = Find-DialogList $dialog
+            if (-not (Click-Center $listHost)) {{
+                $chromeWindow = Find-ChromeWindow $root
+                if (-not $chromeWindow) {{
+                    throw 'Nao encontrei uma janela do Chrome/Edge para focar. Deixe o navegador visivel e tente novamente.'
+                }}
+                $chromeHandle = [IntPtr]$chromeWindow.Current.NativeWindowHandle
+                if ($chromeHandle -eq [IntPtr]::Zero) {{
+                    throw 'A janela principal do Chrome nao possui handle valido.'
+                }}
+                [NativeCertUi]::ShowWindow($chromeHandle, 5) | Out-Null
+                [NativeCertUi]::SetForegroundWindow($chromeHandle) | Out-Null
+                Start-Sleep -Milliseconds 150
+                $rect = $chromeWindow.Current.BoundingRectangle
+                $clickX = [int]($rect.Left + ($rect.Width * 0.48))
+                $clickY = [int]($rect.Top + ($rect.Height * 0.31))
+                [NativeCertUi]::SetCursorPos($clickX, $clickY) | Out-Null
+                Start-Sleep -Milliseconds 80
+                [NativeCertUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 40
+                [NativeCertUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 180
+            }}
+
+            $okButton = Get-OkButton $dialog
             $wsh = New-Object -ComObject WScript.Shell
             $wsh.SendKeys('{{HOME}}')
-            Start-Sleep -Milliseconds 150
-            for ($step = 0; $step -lt 50; $step++) {{
-                $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+            Start-Sleep -Milliseconds 220
+
+            for ($step = 0; $step -lt 60; $step++) {{
                 $focusedName = ''
-                if ($focused) {{
-                    $focusedName = [string]$focused.Current.Name
-                }}
+                try {{
+                    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+                    if ($focused) {{
+                        $focusedName = [string]$focused.Current.Name
+                    }}
+                }} catch {{}}
                 if (Matches-Target $focusedName $targets) {{
-                    $wsh.SendKeys('~')
+                    if ($okButton) {{
+                        Click-Center $okButton | Out-Null
+                    }} else {{
+                        $wsh.SendKeys('~')
+                    }}
                     if (Wait-Closed) {{
                         exit 0
                     }}
-                    throw 'O seletor do certificado permaneceu aberto após confirmar o item focado.'
+                    throw ('O seletor permaneceu aberto apos confirmar o certificado: ' + $focusedName)
                 }}
-                if ($step -lt 49) {{
+                if ($step -lt 59) {{
                     $wsh.SendKeys('{{DOWN}}')
-                    Start-Sleep -Milliseconds 140
+                    Start-Sleep -Milliseconds 180
                 }}
             }}
+
+            throw 'Nao foi possivel alcancar o certificado alvo navegando pela lista nativa.'
         }} finally {{
             [NativeCertUi]::SetCursorPos($cursor.X, $cursor.Y) | Out-Null
-            if ($previous -ne [IntPtr]::Zero) {{
-                [NativeCertUi]::SetForegroundWindow($previous) | Out-Null
+            if ($previousWindow -ne [IntPtr]::Zero) {{
+                [NativeCertUi]::SetForegroundWindow($previousWindow) | Out-Null
             }}
         }}
-
-        throw 'Não foi possível selecionar o certificado alvo na janela nativa.'
         """
     )
-    run_powershell(script, timeout_ms=timeout_ms)
+    run_powershell(script, timeout_ms=timeout_ms + 15000)
 
 
 

@@ -1,0 +1,8 @@
+{
+  "job_id": "manual_prime_debitos_20260327_v2",
+  "execution_request_id": "manual_prime_debitos_20260327_v2",
+  "office_id": "16b25399-4658-4aa6-a1bc-d1cc6114e1ee",
+  "company_ids": ["769ce253-d21b-45cb-a961-55329b244ef1"],
+  "companies": [],
+  "source": "codex_manual_test"
+}
