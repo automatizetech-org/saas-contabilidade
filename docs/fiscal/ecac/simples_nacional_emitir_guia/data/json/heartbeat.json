@@ -2,9 +2,9 @@
   "robot_technical_id": "ecac_simples_emitir_guia",
   "display_name": "e-CAC - Simples Nacional - Emitir Guia DAS",
   "status": "inactive",
-  "updated_at": "2026-03-27T04:00:54.028662+00:00",
+  "updated_at": "2026-03-27T07:58:17.145991+00:00",
   "current_job_id": null,
   "current_execution_request_id": null,
-  "message": "runner_exit",
+  "message": "application_exit",
   "progress": {}
 }

@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import { downloadServerFileByPath, openServerFileByPath } from "@/services/serverFileService";
+import { downloadServerFileByPath } from "@/services/serverFileService";
 import { cn } from "@/utils";
 import {
   createRunId,
@@ -24,12 +24,11 @@ import {
 } from "@/features/fiscal-declaracoes/helpers";
 import {
   downloadDeclarationArtifact,
-  deleteDeclarationRunHistory,
+  deleteAllDeclarationRunHistory,
   getDeclarationRunState,
   getFiscalDeclarationsBootstrap,
   listDeclarationArtifacts,
   listDeclarationRunHistory,
-  openDeclarationArtifact,
   persistDeclarationRunState,
   startDeclarationRun,
 } from "@/features/fiscal-declaracoes/service";
@@ -43,7 +42,6 @@ import type {
 import { DeclarationActionCard } from "@/features/fiscal-declaracoes/components/DeclarationActionCard";
 import { DeclarationArtifactsCard } from "@/features/fiscal-declaracoes/components/DeclarationArtifactsCard";
 import { DeclarationExecutionModal } from "@/features/fiscal-declaracoes/components/DeclarationExecutionModal";
-import { DeclarationProcessingPanel } from "@/features/fiscal-declaracoes/components/DeclarationProcessingPanel";
 import { DeclarationRunHistoryTable } from "@/features/fiscal-declaracoes/components/DeclarationRunHistoryTable";
 import { OverdueGuidesCard } from "@/features/fiscal-declaracoes/components/OverdueGuidesCard";
 
@@ -115,7 +113,6 @@ export default function FiscalDeclarationsPage() {
   const [runHistoryTotal, setRunHistoryTotal] = useState(0);
   const [runHistoryPage, setRunHistoryPage] = useState(1);
   const [runHistoryPageSize, setRunHistoryPageSize] = useState(10);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
 
@@ -161,11 +158,6 @@ export default function FiscalDeclarationsPage() {
     if (!runHistoryQuery.data) return;
     setRunHistory(runHistoryQuery.data.items);
     setRunHistoryTotal(runHistoryQuery.data.total);
-    setSelectedRunId((current) =>
-      current && runHistoryQuery.data.items.some((run) => run.runId === current)
-        ? current
-        : runHistoryQuery.data.items[0]?.runId ?? null,
-    );
   }, [runHistoryQuery.data]);
 
   const openRuns = useMemo(
@@ -324,9 +316,6 @@ export default function FiscalDeclarationsPage() {
     if (options?.incrementTotal) {
       setRunHistoryTotal((current) => current + 1);
     }
-    if (options?.select !== false) {
-      setSelectedRunId(run.runId);
-    }
     void persistDeclarationRunState(run).catch(() => null);
   };
 
@@ -453,48 +442,6 @@ export default function FiscalDeclarationsPage() {
     toast.error("Nenhum artefato disponível para esta empresa.");
   };
 
-  const handleOpenArtifact = async (run: DeclarationRunState, item: DeclarationRunItem) => {
-    if (item.artifact?.url) {
-      window.open(item.artifact.url, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    if (item.artifact?.filePath) {
-      try {
-        await openServerFileByPath(item.artifact.filePath, item.artifact.label);
-      } catch (error) {
-        toast.error(
-          sanitizeDeclarationError(error, "Nao foi possivel visualizar o documento gerado."),
-        );
-      }
-      return;
-    }
-
-    if (item.artifact?.artifactKey) {
-      const rawReference = String(
-        item.meta && typeof item.meta === "object"
-          ? (item.meta as Record<string, unknown>).competencia ?? (item.meta as Record<string, unknown>).competence ?? ""
-          : "",
-      ).trim();
-      try {
-        await openDeclarationArtifact({
-          action: run.action,
-          companyId: item.companyId,
-          competence: isValidCompetence(rawReference) ? rawReference : null,
-          artifactKey: item.artifact.artifactKey,
-          suggestedName: item.artifact.label,
-        });
-      } catch (error) {
-        toast.error(
-          sanitizeDeclarationError(error, "Nao foi possivel visualizar o documento gerado."),
-        );
-      }
-      return;
-    }
-
-    toast.error("Nenhum artefato disponivel para esta empresa.");
-  };
-
   const handleDownloadDeclarationDocument = async (
     action: DeclarationActionKind,
     item: DeclarationArtifactListItem,
@@ -517,34 +464,29 @@ export default function FiscalDeclarationsPage() {
     }
   };
 
-  const handleOpenPrimaryRunArtifact = async (run: DeclarationRunState) => {
+  const handleDownloadPrimaryRunArtifact = async (run: DeclarationRunState) => {
     const primaryItem =
       run.items.find((item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey) ?? null;
     if (!primaryItem) {
       toast.error("Nenhum PDF disponivel para esta solicitacao.");
       return;
     }
-    await handleOpenArtifact(run, primaryItem);
+    await handleDownloadArtifact(run, primaryItem);
   };
 
-  const handleClearRunHistory = async (runId: string) => {
-    setRunHistory((current) => current.filter((run) => run.runId !== runId));
-    setRunHistoryTotal((current) => Math.max(0, current - 1));
-    setSelectedRunId((current) => (current === runId ? null : current));
+  const handleClearAllRunHistory = async () => {
+    setRunHistory([]);
+    setRunHistoryTotal(0);
+    setRunHistoryPage(1);
     try {
-      await deleteDeclarationRunHistory(runId);
+      await deleteAllDeclarationRunHistory();
       await runHistoryQuery.refetch();
     } catch (error) {
       toast.error(
-        sanitizeDeclarationError(error, "Nao foi possivel limpar o historico selecionado."),
+        sanitizeDeclarationError(error, "Nao foi possivel limpar o historico do escritorio."),
       );
     }
   };
-
-  const selectedRun = useMemo(
-    () => runHistory.find((run) => run.runId === selectedRunId) ?? runHistory[0] ?? null,
-    [runHistory, selectedRunId],
-  );
 
   return (
     <div className="space-y-6">
@@ -665,8 +607,8 @@ export default function FiscalDeclarationsPage() {
                       : "Solicitar DEFIS"
                 }
                 busy={dispatching}
-                disabled={!canOperate}
-                disabledReason={!canOperate ? "Seu perfil tem acesso somente para consulta nesta area." : null}
+                disabled={!isActionEnabled(item.action)}
+                disabledReason={resolveActionDisabledReason(item.action)}
                 onClick={() => {
                   setGuideModalState({
                     open: true,
@@ -769,20 +711,8 @@ export default function FiscalDeclarationsPage() {
           setRunHistoryPageSize(pageSize);
           setRunHistoryPage(1);
         }}
-        selectedRunId={selectedRunId}
-        onSelectRun={setSelectedRunId}
-        onOpenPrimaryArtifact={(run) => {
-          setSelectedRunId(run.runId);
-          void handleOpenPrimaryRunArtifact(run);
-        }}
-      />
-
-      <DeclarationProcessingPanel
-        run={selectedRun}
-        loading={Boolean(selectedRun && runStatusQueries.some((query) => query.data?.runId === selectedRun.runId && query.isFetching))}
-        onOpenArtifact={handleOpenArtifact}
-        onDownloadArtifact={handleDownloadArtifact}
-        onClearHistory={handleClearRunHistory}
+        onDownloadPrimaryArtifact={(run) => void handleDownloadPrimaryRunArtifact(run)}
+        onClearAll={() => void handleClearAllRunHistory()}
       />
 
       <DeclarationExecutionModal

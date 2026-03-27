@@ -1,4 +1,4 @@
-import { getRobotEligibilityReport, indexCompanyRobotConfigs } from "@/lib/robotEligibility";
+﻿import { getRobotEligibilityReport, indexCompanyRobotConfigs } from "@/lib/robotEligibility";
 import {
   getCompanyRobotConfigsForSelection,
 } from "@/services/companiesService";
@@ -40,10 +40,10 @@ import type {
 type DeclarationRunHistoryRow = Database["public"]["Tables"]["declaration_run_history"]["Row"];
 
 const ACTION_TITLES: Record<DeclarationActionKind, string> = {
-  simples_emitir_guia: "Emissão de guia do Simples Nacional",
-  simples_extrato: "Solicitação de extrato do Simples Nacional",
-  simples_defis: "Solicitação de DEFIS",
-  mei_declaracao_anual: "Declaração anual do MEI",
+  simples_emitir_guia: "EmissÃ£o de guia do Simples Nacional",
+  simples_extrato: "SolicitaÃ§Ã£o de extrato do Simples Nacional",
+  simples_defis: "SolicitaÃ§Ã£o de DEFIS",
+  mei_declaracao_anual: "DeclaraÃ§Ã£o anual do MEI",
   mei_guias_mensais: "Guias mensais do MEI",
 };
 
@@ -445,18 +445,29 @@ function buildActionUnavailable(reason: string): DeclarationActionAvailability {
   return { enabled: false, reason, robotTechnicalId: null };
 }
 
+function canDispatchToRobotNow(robot: Robot | null) {
+  return Boolean(robot && (robot.status === "active" || robot.status === "processing"));
+}
+
 function buildActionAvailability(params: {
   action: DeclarationActionKind;
   robot: Robot | null;
   eligibleCount: number;
 }): DeclarationActionAvailability {
   if (!params.robot) {
-    return buildActionUnavailable("Rotina ainda não configurada para este escritório.");
+    return buildActionUnavailable("Rotina ainda nÃ£o configurada para este escritÃ³rio.");
   }
   if (params.eligibleCount <= 0) {
     return {
       enabled: false,
-      reason: "Nenhuma empresa visível atende os requisitos operacionais desta rotina.",
+      reason: "Nenhuma empresa visÃ­vel atende os requisitos operacionais desta rotina.",
+      robotTechnicalId: params.robot.technical_id,
+    };
+  }
+  if (params.action === "simples_emitir_guia" && !canDispatchToRobotNow(params.robot)) {
+    return {
+      enabled: false,
+      reason: "O robô de emitir guia está inativo no servidor do escritório. Abra o robô antes de solicitar a emissão.",
       robotTechnicalId: params.robot.technical_id,
     };
   }
@@ -468,8 +479,8 @@ function buildActionAvailability(params: {
 }
 
 async function getOverdueGuides(companyIds: string[]): Promise<OverdueGuide[]> {
-  // A base atual ainda não expõe uma fonte dedicada para DAS vencidas.
-  // A UI já fica preparada para consumir a lista assim que o backend for disponibilizado.
+  // A base atual ainda nÃ£o expÃµe uma fonte dedicada para DAS vencidas.
+  // A UI jÃ¡ fica preparada para consumir a lista assim que o backend for disponibilizado.
   const normalizedCompanyIds = uniqueCompanyIds(companyIds);
   if (normalizedCompanyIds.length === 0) return [];
 
@@ -618,7 +629,7 @@ export function validateDeclarationGuideSubmitInput(params: {
   );
 
   if (companyIds.length === 0) {
-    throw new Error("Selecione ao menos uma empresa disponível no escopo atual.");
+    throw new Error("Selecione ao menos uma empresa disponÃ­vel no escopo atual.");
   }
   const rawCompetence = String(params.input.competence ?? "").trim();
   const requiresYear = params.action === "simples_defis";
@@ -627,14 +638,14 @@ export function validateDeclarationGuideSubmitInput(params: {
     || params.action === "simples_extrato"
     || params.action === "mei_guias_mensais";
   if (requiresCompetence && !isValidCompetence(rawCompetence)) {
-    throw new Error("Informe uma competência válida no formato MM/AAAA.");
+    throw new Error("Informe uma competÃªncia vÃ¡lida no formato MM/AAAA.");
   }
   if (requiresYear && !isValidYear(rawCompetence)) {
     throw new Error("Informe um ano valido para a DEFIS.");
   }
   if (params.action === "simples_emitir_guia" && params.input.recalculate) {
     if (!params.input.recalculateDueDate || !isValidIsoDate(params.input.recalculateDueDate)) {
-      throw new Error("Informe uma nova data de vencimento válida para o recálculo.");
+      throw new Error("Informe uma nova data de vencimento vÃ¡lida para o recÃ¡lculo.");
     }
   }
 
@@ -662,7 +673,7 @@ function createQueuedItems(companies: DeclarationCompany[]): DeclarationRunItem[
     companyName: company.name,
     companyDocument: company.document,
     status: "pendente",
-    message: "Aguardando envio da solicitação.",
+    message: "Aguardando envio da solicitaÃ§Ã£o.",
     executionRequestId: null,
     artifact: null,
   }));
@@ -961,7 +972,7 @@ export async function startDeclarationRun(
         companyName: company.name,
         companyDocument: company.document,
         status: "erro",
-        message: "Esta rotina ainda não foi configurada para o seu escritório.",
+        message: "Esta rotina ainda nÃ£o foi configurada para o seu escritÃ³rio.",
         executionRequestId: null,
         artifact: null,
       })),
@@ -1016,6 +1027,22 @@ export async function startDeclarationRun(
       continue;
     }
 
+    if (!canDispatchToRobotNow(robot)) {
+      updateCompanyItem(company.id, {
+        status: "erro",
+        message:
+          params.action === "simples_emitir_guia"
+            ? "O robô de emitir guia está inativo no servidor do escritório. Abra o robô antes de solicitar a emissão."
+            : "O robô desta rotina está inativo no servidor do escritório. Abra o robô antes de solicitar uma nova coleta.",
+        meta: {
+          robot_status: robot.status,
+          robot_technical_id: robot.technical_id,
+          blocked_by_robot_runtime: true,
+        },
+      });
+      continue;
+    }
+
     const shouldUsePeriod = Boolean(validatedInput.competence && isValidCompetence(validatedInput.competence));
     const { periodStart, periodEnd } = shouldUsePeriod
       ? toPeriodRange(validatedInput.competence!)
@@ -1043,14 +1070,14 @@ export async function startDeclarationRun(
       updateCompanyItem(company.id, {
         status: "processando",
         executionRequestId: request.id,
-        message: "Solicitação enviada para processamento.",
+        message: "SolicitaÃ§Ã£o enviada para processamento.",
       });
     } catch (error) {
       updateCompanyItem(company.id, {
         status: "erro",
         message: sanitizeDeclarationError(
           error,
-          "Não foi possível iniciar o processamento desta empresa.",
+          "NÃ£o foi possÃ­vel iniciar o processamento desta empresa.",
         ),
       });
     }
@@ -1140,7 +1167,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
         status: mapCompanyResultStatus(String(companyResult.status ?? request.status ?? "")),
         message: resolveCompanyMessage(
           mergedSummary,
-          "Processamento concluído com sucesso.",
+          "Processamento concluÃ­do com sucesso.",
         ),
         artifact: extractArtifact(mergedSummary),
         meta: mergedSummary,
@@ -1179,7 +1206,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
         mergedSummary,
         request.status === "running"
           ? "Processamento em andamento."
-          : "Solicitação aguardando execução.",
+          : "SolicitaÃ§Ã£o aguardando execuÃ§Ã£o.",
       ),
       meta: mergedSummary,
     };
@@ -1281,6 +1308,14 @@ export async function deleteDeclarationRunHistory(runId: string): Promise<void> 
   if (error) throw error;
 }
 
+export async function deleteAllDeclarationRunHistory(): Promise<void> {
+  const { error } = await supabase
+    .from("declaration_run_history")
+    .delete()
+    .not("run_id", "is", null);
+  if (error) throw error;
+}
+
 export async function listDeclarationArtifacts(params: {
   action: DeclarationActionKind;
   companyIds: string[];
@@ -1336,3 +1371,5 @@ export async function openDeclarationArtifact(params: {
     params.suggestedName,
   );
 }
+
+

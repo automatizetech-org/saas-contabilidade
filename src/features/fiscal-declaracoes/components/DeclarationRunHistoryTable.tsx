@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, FileText, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, FileText, Trash2, XCircle } from "lucide-react";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DataPagination } from "@/components/common/DataPagination";
@@ -11,8 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/utils";
 import type { DeclarationRunState } from "../types";
+import { asObject, formatCompetenceLabel } from "../helpers";
 
 function formatDateTime(value: string | null | undefined) {
   const raw = String(value ?? "").trim();
@@ -35,6 +35,17 @@ function summarizeRun(run: DeclarationRunState) {
   };
 }
 
+function getRunReferenceLabel(run: DeclarationRunState) {
+  const firstMeta = asObject(run.items[0]?.meta ?? null);
+  const rawReference = String(firstMeta.competencia ?? firstMeta.competence ?? "").trim();
+  if (!rawReference) return "-";
+  if (run.action === "simples_defis") {
+    const yearMatch = rawReference.match(/^(\d{4})/);
+    return yearMatch?.[1] ?? "-";
+  }
+  return formatCompetenceLabel(rawReference);
+}
+
 type DeclarationRunHistoryTableProps = {
   runs: DeclarationRunState[];
   loading?: boolean;
@@ -43,9 +54,8 @@ type DeclarationRunHistoryTableProps = {
   pageSize: number;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
-  selectedRunId?: string | null;
-  onSelectRun?: (runId: string) => void;
-  onOpenPrimaryArtifact?: (run: DeclarationRunState) => void;
+  onDownloadPrimaryArtifact?: (run: DeclarationRunState) => void;
+  onClearAll?: () => void;
 };
 
 export function DeclarationRunHistoryTable({
@@ -56,9 +66,8 @@ export function DeclarationRunHistoryTable({
   pageSize,
   onPageChange,
   onPageSizeChange,
-  selectedRunId,
-  onSelectRun,
-  onOpenPrimaryArtifact,
+  onDownloadPrimaryArtifact,
+  onClearAll,
 }: DeclarationRunHistoryTableProps) {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const from = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
@@ -74,12 +83,20 @@ export function DeclarationRunHistoryTable({
               Historico compartilhado do escritorio com paginacao padrao do SaaS.
             </p>
           </div>
-          {loading ? (
-            <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-              <Clock3 className="h-3.5 w-3.5 animate-pulse" />
-              Atualizando...
-            </span>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {loading ? (
+              <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                <Clock3 className="h-3.5 w-3.5 animate-pulse" />
+                Atualizando...
+              </span>
+            ) : null}
+            {runs.length > 0 && onClearAll ? (
+              <Button type="button" variant="outline" size="sm" onClick={onClearAll}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Limpar historico
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -89,6 +106,7 @@ export function DeclarationRunHistoryTable({
             <TableHeader>
               <TableRow>
                 <TableHead>Rotina</TableHead>
+                <TableHead>Competencia</TableHead>
                 <TableHead>Iniciado em</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-center">Empresas</TableHead>
@@ -101,22 +119,15 @@ export function DeclarationRunHistoryTable({
             <TableBody>
               {runs.map((run) => {
                 const summary = summarizeRun(run);
-                const isSelected = selectedRunId === run.runId;
                 const hasArtifact = run.items.some(
                   (item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey,
                 );
                 return (
-                  <TableRow
-                    key={run.runId}
-                    className={cn(isSelected && "bg-primary/5")}
-                    onClick={() => onSelectRun?.(run.runId)}
-                  >
+                  <TableRow key={run.runId}>
                     <TableCell>
-                      <div className="space-y-1">
-                        <p className="font-medium">{run.title}</p>
-                        <p className="text-muted-foreground">{run.runId}</p>
-                      </div>
+                      <p className="font-medium">{run.title}</p>
                     </TableCell>
+                    <TableCell>{getRunReferenceLabel(run)}</TableCell>
                     <TableCell>{formatDateTime(run.startedAt)}</TableCell>
                     <TableCell>
                       <StatusBadge status={summary.status} />
@@ -141,19 +152,18 @@ export function DeclarationRunHistoryTable({
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        variant={isSelected ? "default" : "outline"}
-                        size="sm"
-                        disabled={!hasArtifact}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onOpenPrimaryArtifact?.(run);
-                        }}
-                      >
-                        <FileText className="mr-2 h-4 w-4" />
-                        PDF
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          disabled={!hasArtifact}
+                          onClick={() => onDownloadPrimaryArtifact?.(run)}
+                        >
+                          <FileText className="mr-2 h-4 w-4" />
+                          PDF
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
