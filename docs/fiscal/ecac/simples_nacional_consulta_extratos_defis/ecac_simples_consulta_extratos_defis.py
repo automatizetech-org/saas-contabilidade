@@ -3232,6 +3232,7 @@ class RobotRunner:
 
     def run(self) -> dict[str, Any]:
         job = load_job_or_manual_payload(self.runtime, self.args)
+        setattr(self.args, "job_payload", dict(job.raw) if job and isinstance(job.raw, dict) else {})
         robot_id = self.dashboard.register_robot_presence(status="processing") or ""
         self.runtime.json_runtime.register_robot({"display_name": self.display_name})
         run_id = self.runtime.generate_run_id()
@@ -3488,6 +3489,44 @@ def _rows_with_pa(frame) -> list[tuple[str, Any]]:
     return rows
 
 
+def _job_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    raw = getattr(args, "job_payload", None)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _normalize_job_competencia(value: Any) -> str:
+    raw = str(value or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}", raw):
+        month = int(raw[5:7])
+        return raw if 1 <= month <= 12 else ""
+    match = re.fullmatch(r"(\d{2})/(\d{4})", raw)
+    if not match:
+        return ""
+    month = int(match.group(1))
+    year = int(match.group(2))
+    if month < 1 or month > 12:
+        return ""
+    return f"{year:04d}-{month:02d}"
+
+
+def _normalize_job_year(value: Any) -> str:
+    raw = str(value or "").strip()
+    if re.fullmatch(r"20\d{2}", raw):
+        return raw
+    normalized_competencia = _normalize_job_competencia(raw)
+    return normalized_competencia[:4] if normalized_competencia else ""
+
+
+def _requested_extrato_competencia(args: argparse.Namespace) -> str:
+    raw = _job_payload_from_args(args)
+    return _normalize_job_competencia(raw.get("competence") or raw.get("competencia"))
+
+
+def _requested_defis_year(args: argparse.Namespace) -> str:
+    raw = _job_payload_from_args(args)
+    return _normalize_job_year(raw.get("year") or raw.get("ano") or raw.get("competence") or raw.get("competencia"))
+
+
 def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, company_dir: Path, args: argparse.Namespace) -> CompanyExecutionResult:
     result = CompanyExecutionResult(
         company_id=company.company_id,
@@ -3497,6 +3536,8 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
         eligible=True,
     )
     current_year = datetime.now().year
+    requested_extrato_competencia = _requested_extrato_competencia(args)
+    requested_defis_year = _requested_defis_year(args)
     automation.runtime.logger.info(
         f"{company.name} [{format_document(company.document)}] | Abrindo PGDAS-D e DEFIS."
     )
@@ -3514,7 +3555,8 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
     result.flags["consultas_opened"] = True
 
     extratos: list[dict[str, Any]] = []
-    for year in range(2018, current_year + 1):
+    years_to_process = [int(requested_extrato_competencia[:4])] if requested_extrato_competencia else list(range(2018, current_year + 1))
+    for year in years_to_process:
         automation.runtime.logger.info(f"{company.name} | Consultando extratos do ano {year}.")
         automation.submit_consulta_year(frame, year)
         normalized_body = _normalize_portal_text(automation.collect_scope_text(frame))
@@ -3531,6 +3573,11 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
             continue
 
         targets = automation.collect_extrato_targets(frame)
+        if requested_extrato_competencia:
+            targets = [
+                target for target in targets
+                if str(target.get("competencia") or "").strip() == requested_extrato_competencia
+            ]
         if not targets:
             extratos.append(
                 {
@@ -3538,7 +3585,8 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
                     "year": year,
                     "downloaded": False,
                     "skipped": True,
-                    "reason": "no_extrato_links",
+                    "reason": "requested_competencia_not_found" if requested_extrato_competencia else "no_extrato_links",
+                    "competencia": requested_extrato_competencia if requested_extrato_competencia else "",
                 }
             )
             continue
@@ -3586,7 +3634,29 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
     result.flags["defis_year_options"] = len(defis_years)
     defis_files: list[dict[str, Any]] = []
     if defis_years:
-        selected_year = defis_years[0]
+        if requested_defis_year and requested_defis_year in defis_years:
+            selected_year = requested_defis_year
+        elif requested_defis_year:
+            selected_year = ""
+            defis_files.append(
+                {
+                    "kind": "defis",
+                    "year": requested_defis_year,
+                    "recibo_downloaded": False,
+                    "declaracao_downloaded": False,
+                    "warning": f"Ano {requested_defis_year} nao esta disponivel na DEFIS.",
+                }
+            )
+        else:
+            selected_year = defis_years[0]
+        if not selected_year:
+            result.flags["defis_count"] = 0
+            result.records.extend(defis_files)
+            result.records.append(default_company_payload(company))
+            automation.return_to_ecac_home()
+            downloaded_any = any(item.get("downloaded") for item in extratos)
+            result.status = "success" if downloaded_any else "partial"
+            return result
         result.flags["defis_selected_year"] = selected_year
         automation.runtime.logger.info(
             f"{company.name} | Abrindo DEFIS a partir do primeiro ano disponivel: {selected_year}."

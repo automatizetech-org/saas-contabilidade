@@ -313,7 +313,59 @@ export async function getRobots(): Promise<Robot[]> {
     const { data, error } = await supabase.rpc("get_visible_robots");
     if (!error) {
       visibleRobotsRpcAvailable = true;
-      return (data ?? []) as Robot[];
+      const rawRows = (data ?? []) as Array<Record<string, unknown>>;
+      const context = await getCurrentOfficeContext().catch(() => null);
+      const officeId = context?.officeId ?? null;
+
+      let configRows: Array<Record<string, unknown>> = [];
+      if (officeId) {
+        const { data: configs, error: configsError } = await supabase
+          .from("office_robot_configs")
+          .select("*")
+          .eq("office_id", officeId);
+        if (!configsError) {
+          configRows = (configs ?? []) as Array<Record<string, unknown>>;
+        } else if (!isMissingRelation(configsError, "office_robot_configs")) {
+          throw configsError;
+        }
+      }
+
+      let runtimeRows: Array<Record<string, unknown>> = [];
+      if (officeId) {
+        const { data: servers, error: serversError } = await supabase
+          .from("office_servers")
+          .select("id")
+          .eq("office_id", officeId)
+          .eq("is_active", true)
+          .limit(1);
+
+        if (!serversError && servers?.[0]?.id) {
+          const { data: runtimes, error: runtimeError } = await supabase
+            .from("office_robot_runtime")
+            .select("*")
+            .eq("office_server_id", servers[0].id);
+          if (!runtimeError) {
+            runtimeRows = (runtimes ?? []) as Array<Record<string, unknown>>;
+          } else if (!isMissingRelation(runtimeError, "office_robot_runtime")) {
+            throw runtimeError;
+          }
+        }
+      }
+
+      const configByTechnicalId = new Map(
+        configRows.map((row) => [String(row.robot_technical_id ?? ""), row]),
+      );
+      const runtimeByTechnicalId = new Map(
+        runtimeRows.map((row) => [String(row.robot_technical_id ?? ""), row]),
+      );
+
+      return rawRows.map((row) =>
+        buildRobotRow(
+          row,
+          configByTechnicalId.get(String(row.technical_id ?? "")) ?? null,
+          runtimeByTechnicalId.get(String(row.technical_id ?? "")) ?? null,
+        ),
+      );
     }
     if (!isMissingVisibleRobotsRpc(error)) throw error;
     visibleRobotsRpcAvailable = false;

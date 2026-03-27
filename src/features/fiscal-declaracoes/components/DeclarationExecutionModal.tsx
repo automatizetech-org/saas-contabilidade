@@ -21,7 +21,7 @@ import type {
   DeclarationGuideModalState,
   DeclarationGuideSubmitInput,
 } from "../types";
-import { formatCompetenceLabel } from "../helpers";
+import { formatCompetenceLabel, formatYearLabel } from "../helpers";
 
 type DeclarationExecutionModalProps = {
   open: boolean;
@@ -37,28 +37,45 @@ function getModalCopy(action: DeclarationActionKind, recalculateByDefault: boole
   if (action === "simples_extrato") {
     return {
       title: "Solicitar extrato",
-      description: "Selecione as empresas e a competência desejada para solicitar o extrato do Simples Nacional.",
+      description: "Selecione as empresas e a competencia desejada para solicitar o extrato do Simples Nacional.",
       confirmLabel: "Solicitar extrato",
-      summaryFlow: "Solicitação de extrato",
+      summaryFlow: "Solicitacao de extrato",
       showRecalculate: false,
+      referenceLabel: "Competencia",
     };
   }
   if (action === "simples_defis") {
     return {
       title: "Solicitar DEFIS",
-      description: "Selecione as empresas e a competência de referência para solicitar a DEFIS.",
+      description: "Selecione as empresas e o ano desejado para solicitar a DEFIS anual.",
       confirmLabel: "Solicitar DEFIS",
-      summaryFlow: "Solicitação de DEFIS",
+      summaryFlow: "Solicitacao de DEFIS",
       showRecalculate: false,
+      referenceLabel: "Ano",
     };
   }
   return {
     title: recalculateByDefault ? "Recalcular guia" : "Emitir guia",
-    description: "Selecione as empresas e a competência para emissão normal ou recálculo da guia.",
-    confirmLabel: recalculateByDefault ? "Confirmar recálculo" : "Confirmar emissão",
-    summaryFlow: recalculateByDefault ? "Recálculo" : "Emissão padrão",
+    description: "Selecione as empresas e a competencia para emissao normal ou recalculo da guia.",
+    confirmLabel: recalculateByDefault ? "Confirmar recalculo" : "Confirmar emissao",
+    summaryFlow: recalculateByDefault ? "Recalculo" : "Emissao padrao",
     showRecalculate: true,
+    referenceLabel: "Competencia",
   };
+}
+
+function normalizeModalReference(action: DeclarationActionKind, value: string, defaultCompetence: string) {
+  const raw = String(value || "").trim();
+  if (action === "simples_defis") {
+    if (/^\d{4}$/.test(raw)) return raw;
+    return defaultCompetence.slice(0, 4);
+  }
+  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  return defaultCompetence;
+}
+
+function formatReferenceLabel(action: DeclarationActionKind, value: string) {
+  return action === "simples_defis" ? formatYearLabel(value) : formatCompetenceLabel(value);
 }
 
 export function DeclarationExecutionModal({
@@ -77,6 +94,7 @@ export function DeclarationExecutionModal({
   const [recalculate, setRecalculate] = useState(false);
   const [recalculateDueDate, setRecalculateDueDate] = useState("");
   const dueDateRef = useRef<HTMLInputElement | null>(null);
+  const currentYear = new Date().getFullYear();
 
   useEffect(() => {
     if (!open) return;
@@ -87,7 +105,13 @@ export function DeclarationExecutionModal({
         : firstCompanyId;
     setSearch("");
     setSelectedCompanyIds(presetCompanyId ? [presetCompanyId] : []);
-    setCompetence(state.presetCompetence || defaultCompetence);
+    setCompetence(
+      normalizeModalReference(
+        state.action,
+        state.presetCompetence || defaultCompetence,
+        defaultCompetence,
+      ),
+    );
     setRecalculate(state.action === "simples_emitir_guia" ? state.recalculateByDefault : false);
     setRecalculateDueDate(state.action === "simples_emitir_guia" ? state.presetDueDate || "" : "");
   }, [companies, defaultCompetence, open, state]);
@@ -135,8 +159,8 @@ export function DeclarationExecutionModal({
           <div className="space-y-4 px-6 py-5">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-foreground">Empresas disponíveis</p>
-                <p className="text-xs text-muted-foreground">Somente empresas visíveis no contexto atual podem ser acionadas.</p>
+                <p className="text-sm font-medium text-foreground">Empresas disponiveis</p>
+                <p className="text-xs text-muted-foreground">Somente empresas visiveis no contexto atual podem ser acionadas.</p>
               </div>
               <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-medium text-muted-foreground">
                 {selectionSummary}
@@ -206,7 +230,7 @@ export function DeclarationExecutionModal({
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                             <span className="inline-flex items-center gap-1">
                               <Building2 className="h-3.5 w-3.5" />
-                              {company.document || "CNPJ não informado"}
+                              {company.document || "CNPJ nao informado"}
                             </span>
                             {!company.active ? (
                               <span className="rounded-full bg-warning/15 px-2 py-0.5 text-warning">
@@ -226,16 +250,30 @@ export function DeclarationExecutionModal({
           <div className="border-t border-border px-6 py-5 lg:border-l lg:border-t-0">
             <div className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="declaration-competence">Competência</Label>
-                <Input
-                  id="declaration-competence"
-                  type="month"
-                  value={competence}
-                  disabled={busy}
-                  onChange={(event) => setCompetence(event.target.value)}
-                />
+                <Label htmlFor="declaration-competence">{modalCopy.referenceLabel}</Label>
+                {state.action === "simples_defis" ? (
+                  <Input
+                    id="declaration-competence"
+                    type="number"
+                    min={2018}
+                    max={currentYear + 1}
+                    value={competence}
+                    disabled={busy}
+                    onChange={(event) => setCompetence(event.target.value)}
+                  />
+                ) : (
+                  <Input
+                    id="declaration-competence"
+                    type="month"
+                    value={competence}
+                    disabled={busy}
+                    onChange={(event) => setCompetence(event.target.value)}
+                  />
+                )}
                 <p className="text-xs text-muted-foreground">
-                  Competência sugerida: {formatCompetenceLabel(defaultCompetence)}.
+                  {state.action === "simples_defis"
+                    ? `Ano sugerido: ${defaultCompetence.slice(0, 4)}.`
+                    : `Competencia sugerida: ${formatCompetenceLabel(defaultCompetence)}.`}
                 </p>
               </div>
 
@@ -273,7 +311,7 @@ export function DeclarationExecutionModal({
                       />
                       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <RefreshCcw className="h-3.5 w-3.5" />
-                        O recálculo usa a mesma estrutura da emissão, com ajustes de vencimento.
+                        O recalculo usa a mesma estrutura da emissao, com ajustes de vencimento.
                       </p>
                     </div>
                   </div>
@@ -282,7 +320,7 @@ export function DeclarationExecutionModal({
 
               <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4">
                 <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                  Resumo da ação
+                  Resumo da acao
                 </p>
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="flex items-center justify-between gap-4">
@@ -290,15 +328,15 @@ export function DeclarationExecutionModal({
                     <strong>{selectedCompanyIds.length}</strong>
                   </div>
                   <div className="flex items-center justify-between gap-4">
-                    <span className="text-muted-foreground">Competência</span>
+                    <span className="text-muted-foreground">{modalCopy.referenceLabel}</span>
                     <strong className="inline-flex items-center gap-1">
                       <CalendarDays className="h-4 w-4 text-primary-icon" />
-                      {formatCompetenceLabel(competence)}
+                      {formatReferenceLabel(state.action, competence)}
                     </strong>
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-muted-foreground">Fluxo</span>
-                    <strong>{modalCopy.showRecalculate && recalculate ? "Recálculo" : modalCopy.summaryFlow}</strong>
+                    <strong>{modalCopy.showRecalculate && recalculate ? "Recalculo" : modalCopy.summaryFlow}</strong>
                   </div>
                 </div>
               </div>
@@ -311,7 +349,7 @@ export function DeclarationExecutionModal({
             Cancelar
           </Button>
           <Button type="button" disabled={busy || selectedCompanyIds.length === 0} onClick={submit}>
-            {busy ? "Enviando..." : modalCopy.showRecalculate && recalculate ? "Confirmar recálculo" : modalCopy.confirmLabel}
+            {busy ? "Enviando..." : modalCopy.showRecalculate && recalculate ? "Confirmar recalculo" : modalCopy.confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

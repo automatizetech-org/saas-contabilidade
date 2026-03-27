@@ -25,6 +25,33 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000)
 }
 
+function openBlobInNewTab(blob: Blob, filename?: string) {
+  const blobUrl = URL.createObjectURL(blob)
+  const opened = window.open(blobUrl, "_blank", "noopener,noreferrer")
+  if (!opened) {
+    URL.revokeObjectURL(blobUrl)
+    throw new Error("Nao foi possivel abrir a visualizacao do documento.")
+  }
+
+  const safeTitle = String(filename || "")
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(INVALID_DOWNLOAD_NAME_PATTERN, "")
+    .trim()
+
+  window.setTimeout(() => {
+    try {
+      if (safeTitle && opened.document) {
+        opened.document.title = safeTitle
+      }
+    } catch {
+      // Ignore cross-document title failures.
+    }
+  }, 500)
+
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000)
+}
+
 /** Uma renovação em voo por vez (vários polls em paralelo não disparam vários refresh_token). */
 let sessionRefreshPromise: Promise<string> | null = null
 let sessionValidationPromise: Promise<void> | null = null
@@ -352,6 +379,45 @@ async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; fi
   return { blob, filename }
 }
 
+export async function probeServerFileByPath(
+  filePath: string,
+): Promise<{ exists: boolean; filename?: string | null }> {
+  const normalizedPath = String(filePath || "").trim()
+  if (!normalizedPath) return { exists: false, filename: null }
+
+  const res = await fetchOfficeServerWithAuthRetry("download-file", (headers) => ({
+    method: "POST",
+    headers,
+    body: JSON.stringify({ file_path: normalizedPath }),
+  }))
+
+  if (!res.ok) {
+    try {
+      await res.body?.cancel()
+    } catch {
+      // Ignore probe cleanup failures.
+    }
+    return { exists: false, filename: null }
+  }
+
+  const disposition = res.headers.get("Content-Disposition")
+  const rawName =
+    disposition?.match(/filename=\"?([^\";]+)\"?/)?.[1]?.trim() ||
+    normalizedPath.split(/[\\/]/).pop() ||
+    "arquivo"
+
+  try {
+    await res.body?.cancel()
+  } catch {
+    // Ignore probe cleanup failures.
+  }
+
+  return {
+    exists: true,
+    filename: String(rawName).split(/[\\/]/).pop()?.trim() || "arquivo",
+  }
+}
+
 export async function downloadFiscalDocument(documentId: string, suggestedName?: string): Promise<void> {
   const res = await fetchOfficeServerWithAuthRetry("download-fiscal-document", (headers) => ({
     method: "POST",
@@ -373,6 +439,11 @@ export async function downloadServerFileByPath(filePath: string, suggestedName?:
   triggerBlobDownload(blob, suggestedName || filename)
 }
 
+export async function openServerFileByPath(filePath: string, suggestedName?: string): Promise<void> {
+  const { blob, filename } = await fetchServerFileByPath(filePath)
+  openBlobInNewTab(blob, suggestedName || filename)
+}
+
 export async function downloadOfficeServerAction(
   action: string,
   payload: Record<string, unknown>,
@@ -391,6 +462,26 @@ export async function downloadOfficeServerAction(
     suggestedName ||
     "arquivo"
   triggerBlobDownload(blob, filename)
+}
+
+export async function openOfficeServerAction(
+  action: string,
+  payload: Record<string, unknown>,
+  suggestedName?: string,
+): Promise<void> {
+  const res = await fetchOfficeServerWithAuthRetry(action, (headers) => ({
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  }))
+  if (!res.ok) throw new Error(await readError(res))
+  const blob = await res.blob()
+  const disposition = res.headers.get("Content-Disposition")
+  const filename =
+    disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
+    suggestedName ||
+    "arquivo"
+  openBlobInNewTab(blob, filename)
 }
 
 export async function downloadServerFilesZip(filePaths: string[], suggestedName = "guias-municipais"): Promise<void> {

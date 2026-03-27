@@ -12,6 +12,7 @@ type DeclarationProcessingPanelProps = {
   loading?: boolean;
   onOpenArtifact?: (item: DeclarationRunItem) => void;
   onDownloadArtifact?: (item: DeclarationRunItem) => void;
+  onClearHistory?: () => void;
 };
 
 export function DeclarationProcessingPanel({
@@ -19,6 +20,7 @@ export function DeclarationProcessingPanel({
   loading = false,
   onOpenArtifact,
   onDownloadArtifact,
+  onClearHistory,
 }: DeclarationProcessingPanelProps) {
   if (!run) {
     return (
@@ -26,7 +28,7 @@ export function DeclarationProcessingPanel({
         <div className="space-y-2">
           <h3 className="text-lg font-semibold font-display tracking-tight">Acompanhamento do processamento</h3>
           <p className="text-sm text-muted-foreground">
-            Quando uma emissão, recálculo ou solicitação for iniciada, o andamento por empresa aparecerá aqui.
+            Quando uma emissao, recalculo ou solicitacao for iniciada, o andamento por empresa aparecera aqui.
           </p>
         </div>
       </GlassCard>
@@ -52,29 +54,39 @@ export function DeclarationProcessingPanel({
               Acompanhe o status individual de cada empresa e os artefatos gerados ao final.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-background/60 p-3 text-xs sm:grid-cols-4">
-            <div>
-              <p className="text-muted-foreground">Concluídas</p>
-              <p className="mt-1 text-lg font-semibold">{metrics.completed}/{metrics.total}</p>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border bg-background/60 p-3 text-xs sm:grid-cols-4">
+              <div>
+                <p className="text-muted-foreground">Concluidas</p>
+                <p className="mt-1 text-lg font-semibold">{metrics.completed}/{metrics.total}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Sucesso</p>
+                <p className="mt-1 text-lg font-semibold text-success">{successCount}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Erro</p>
+                <p className="mt-1 text-lg font-semibold text-destructive">{errorCount}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Em andamento</p>
+                <p className="mt-1 text-lg font-semibold text-info">{processingCount}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-muted-foreground">Sucesso</p>
-              <p className="mt-1 text-lg font-semibold text-success">{successCount}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Erro</p>
-              <p className="mt-1 text-lg font-semibold text-destructive">{errorCount}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Em andamento</p>
-              <p className="mt-1 text-lg font-semibold text-info">{processingCount}</p>
-            </div>
+            {onClearHistory ? (
+              <div className="flex justify-end">
+                <Button type="button" variant="outline" size="sm" onClick={onClearHistory}>
+                  {run.terminal ? "Limpar historico" : "Limpar acompanhamento"}
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">Progresso da conclusão</span>
+            <span className="text-muted-foreground">Progresso da conclusao</span>
             <strong>
               {metrics.completed}/{metrics.total} • {metrics.percent}%
             </strong>
@@ -90,7 +102,9 @@ export function DeclarationProcessingPanel({
 
         <div className="space-y-3">
           {run.items.map((item) => {
-            const hasArtifact = Boolean(item.artifact?.filePath || item.artifact?.url);
+            const hasArtifact = Boolean(
+              item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey,
+            );
             return (
               <div
                 key={`${run.runId}-${item.companyId}`}
@@ -106,7 +120,7 @@ export function DeclarationProcessingPanel({
                       <p className="truncate text-sm font-semibold">{item.companyName}</p>
                       <StatusBadge status={item.status} />
                     </div>
-                    <p className="text-xs text-muted-foreground">{item.companyDocument || "CNPJ não informado"}</p>
+                    <p className="text-xs text-muted-foreground">{item.companyDocument || "CNPJ nao informado"}</p>
                     <p className="text-sm">{item.message}</p>
                   </div>
 

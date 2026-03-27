@@ -2,11 +2,14 @@ import { getRobotEligibilityReport, indexCompanyRobotConfigs } from "@/lib/robot
 import {
   getCompanyRobotConfigsForSelection,
 } from "@/services/companiesService";
+import { getCurrentOfficeContext } from "@/services/officeContextService";
 import { createExecutionRequest } from "@/services/executionRequestsService";
 import { getRobots, type Robot } from "@/services/robotsService";
 import {
   downloadOfficeServerAction,
+  openOfficeServerAction,
   postOfficeServerJson,
+  probeServerFileByPath,
 } from "@/services/serverFileService";
 import { supabase } from "@/services/supabaseClient";
 import type { Json } from "@/types/database";
@@ -16,6 +19,7 @@ import {
   createRunId,
   isValidCompetence,
   isValidIsoDate,
+  isValidYear,
   sanitizeDeclarationError,
   toPeriodRange,
 } from "./helpers";
@@ -73,6 +77,13 @@ const ACTION_TEXT_MATCHERS: Record<DeclarationActionKind, string[]> = {
   mei_guias_mensais: ["mei", "guia"],
 };
 
+const OVERDUE_GUIDES_ROBOT_CANDIDATES = [
+  "ecac_simples_debitos",
+  "simples_nacional_debitos",
+  "simples_debitos",
+  "debitos_simples_nacional",
+];
+
 function normalizeToken(value: string) {
   return String(value ?? "")
     .normalize("NFD")
@@ -81,8 +92,256 @@ function normalizeToken(value: string) {
     .toLowerCase();
 }
 
+function sanitizeDiskSegment(value: string) {
+  const cleaned = String(value ?? "")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned;
+}
+
+function splitLogicalSegments(value: string | null | undefined) {
+  return String(value ?? "")
+    .split(/[\\/]/)
+    .map((segment) => sanitizeDiskSegment(segment))
+    .filter(Boolean);
+}
+
+type FolderStructureLookupRow = {
+  id: string;
+  parent_id: string | null;
+  name: string | null;
+  slug: string | null;
+};
+
+let officeFolderRowsPromise: Promise<FolderStructureLookupRow[]> | null = null;
+
+async function loadOfficeFolderRows(): Promise<FolderStructureLookupRow[]> {
+  if (!officeFolderRowsPromise) {
+    officeFolderRowsPromise = (async () => {
+      const context = await getCurrentOfficeContext().catch(() => null);
+      if (!context?.officeId) return [];
+      const { data, error } = await supabase
+        .from("folder_structure_nodes")
+        .select("id, parent_id, name, slug")
+        .eq("office_id", context.officeId)
+        .order("parent_id", { nullsFirst: true })
+        .order("position", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as FolderStructureLookupRow[];
+    })();
+  }
+  return officeFolderRowsPromise;
+}
+
+async function resolvePhysicalFolderSegments(
+  logicalPath: string | null | undefined,
+): Promise<string[]> {
+  const segments = splitLogicalSegments(logicalPath);
+  if (segments.length === 0) return [];
+
+  const rows = await loadOfficeFolderRows().catch(() => []);
+  if (rows.length === 0) return [];
+
+  const byParentAndSlug = new Map<string, FolderStructureLookupRow>();
+  for (const row of rows) {
+    const slug = normalizeToken(String(row.slug ?? row.name ?? ""));
+    const key = `${row.parent_id ?? "root"}:${slug}`;
+    byParentAndSlug.set(key, row);
+  }
+
+  const names: string[] = [];
+  let parentId: string | null = null;
+  for (const segment of segments) {
+    const key = `${parentId ?? "root"}:${normalizeToken(segment)}`;
+    const current = byParentAndSlug.get(key) ?? null;
+    if (!current) return [];
+    names.push(sanitizeDiskSegment(String(current.name ?? segment)));
+    parentId = current.id;
+  }
+
+  return names;
+}
+
+function buildDateSegments(
+  dateRule: string | null | undefined,
+  reference: string | null | undefined,
+) {
+  const rawReference = String(reference ?? "").trim();
+  if (!dateRule || !rawReference) return [] as string[];
+
+  if (/^\d{4}-\d{2}$/.test(rawReference)) {
+    const year = rawReference.slice(0, 4);
+    const month = rawReference.slice(5, 7);
+    if (dateRule === "year") return [year];
+    if (dateRule === "year_month" || dateRule === "year_month_day") return [year, month];
+    return [];
+  }
+
+  if (/^\d{4}$/.test(rawReference) && dateRule === "year") {
+    return [rawReference];
+  }
+
+  return [];
+}
+
+function buildExpectedArtifactFileNames(
+  action: DeclarationActionKind,
+  reference: string | null | undefined,
+) {
+  const rawReference = String(reference ?? "").trim();
+  if (!rawReference) return [] as string[];
+
+  if (action === "simples_extrato") {
+    return [`Extrato do Simples - ${rawReference}.pdf`];
+  }
+
+  if (action === "simples_defis") {
+    return [
+      `DEFIS - ${rawReference} - Declaracao.pdf`,
+      `DEFIS - ${rawReference} - Recibo.pdf`,
+    ];
+  }
+
+  if (action === "simples_emitir_guia") {
+    return [`DAS - ${rawReference}.pdf`];
+  }
+
+  return [];
+}
+
+function matchesDeclarationArtifactByAction(action: DeclarationActionKind, fileName: string) {
+  const normalizedName = normalizeToken(fileName);
+  if (!normalizedName) return false;
+
+  const isPdf = normalizedName.endsWith(".pdf");
+  switch (action) {
+    case "simples_extrato":
+      return isPdf && normalizedName.startsWith("extrato do simples");
+    case "simples_defis":
+      return (
+        isPdf &&
+        normalizedName.startsWith("defis") &&
+        (normalizedName.includes("recibo") || normalizedName.includes("declaracao"))
+      );
+    case "simples_emitir_guia":
+      return isPdf && normalizedName.startsWith("das ");
+    default:
+      return true;
+  }
+}
+
+function filterDeclarationArtifactsByAction(
+  action: DeclarationActionKind,
+  response: DeclarationArtifactListResponse,
+): DeclarationArtifactListResponse {
+  return {
+    ...response,
+    items: (response.items ?? []).filter((item) =>
+      matchesDeclarationArtifactByAction(action, String(item.file_name ?? ""))),
+  };
+}
+
+function extractYearFromArtifactName(fileName: string) {
+  const match = normalizeToken(fileName).match(/\b(20\d{2})\b/);
+  return match ? match[1] : null;
+}
+
+function matchesDeclarationArtifactReference(
+  action: DeclarationActionKind,
+  fileName: string,
+  reference: string | null | undefined,
+) {
+  const rawReference = String(reference ?? "").trim();
+  if (!rawReference) return true;
+
+  if (action === "simples_extrato") {
+    return normalizeToken(fileName).includes(normalizeToken(rawReference));
+  }
+
+  if (action === "simples_defis") {
+    return extractYearFromArtifactName(fileName) === rawReference;
+  }
+
+  if (action === "simples_emitir_guia") {
+    return normalizeToken(fileName).includes(normalizeToken(rawReference.replace("-", "/")));
+  }
+
+  return true;
+}
+
+function pickArtifactForAction(
+  action: DeclarationActionKind,
+  items: DeclarationArtifactListResponse["items"],
+  reference: string | null | undefined,
+) {
+  const filtered = items.filter((item) =>
+    matchesDeclarationArtifactReference(action, String(item.file_name ?? ""), reference));
+  if (filtered.length === 0) return null;
+
+  if (action === "simples_defis") {
+    return (
+      filtered.find((item) => normalizeToken(item.file_name).includes("declaracao")) ??
+      filtered.find((item) => normalizeToken(item.file_name).includes("recibo")) ??
+      filtered[0]
+    );
+  }
+
+  return filtered[0];
+}
+
 function uniqueCompanyIds(companyIds: string[]) {
   return Array.from(new Set(companyIds.map((item) => String(item ?? "").trim()).filter(Boolean)));
+}
+
+function normalizeRobotCandidates(values: string[]) {
+  return values.map((value) => normalizeToken(value));
+}
+
+function parsePortalDateToIso(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}
+
+function parsePortalCompetence(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  return `${match[2]}-${match[1]}`;
+}
+
+function parseCurrencyToCents(value: unknown): number | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
+}
+
+function basenameFromPath(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const parts = raw.split(/[\\/]/);
+  return parts[parts.length - 1] ?? "";
+}
+
+function asRecordArray(value: Json | null | undefined): Record<string, Json>[] {
+  return asArray(value).map((item) => asObject(item));
+}
+
+function findRobotByCandidates(robots: Robot[], candidates: string[], matchers: string[]) {
+  const normalizedCandidates = normalizeRobotCandidates(candidates);
+  const exact = robots.find((robot) => normalizedCandidates.includes(normalizeToken(robot.technical_id)));
+  if (exact) return exact;
+
+  return (
+    robots.find((robot) => {
+      const haystack = normalizeToken(`${robot.technical_id} ${robot.display_name}`);
+      return matchers.every((token) => haystack.includes(normalizeToken(token)));
+    }) ?? null
+  );
 }
 
 function mapRunItems(items: DeclarationRunItem[]) {
@@ -113,17 +372,7 @@ function buildRunState(params: {
 }
 
 function findRobotForAction(action: DeclarationActionKind, robots: Robot[]): Robot | null {
-  const candidates = ACTION_ROBOT_CANDIDATES[action];
-  const exact = robots.find((robot) => candidates.includes(robot.technical_id));
-  if (exact) return exact;
-
-  const matchers = ACTION_TEXT_MATCHERS[action];
-  return (
-    robots.find((robot) => {
-      const haystack = normalizeToken(`${robot.technical_id} ${robot.display_name}`);
-      return matchers.every((token) => haystack.includes(normalizeToken(token)));
-    }) ?? null
-  );
+  return findRobotByCandidates(robots, ACTION_ROBOT_CANDIDATES[action], ACTION_TEXT_MATCHERS[action]);
 }
 
 function buildActionUnavailable(reason: string): DeclarationActionAvailability {
@@ -152,10 +401,78 @@ function buildActionAvailability(params: {
   };
 }
 
-async function getOverdueGuides(_companyIds: string[]): Promise<OverdueGuide[]> {
+async function getOverdueGuides(companyIds: string[]): Promise<OverdueGuide[]> {
   // A base atual ainda não expõe uma fonte dedicada para DAS vencidas.
   // A UI já fica preparada para consumir a lista assim que o backend for disponibilizado.
-  return [];
+  const normalizedCompanyIds = uniqueCompanyIds(companyIds);
+  if (normalizedCompanyIds.length === 0) return [];
+
+  const robots = await getRobots().catch(() => []);
+  const debitRobot = findRobotByCandidates(
+    robots,
+    OVERDUE_GUIDES_ROBOT_CANDIDATES,
+    ["simples", "debito"],
+  );
+  if (!debitRobot) return [];
+
+  const { data, error } = await supabase
+    .from("robot_result_events")
+    .select("created_at, company_results")
+    .eq("robot_technical_id", debitRobot.technical_id)
+    .eq("status", "completed")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) throw error;
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const latestByCompany = new Map<string, Record<string, Json>>();
+  for (const row of data ?? []) {
+    const companyResults = asRecordArray((row as { company_results?: Json | null }).company_results);
+    for (const companyResult of companyResults) {
+      const companyId = String(companyResult.company_id ?? "").trim();
+      if (!companyId || latestByCompany.has(companyId) || !normalizedCompanyIds.includes(companyId)) continue;
+      latestByCompany.set(companyId, companyResult);
+    }
+    if (latestByCompany.size >= normalizedCompanyIds.length) break;
+  }
+
+  const guides: OverdueGuide[] = [];
+  for (const companyId of normalizedCompanyIds) {
+    const companyResult = latestByCompany.get(companyId);
+    if (!companyResult) continue;
+
+    const companyName = String(companyResult.company_name ?? "").trim();
+    const companyDocument = String(companyResult.company_document ?? "").trim() || null;
+    const records = asRecordArray(companyResult.records);
+
+    for (const record of records) {
+      const competence = parsePortalCompetence(record.periodo_apuracao ?? record.competencia);
+      const dueDate = parsePortalDateToIso(record.data_vencimento);
+      if (!competence || !dueDate || dueDate > todayIso) continue;
+
+      const parcelamento = Number(record.numero_parcelamento ?? 0);
+      if (Number.isFinite(parcelamento) && parcelamento !== 0) continue;
+
+      guides.push({
+        id: `${companyId}:${competence}`,
+        companyId,
+        companyName,
+        companyDocument,
+        competence,
+        dueDate,
+        status: "vencido",
+        amountCents: parseCurrencyToCents(record.total ?? record.saldo_devedor ?? record.debito_declarado),
+        referenceLabel: null,
+      });
+    }
+  }
+
+  guides.sort((left, right) => {
+    const dueCompare = String(left.dueDate).localeCompare(String(right.dueDate));
+    if (dueCompare !== 0) return dueCompare;
+    return left.companyName.localeCompare(right.companyName, "pt-BR");
+  });
+  return guides;
 }
 
 export async function getFiscalDeclarationsBootstrap(params: {
@@ -238,13 +555,16 @@ export function validateDeclarationGuideSubmitInput(params: {
     throw new Error("Selecione ao menos uma empresa disponível no escopo atual.");
   }
   const rawCompetence = String(params.input.competence ?? "").trim();
+  const requiresYear = params.action === "simples_defis";
   const requiresCompetence =
     params.action === "simples_emitir_guia"
     || params.action === "simples_extrato"
-    || params.action === "simples_defis"
     || params.action === "mei_guias_mensais";
   if (requiresCompetence && !isValidCompetence(rawCompetence)) {
     throw new Error("Informe uma competência válida no formato MM/AAAA.");
+  }
+  if (requiresYear && !isValidYear(rawCompetence)) {
+    throw new Error("Informe um ano valido para a DEFIS.");
   }
   if (params.action === "simples_emitir_guia" && params.input.recalculate) {
     if (!params.input.recalculateDueDate || !isValidIsoDate(params.input.recalculateDueDate)) {
@@ -297,17 +617,228 @@ function normalizeSummaryMessage(summary: Record<string, Json>, fallback: string
   return fallback;
 }
 
+function resolveCompanyMessage(summary: Record<string, Json>, fallback: string) {
+  const errors = asArray(summary.errors)
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+  if (errors.length > 0) return errors[0];
+
+  const portalMessage = String(
+    asObject(asArray(summary.records)[0] ?? null).portal_message ?? "",
+  ).trim();
+  if (portalMessage) return portalMessage;
+
+  const warnings = asArray(summary.warnings)
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+  if (warnings.length > 0) return warnings[0];
+
+  return normalizeSummaryMessage(summary, fallback);
+}
+
+function mapCompanyResultStatus(value: string): DeclarationRunItem["status"] {
+  const normalized = normalizeToken(value);
+  if (["error", "erro", "failed", "falha", "blocked", "bloqueado"].includes(normalized)) {
+    return "erro";
+  }
+  return "sucesso";
+}
+
+function extractReferenceFromSummary(action: DeclarationActionKind, summary: Record<string, Json>) {
+  if (action === "simples_defis") {
+    const directYear = String(summary.year ?? summary.ano ?? "").trim();
+    if (/^\d{4}$/.test(directYear)) return directYear;
+
+    const record = asObject(asArray(summary.records)[0] ?? null);
+    const recordYear = String(record.year ?? record.ano ?? "").trim();
+    if (/^\d{4}$/.test(recordYear)) return recordYear;
+    return null;
+  }
+
+  const direct = String(summary.competencia ?? summary.competence ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(direct)) return direct;
+  const normalizedDirect = parsePortalCompetence(direct);
+  if (normalizedDirect) return normalizedDirect;
+
+  const record = asObject(asArray(summary.records)[0] ?? null);
+  const recordCompetence = String(record.competencia ?? record.competence ?? record.periodo_apuracao ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(recordCompetence)) return recordCompetence;
+  return parsePortalCompetence(recordCompetence);
+}
+
 function extractArtifact(summary: Record<string, Json>) {
   const filePath = String(summary.file_path ?? summary.document_path ?? "").trim();
   const url = String(summary.download_url ?? summary.file_url ?? summary.document_url ?? "").trim();
   const label =
     String(summary.document_name ?? summary.file_name ?? summary.filename ?? "").trim() || "Baixar documento";
-  if (!filePath && !url) return null;
+  if (filePath || url) {
+    const filePathLooksRelative = filePath && !/^[a-z]:[\\/]/i.test(filePath) && !filePath.startsWith("\\\\");
+    return {
+      label,
+      filePath: filePathLooksRelative ? filePath : null,
+      url: url || null,
+    };
+  }
+
+  const files = asRecordArray(summary.files);
+  const firstFile = files[0];
+  if (!firstFile) return null;
+
+  const firstPath = String(firstFile.file_path ?? firstFile.relative_path ?? firstFile.path ?? "").trim();
+  const firstUrl = String(firstFile.url ?? firstFile.download_url ?? "").trim();
+  const firstLabel = String(firstFile.label ?? firstFile.filename ?? firstFile.file_name ?? "").trim() || "Baixar documento";
+  const firstPathLooksRelative = firstPath && !/^[a-z]:[\\/]/i.test(firstPath) && !firstPath.startsWith("\\\\");
+  if (!firstPathLooksRelative && !firstUrl) return null;
+
   return {
-    label,
-    filePath: filePath || null,
-    url: url || null,
+    label: firstLabel,
+    filePath: firstPathLooksRelative ? firstPath : null,
+    url: firstUrl || null,
   };
+}
+
+async function resolveArtifactsFromStorage(params: {
+  action: DeclarationActionKind;
+  items: DeclarationRunItem[];
+}): Promise<Map<string, DeclarationRunItem["artifact"]>> {
+  const successItems = params.items.filter((item) => item.status === "sucesso" && !item.artifact);
+  if (successItems.length === 0) return new Map();
+
+  const byCompanyId = new Map<string, DeclarationRunItem["artifact"]>();
+  const grouped = new Map<string, DeclarationRunItem[]>();
+  for (const item of successItems) {
+    const reference = extractReferenceFromSummary(params.action, asObject(item.meta ?? null)) ?? "";
+    const key = reference || "__all__";
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(item);
+    grouped.set(key, bucket);
+  }
+
+  for (const [reference, items] of grouped.entries()) {
+    const response = await listDeclarationArtifacts({
+      action: params.action,
+      companyIds: items.map((item) => item.companyId),
+      competence: null,
+      limit: 500,
+    }).catch(() => null);
+    if (!response) continue;
+
+    const itemsByCompany = new Map<string, DeclarationArtifactListResponse["items"]>();
+    for (const artifact of response.items ?? []) {
+      const bucket = itemsByCompany.get(artifact.company_id) ?? [];
+      bucket.push(artifact);
+      itemsByCompany.set(artifact.company_id, bucket);
+    }
+
+    for (const item of items) {
+      const meta = asObject(item.meta ?? null);
+      const targetNames = asRecordArray(meta.files)
+        .map((entry) => basenameFromPath(String(entry.filename ?? entry.file_name ?? entry.path ?? entry.file_path ?? "")))
+        .filter(Boolean);
+      const artifactItems = itemsByCompany.get(item.companyId) ?? [];
+      const matchedArtifact =
+        artifactItems.find((artifact) => targetNames.includes(basenameFromPath(artifact.file_name))) ??
+        pickArtifactForAction(params.action, artifactItems, reference === "__all__" ? null : reference);
+      if (!matchedArtifact) continue;
+
+      byCompanyId.set(item.companyId, {
+        label: matchedArtifact.file_name || "Baixar documento",
+        filePath: null,
+        url: null,
+        artifactKey: matchedArtifact.artifact_key,
+      });
+    }
+  }
+
+  return byCompanyId;
+}
+
+async function resolveStoredArtifactsBeforeDispatch(params: {
+  action: DeclarationActionKind;
+  companyIds: string[];
+  reference: string | null;
+  companies: DeclarationCompany[];
+  robot: Robot | null;
+}): Promise<Map<string, DeclarationRunItem["artifact"]>> {
+  if (!["simples_extrato", "simples_defis"].includes(params.action)) {
+    return new Map();
+  }
+
+  const response = await listDeclarationArtifacts({
+    action: params.action,
+    companyIds: params.companyIds,
+    competence: null,
+    limit: 500,
+  }).catch(() => null);
+  if (!response) return new Map();
+
+  const byCompany = new Map<string, DeclarationArtifactListResponse["items"]>();
+  for (const item of response.items ?? []) {
+    const bucket = byCompany.get(item.company_id) ?? [];
+    bucket.push(item);
+    byCompany.set(item.company_id, bucket);
+  }
+
+  const matches = new Map<string, DeclarationRunItem["artifact"]>();
+  const rawLogicalPath =
+    response.source.logical_folder_path
+    || response.source.segment_path
+    || params.robot?.segment_path
+    || "";
+  const logicalSegments = splitLogicalSegments(rawLogicalPath);
+  const physicalSegments = await resolvePhysicalFolderSegments(rawLogicalPath).catch(() => []);
+  const dateSegments = buildDateSegments(response.source.date_rule, params.reference);
+  const expectedFileNames = buildExpectedArtifactFileNames(params.action, params.reference);
+
+  for (const companyId of params.companyIds) {
+    const artifact = pickArtifactForAction(params.action, byCompany.get(companyId) ?? [], params.reference);
+    if (artifact) {
+      matches.set(companyId, {
+        label: artifact.file_name || "Baixar documento",
+        filePath: null,
+        url: null,
+        artifactKey: artifact.artifact_key,
+      });
+      continue;
+    }
+
+    const company = params.companies.find((entry) => entry.id === companyId);
+    if (!company || expectedFileNames.length === 0) continue;
+
+    const companySegment = sanitizeDiskSegment(company.name);
+    const folderVariants = [physicalSegments, logicalSegments]
+      .filter((segments) => segments.length > 0)
+      .map((segments) => segments.join("/"))
+      .filter((value, index, array) => array.indexOf(value) === index)
+      .map((value) => value.split("/").filter(Boolean));
+    const candidateDirectories = folderVariants
+      .flatMap((segments) => [
+        [companySegment, ...segments, ...dateSegments],
+        [companySegment, ...segments],
+      ])
+      .filter((segments) => segments.length > 1)
+      .map((segments) => segments.join("/"))
+      .filter((value, index, array) => array.indexOf(value) === index);
+
+    for (const directory of candidateDirectories) {
+      let matchedFileName: string | null = null;
+      for (const expectedFileName of expectedFileNames) {
+        const relativePath = `${directory}/${expectedFileName}`.replace(/\\/g, "/");
+        const probe = await probeServerFileByPath(relativePath).catch(() => ({ exists: false, filename: null }));
+        if (!probe.exists) continue;
+        matchedFileName = probe.filename ?? expectedFileName;
+        matches.set(companyId, {
+          label: matchedFileName,
+          filePath: relativePath,
+          url: null,
+          artifactKey: null,
+        });
+        break;
+      }
+      if (matchedFileName) break;
+    }
+  }
+  return matches;
 }
 
 export async function startDeclarationRun(
@@ -326,6 +857,16 @@ export async function startDeclarationRun(
   const runItems = createQueuedItems(selectedCompanies);
   const runItemsMap = mapRunItems(runItems);
   const requestIds: string[] = [];
+  const robots = await getRobots().catch(() => []);
+  const robot = findRobotForAction(params.action, robots);
+  const storedArtifacts =
+    await resolveStoredArtifactsBeforeDispatch({
+      action: params.action,
+      companyIds: selectedCompanies.map((company) => company.id),
+      reference: validatedInput.competence ?? null,
+      companies: selectedCompanies,
+      robot,
+    }).catch(() => new Map<string, DeclarationRunItem["artifact"]>());
 
   const updateCompanyItem = (companyId: string, updates: Partial<DeclarationRunItem>) => {
     const current = runItemsMap.get(companyId);
@@ -344,8 +885,6 @@ export async function startDeclarationRun(
     return snapshot;
   };
 
-  const robots = await getRobots().catch(() => []);
-  const robot = findRobotForAction(params.action, robots);
   if (!robot) {
     const finalState = buildRunState({
       action: params.action,
@@ -389,6 +928,24 @@ export async function startDeclarationRun(
       updateCompanyItem(company.id, {
         status: "erro",
         message: `Empresa sem elegibilidade operacional: ${skipReason}.`,
+      });
+      continue;
+    }
+
+    const storedArtifact = storedArtifacts.get(company.id);
+    if (storedArtifact) {
+      updateCompanyItem(company.id, {
+        status: "sucesso",
+        message:
+          params.action === "simples_defis"
+            ? "Documentos da DEFIS localizados na pasta da empresa."
+            : "Documento localizado na pasta da empresa.",
+        artifact: storedArtifact,
+        meta: {
+          competence: validatedInput.competence ?? null,
+          competencia: validatedInput.competence ?? null,
+          source: "stored_artifact",
+        },
       });
       continue;
     }
@@ -450,7 +1007,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     await Promise.all([
       supabase
         .from("execution_requests")
-        .select("id, company_ids, status, error_message, result_summary, completed_at")
+        .select("id, company_ids, status, error_message, result_summary, job_payload, completed_at, created_at")
         .in("id", current.requestIds),
       supabase
         .from("robot_result_events")
@@ -468,18 +1025,44 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     (resultEvents ?? []).map((row) => [String(row.execution_request_id ?? ""), row]),
   );
 
-  const nextItems = current.items.map((item) => {
+  let nextItems = current.items.map((item) => {
     if (!item.executionRequestId) return item;
     const request = requestById.get(item.executionRequestId);
-    if (!request) return item;
+    if (!request) {
+      const missingForMs = Date.now() - Date.parse(current.startedAt);
+      if (Number.isFinite(missingForMs) && missingForMs >= 15_000) {
+        return {
+          ...item,
+          status: "erro",
+          message: "A solicitacao nao foi localizada na fila de execucao. Limpe o acompanhamento e solicite novamente.",
+          meta: {
+            ...(asObject(item.meta ?? null)),
+            missing_execution_request: true,
+            execution_request_id: item.executionRequestId,
+          },
+        };
+      }
+      return {
+        ...item,
+        status: "processando",
+        message: "Solicitacao aguardando sincronizacao da fila.",
+      };
+    }
 
     const resultEvent = resultByExecutionId.get(item.executionRequestId);
     const requestSummary = asObject((request as { result_summary?: Json | null }).result_summary);
+    const requestJobPayload = asObject((request as { job_payload?: Json | null }).job_payload);
     const eventSummary = asObject((resultEvent as { summary?: Json | null } | undefined)?.summary);
+    const eventCompanyResults = asRecordArray(
+      (resultEvent as { company_results?: Json | null } | undefined)?.company_results,
+    );
     const companyResult = asObject(
-      asArray((resultEvent as { company_results?: Json | null } | undefined)?.company_results)[0] ?? null,
+      eventCompanyResults.find((row) => String(row.company_id ?? "").trim() === item.companyId)
+      ?? eventCompanyResults[0]
+      ?? null,
     );
     const mergedSummary = {
+      ...requestJobPayload,
       ...requestSummary,
       ...eventSummary,
       ...companyResult,
@@ -488,8 +1071,8 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     if (request.status === "completed") {
       return {
         ...item,
-        status: "sucesso",
-        message: normalizeSummaryMessage(
+        status: mapCompanyResultStatus(String(companyResult.status ?? request.status ?? "")),
+        message: resolveCompanyMessage(
           mergedSummary,
           "Processamento concluído com sucesso.",
         ),
@@ -512,6 +1095,17 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       };
     }
 
+    const createdAt = String((request as { created_at?: string | null }).created_at ?? "").trim();
+    const pendingForMs = createdAt ? Date.now() - Date.parse(createdAt) : 0;
+    if (request.status === "pending" && Number.isFinite(pendingForMs) && pendingForMs >= 120_000) {
+      return {
+        ...item,
+        status: "erro",
+        message: "A solicitacao nao foi assumida pelo robo. Verifique se o bot do escritorio esta ativo.",
+        meta: mergedSummary,
+      };
+    }
+
     return {
       ...item,
       status: "processando",
@@ -524,6 +1118,19 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       meta: mergedSummary,
     };
   });
+
+  if (nextItems.some((item) => item.status === "sucesso" && !item.artifact)) {
+    const artifactMap = await resolveArtifactsFromStorage({
+      action: current.action,
+      items: nextItems,
+    }).catch(() => new Map<string, DeclarationRunItem["artifact"]>());
+    if (artifactMap.size > 0) {
+      nextItems = nextItems.map((item) => ({
+        ...item,
+        artifact: item.artifact ?? artifactMap.get(item.companyId) ?? null,
+      }));
+    }
+  }
 
   return buildRunState({
     action: current.action,
@@ -544,7 +1151,7 @@ export async function listDeclarationArtifacts(params: {
   competence?: string | null;
   limit?: number;
 }): Promise<DeclarationArtifactListResponse> {
-  return postOfficeServerJson<DeclarationArtifactListResponse>(
+  const response = await postOfficeServerJson<DeclarationArtifactListResponse>(
     "list-declaration-artifacts",
     {
       action: params.action,
@@ -553,6 +1160,7 @@ export async function listDeclarationArtifacts(params: {
       limit: params.limit ?? 200,
     },
   );
+  return filterDeclarationArtifactsByAction(params.action, response);
 }
 
 export async function downloadDeclarationArtifact(params: {
@@ -563,6 +1171,25 @@ export async function downloadDeclarationArtifact(params: {
   suggestedName?: string;
 }): Promise<void> {
   await downloadOfficeServerAction(
+    "download-declaration-artifact",
+    {
+      action: params.action,
+      company_id: params.companyId,
+      competence: params.competence,
+      artifact_key: params.artifactKey,
+    },
+    params.suggestedName,
+  );
+}
+
+export async function openDeclarationArtifact(params: {
+  action: DeclarationActionKind;
+  companyId: string;
+  competence?: string | null;
+  artifactKey: string;
+  suggestedName?: string;
+}): Promise<void> {
+  await openOfficeServerAction(
     "download-declaration-artifact",
     {
       action: params.action,

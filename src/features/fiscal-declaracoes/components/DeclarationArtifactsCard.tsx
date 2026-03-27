@@ -1,4 +1,4 @@
-import { ArrowRight, Download, FileText, FolderSearch, Loader2 } from "lucide-react";
+import { ArrowRight, Download, FileText, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { GlassCard } from "@/components/dashboard/GlassCard";
@@ -70,12 +70,7 @@ export function DeclarationArtifactsCard({
             Localizando documentos desta rotina no servidor...
           </div>
         ) : items.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-background/50 px-4 py-5 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <FolderSearch className="h-4 w-4" />
-              Nenhum documento localizado ate o momento.
-            </div>
-          </div>
+          <div className="h-2" aria-hidden="true" />
         ) : (
           <div className="space-y-2">
             {items.map((item) => (

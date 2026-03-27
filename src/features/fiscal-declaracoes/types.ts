@@ -87,6 +87,7 @@ export type DeclarationArtifact = {
   label: string;
   filePath?: string | null;
   url?: string | null;
+  artifactKey?: string | null;
 };
 
 export type DeclarationRunItem = {

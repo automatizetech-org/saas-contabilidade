@@ -14,10 +14,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
-import { downloadServerFileByPath } from "@/services/serverFileService";
+import { downloadServerFileByPath, openServerFileByPath } from "@/services/serverFileService";
 import { cn } from "@/utils";
 import {
+  createRunId,
   getDefaultDeclarationCompetence,
+  isValidCompetence,
   sanitizeDeclarationError,
 } from "@/features/fiscal-declaracoes/helpers";
 import {
@@ -25,6 +27,7 @@ import {
   getDeclarationRunState,
   getFiscalDeclarationsBootstrap,
   listDeclarationArtifacts,
+  openDeclarationArtifact,
   startDeclarationRun,
 } from "@/features/fiscal-declaracoes/service";
 import type {
@@ -39,6 +42,8 @@ import { DeclarationArtifactsCard } from "@/features/fiscal-declaracoes/componen
 import { DeclarationExecutionModal } from "@/features/fiscal-declaracoes/components/DeclarationExecutionModal";
 import { DeclarationProcessingPanel } from "@/features/fiscal-declaracoes/components/DeclarationProcessingPanel";
 import { OverdueGuidesCard } from "@/features/fiscal-declaracoes/components/OverdueGuidesCard";
+
+const DECLARATION_RUN_STORAGE_KEY = "fiscal-declaracoes-active-run";
 
 const initialGuideModalState: DeclarationGuideModalState = {
   open: false,
@@ -58,17 +63,17 @@ const SIMPLES_DOCUMENT_ACTIONS: Array<{
   {
     action: "simples_emitir_guia",
     title: "Emitir Guia",
-    description: "Lista os arquivos ja salvos no segmento configurado e permite abrir o fluxo de emissao/recalculo.",
+    description: "Abre o fluxo de emissao ou recalculo do DAS conforme os dados informados no modal.",
   },
   {
     action: "simples_extrato",
     title: "Extrato do Simples Nacional",
-    description: "Lista os extratos ja salvos no segmento configurado e permite solicitar a coleta completa.",
+    description: "Solicita o extrato do Simples Nacional para a competencia informada no modal.",
   },
   {
     action: "simples_defis",
     title: "DEFIS",
-    description: "Lista declaracoes e recibos disponiveis no segmento configurado e permite solicitar nova coleta.",
+    description: "Solicita a DEFIS anual conforme o ano informado no modal.",
   },
 ];
 
@@ -99,6 +104,29 @@ export default function FiscalDeclarationsPage() {
   const [activeRun, setActiveRun] = useState<DeclarationRunState | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(DECLARATION_RUN_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as DeclarationRunState | null;
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.requestIds) && Array.isArray(parsed.items)) {
+        setActiveRun(parsed);
+      }
+    } catch {
+      window.localStorage.removeItem(DECLARATION_RUN_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!activeRun) {
+      window.localStorage.removeItem(DECLARATION_RUN_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(DECLARATION_RUN_STORAGE_KEY, JSON.stringify(activeRun));
+  }, [activeRun]);
 
   const canOperate = isSuperAdmin || officeRole === "owner" || officeRole === "admin" || officeRole === "operator";
   const visibleCompanies = useMemo(() => {
@@ -185,6 +213,86 @@ export default function FiscalDeclarationsPage() {
     [documentQueries],
   );
 
+  const findPreloadedArtifact = (
+    action: DeclarationActionKind,
+    companyId: string,
+    reference: string | null | undefined,
+  ): DeclarationArtifactListItem | null => {
+    const response = documentResponseByAction.get(action);
+    const items = (response?.items ?? []).filter((item) => item.company_id === companyId);
+    if (items.length === 0) return null;
+
+    const rawReference = String(reference ?? "").trim();
+    if (!rawReference) return items[0] ?? null;
+
+    if (action === "simples_extrato") {
+      return items.find((item) => item.file_name === `Extrato do Simples - ${rawReference}.pdf`) ?? null;
+    }
+
+    if (action === "simples_defis") {
+      const declaration =
+        items.find((item) => item.file_name === `DEFIS - ${rawReference} - Declaracao.pdf`) ?? null;
+      const receipt =
+        items.find((item) => item.file_name === `DEFIS - ${rawReference} - Recibo.pdf`) ?? null;
+      return declaration ?? receipt;
+    }
+
+    return items[0] ?? null;
+  };
+
+  const buildLocalStoredRun = (params: {
+    action: DeclarationActionKind;
+    companyIds: string[];
+    reference: string | null;
+  }): DeclarationRunState | null => {
+    if (!["simples_extrato", "simples_defis"].includes(params.action)) return null;
+
+    const items: DeclarationRunItem[] = [];
+    for (const companyId of params.companyIds) {
+      const company = availableCompanies.find((entry) => entry.id === companyId);
+      if (!company) return null;
+      const artifact = findPreloadedArtifact(params.action, companyId, params.reference);
+      if (!artifact) return null;
+      items.push({
+        companyId: company.id,
+        companyName: company.name,
+        companyDocument: company.document,
+        status: "sucesso",
+        message:
+          params.action === "simples_defis"
+            ? "Documentos da DEFIS localizados na pasta da empresa."
+            : "Documento localizado na pasta da empresa.",
+        executionRequestId: null,
+        artifact: {
+          label: artifact.file_name,
+          artifactKey: artifact.artifact_key,
+          filePath: null,
+          url: null,
+        },
+        meta: {
+          competence: params.reference,
+          competencia: params.reference,
+          source: "preloaded_artifact",
+        },
+      });
+    }
+
+    return {
+      runId: createRunId(),
+      action: params.action,
+      mode: "emitir",
+      title:
+        params.action === "simples_defis"
+          ? "Solicitacao de DEFIS"
+          : "Solicitacao de extrato do Simples Nacional",
+      requestIds: [],
+      items,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      terminal: true,
+    };
+  };
+
   const resolveActionDisabledReason = (action: DeclarationActionKind) => {
     if (!canOperate) return "Seu perfil tem acesso somente para consulta nesta área.";
     if (hasRunningBatch) return "Aguarde o processamento atual terminar para iniciar uma nova rotina.";
@@ -245,6 +353,18 @@ export default function FiscalDeclarationsPage() {
     recalculate: boolean;
     recalculateDueDate?: string | null;
   }) => {
+    const preloadedRun = buildLocalStoredRun({
+      action: guideModalState.action,
+      companyIds: input.companyIds,
+      reference: input.competence,
+    });
+    if (preloadedRun) {
+      setActiveRun(preloadedRun);
+      setGuideModalState((current) => ({ ...current, open: false }));
+      toast.success("Documento localizado na pasta da empresa.");
+      return;
+    }
+
     await executeBatch({
       action: guideModalState.action,
       mode: guideModalState.action === "simples_emitir_guia" && input.recalculate ? "recalcular" : "emitir",
@@ -268,6 +388,29 @@ export default function FiscalDeclarationsPage() {
       return;
     }
 
+    if (item.artifact?.artifactKey) {
+      const rawReference = String(
+        item.meta && typeof item.meta === "object"
+          ? (item.meta as Record<string, unknown>).competencia ?? (item.meta as Record<string, unknown>).competence ?? ""
+          : "",
+      ).trim();
+      try {
+        await downloadDeclarationArtifact({
+          action: activeRun?.action ?? "simples_emitir_guia",
+          companyId: item.companyId,
+          competence: isValidCompetence(rawReference) ? rawReference : null,
+          artifactKey: item.artifact.artifactKey,
+          suggestedName: item.artifact.label,
+        });
+        toast.success("Download iniciado.");
+      } catch (error) {
+        toast.error(
+          sanitizeDeclarationError(error, "NÃ£o foi possÃ­vel baixar o documento gerado."),
+        );
+      }
+      return;
+    }
+
     if (item.artifact?.url) {
       window.open(item.artifact.url, "_blank", "noopener,noreferrer");
       return;
@@ -281,7 +424,41 @@ export default function FiscalDeclarationsPage() {
       window.open(item.artifact.url, "_blank", "noopener,noreferrer");
       return;
     }
-    await handleDownloadArtifact(item);
+
+    if (item.artifact?.filePath) {
+      try {
+        await openServerFileByPath(item.artifact.filePath, item.artifact.label);
+      } catch (error) {
+        toast.error(
+          sanitizeDeclarationError(error, "Nao foi possivel visualizar o documento gerado."),
+        );
+      }
+      return;
+    }
+
+    if (item.artifact?.artifactKey) {
+      const rawReference = String(
+        item.meta && typeof item.meta === "object"
+          ? (item.meta as Record<string, unknown>).competencia ?? (item.meta as Record<string, unknown>).competence ?? ""
+          : "",
+      ).trim();
+      try {
+        await openDeclarationArtifact({
+          action: activeRun?.action ?? "simples_emitir_guia",
+          companyId: item.companyId,
+          competence: isValidCompetence(rawReference) ? rawReference : null,
+          artifactKey: item.artifact.artifactKey,
+          suggestedName: item.artifact.label,
+        });
+      } catch (error) {
+        toast.error(
+          sanitizeDeclarationError(error, "Nao foi possivel visualizar o documento gerado."),
+        );
+      }
+      return;
+    }
+
+    toast.error("Nenhum artefato disponivel para esta empresa.");
   };
 
   const handleDownloadDeclarationDocument = async (
@@ -303,6 +480,13 @@ export default function FiscalDeclarationsPage() {
       );
     } finally {
       setDownloadingArtifactKey(null);
+    }
+  };
+
+  const handleClearRunHistory = () => {
+    setActiveRun(null);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(DECLARATION_RUN_STORAGE_KEY);
     }
   };
 
@@ -397,14 +581,26 @@ export default function FiscalDeclarationsPage() {
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             {SIMPLES_DOCUMENT_ACTIONS.map((item) => (
-              <DeclarationArtifactsCard
+              <DeclarationActionCard
                 key={item.action}
-                action={item.action}
+                eyebrow={
+                  item.action === "simples_emitir_guia"
+                    ? "DAS"
+                    : item.action === "simples_extrato"
+                      ? "Extrato"
+                      : "Anual"
+                }
                 title={item.title}
                 description={item.description}
-                loading={documentLoadingByAction.get(item.action) ?? false}
-                response={documentResponseByAction.get(item.action)}
-                busyArtifactKey={downloadingArtifactKey}
+                icon={
+                  item.action === "simples_emitir_guia" ? (
+                    <ReceiptText className="h-5 w-5" />
+                  ) : item.action === "simples_extrato" ? (
+                    <FileArchive className="h-5 w-5" />
+                  ) : (
+                    <ShieldCheck className="h-5 w-5" />
+                  )
+                }
                 ctaLabel={
                   item.action === "simples_emitir_guia"
                     ? "Abrir emissão"
@@ -412,20 +608,27 @@ export default function FiscalDeclarationsPage() {
                       ? "Solicitar extrato"
                       : "Solicitar DEFIS"
                 }
-                actionBusy={dispatching}
-                actionDisabled={!canOperate}
-                onPrimaryAction={() => {
+                busy={dispatching}
+                disabled={!canOperate}
+                disabledReason={!canOperate ? "Seu perfil tem acesso somente para consulta nesta area." : null}
+                onClick={() => {
                   setGuideModalState({
                     open: true,
                     action: item.action,
                     source: "card",
                     presetCompanyId: availableCompanies[0]?.id ?? null,
-                    presetCompetence: defaultCompetence,
+                    presetCompetence: item.action === "simples_defis" ? defaultCompetence.slice(0, 4) : defaultCompetence,
                     presetDueDate: null,
                     recalculateByDefault: false,
                   });
                 }}
-                onDownload={(artifact) => handleDownloadDeclarationDocument(item.action, artifact)}
+                toneClassName={
+                  item.action === "simples_emitir_guia"
+                    ? "from-background to-primary/5"
+                    : item.action === "simples_extrato"
+                      ? "from-background to-sky-500/5"
+                      : "from-background to-emerald-500/5"
+                }
               />
             ))}
           </div>
@@ -504,6 +707,7 @@ export default function FiscalDeclarationsPage() {
         loading={runStatusQuery.isFetching}
         onOpenArtifact={handleOpenArtifact}
         onDownloadArtifact={handleDownloadArtifact}
+        onClearHistory={handleClearRunHistory}
       />
 
       <DeclarationExecutionModal

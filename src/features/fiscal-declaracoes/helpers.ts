@@ -7,21 +7,26 @@ export function getDefaultDeclarationCompetence(today = new Date()): string {
 
 export function formatCompetenceLabel(value: string | null | undefined): string {
   const raw = String(value ?? "").trim();
-  if (!/^\d{4}-\d{2}$/.test(raw)) return "—";
+  if (!/^\d{4}-\d{2}$/.test(raw)) return "-";
   const year = raw.slice(0, 4);
   const month = raw.slice(5, 7);
   return `${month}/${year}`;
 }
 
+export function formatYearLabel(value: string | null | undefined): string {
+  const raw = String(value ?? "").trim();
+  return /^\d{4}$/.test(raw) ? raw : "-";
+}
+
 export function formatDateLabel(value: string | null | undefined): string {
   const raw = String(value ?? "").trim().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "—";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "-";
   const [year, month, day] = raw.split("-");
   return `${day}/${month}/${year}`;
 }
 
 export function formatCurrencyFromCents(value: number | null | undefined): string {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "-";
   return ((value ?? 0) / 100).toLocaleString("pt-BR", {
     style: "currency",
     currency: "BRL",
@@ -41,7 +46,7 @@ export function sanitizeDeclarationError(error: unknown, fallback: string): stri
     raw.toLowerCase().includes("permission denied") ||
     raw.toLowerCase().includes("row-level security")
   ) {
-    return "Você não tem permissão para executar esta rotina.";
+    return "Voce nao tem permissao para executar esta rotina.";
   }
   return raw;
 }
@@ -50,6 +55,12 @@ export function isValidCompetence(value: string): boolean {
   if (!/^\d{4}-\d{2}$/.test(value)) return false;
   const month = Number(value.slice(5, 7));
   return month >= 1 && month <= 12;
+}
+
+export function isValidYear(value: string): boolean {
+  if (!/^\d{4}$/.test(value)) return false;
+  const year = Number(value);
+  return year >= 2000 && year <= 2100;
 }
 
 export function isValidIsoDate(value: string): boolean {

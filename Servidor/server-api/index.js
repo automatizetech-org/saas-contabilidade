@@ -1458,7 +1458,7 @@ function findRobotForAction(action, robots) {
   );
 }
 
-function findFolderNodeByLogicalPath(nodes, logicalPath) {
+function resolveFolderTrailByLogicalPath(nodes, logicalPath) {
   const segments = splitLogicalSegments(logicalPath);
   const byParentAndSlug = new Map();
   for (const node of nodes) {
@@ -1468,14 +1468,15 @@ function findFolderNodeByLogicalPath(nodes, logicalPath) {
   }
 
   let parentId = null;
-  let currentNode = null;
+  const trail = [];
   for (const segment of segments) {
     const key = `${parentId ?? "root"}:${normalizeToken(segment)}`;
-    currentNode = byParentAndSlug.get(key) ?? null;
-    if (!currentNode) return null;
+    const currentNode = byParentAndSlug.get(key) ?? null;
+    if (!currentNode) return [];
+    trail.push(currentNode);
     parentId = currentNode.id;
   }
-  return currentNode;
+  return trail;
 }
 
 async function resolveDeclarationSource({
@@ -1515,7 +1516,8 @@ async function resolveDeclarationSource({
     .order("position", { ascending: true });
   if (folderNodesError) throw folderNodesError;
 
-  const leafNode = findFolderNodeByLogicalPath(folderNodes ?? [], logicalFolderPath);
+  const folderTrail = resolveFolderTrailByLogicalPath(folderNodes ?? [], logicalFolderPath);
+  const leafNode = folderTrail[folderTrail.length - 1] ?? null;
   if (!leafNode) {
     return {
       status: "folder_missing",
@@ -1535,6 +1537,10 @@ async function resolveDeclarationSource({
     actionKey,
     segmentPath,
     logicalFolderPath,
+    physicalFolderPath: folderTrail
+      .map((node) => sanitizeDiskSegment(String(node.name || node.slug || "")))
+      .filter(Boolean)
+      .join("/"),
     dateRule: leafNode.date_rule ?? null,
   };
 }
@@ -1551,6 +1557,7 @@ function buildArtifactResponse(source, items, competence) {
       action_key: source.actionKey ?? null,
       segment_path: source.segmentPath ?? null,
       logical_folder_path: source.logicalFolderPath ?? null,
+      physical_folder_path: source.physicalFolderPath ?? null,
       date_rule: source.dateRule ?? null,
       competence: competence?.raw ?? null,
     },
@@ -1606,7 +1613,9 @@ async function listDeclarationArtifacts({
       : await companyQuery;
   if (companiesError) throw companiesError;
 
-  const logicalSegments = splitLogicalSegments(source.logicalFolderPath);
+  const logicalSegments = splitLogicalSegments(
+    source.physicalFolderPath || source.logicalFolderPath,
+  );
   const dateSegments = buildDateSegments(source.dateRule, parsedCompetence);
   const recursive = !parsedCompetence
     ? Boolean(source.dateRule)
