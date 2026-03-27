@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Harness e-CAC Caixa Postal</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f3f3;
+      color: #222;
+    }
+    .topbar {
+      padding: 12px 20px;
+      background: #ffffff;
+      border-bottom: 1px solid #d6d6d6;
+    }
+    .home, .mailbox, .message {
+      padding: 24px;
+    }
+    .actions {
+      margin-top: 16px;
+    }
+    button {
+      padding: 10px 16px;
+      border: 1px solid #c97a24;
+      background: #ffeddc;
+      color: #8f4c04;
+      cursor: pointer;
+    }
+    .badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #f05b37;
+      color: #fff;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal {
+      width: 420px;
+      background: #fff;
+      border: 2px solid #f2b16b;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    }
+    .modal h2 {
+      margin: 0;
+      padding: 14px 18px;
+      color: #e36f04;
+      border-bottom: 1px solid #e7e7e7;
+      font-size: 24px;
+      font-weight: normal;
+    }
+    .modal p {
+      margin: 0;
+      padding: 18px;
+      line-height: 1.45;
+    }
+    .modal .footer {
+      padding: 0 18px 18px;
+      text-align: right;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+    th, td {
+      padding: 10px;
+      border: 1px solid #d0d0d0;
+      text-align: left;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div id="context-line">Titular: 37.197.978/0001-03 - EG FLEURY ASSESSORIA E SERVICOS LTDA</div>
+    <div class="actions">
+      <button id="switch-profile">Alterar perfil de acesso</button>
+      <button id="go-home" class="hidden">Voltar ao e-CAC</button>
+    </div>
+  </div>
+
+  <main>
+    <section id="home-view" class="home">
+      <h1>Portal e-CAC</h1>
+      <p id="home-copy">Perfil atual do titular.</p>
+    </section>
+
+    <section id="mailbox-view" class="mailbox hidden">
+      <h1>Caixa Postal</h1>
+      <p>Você precisa ler a mensagem importante antes de usar os demais serviços.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Assunto</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>!</td>
+            <td><button id="open-message">Mensagem importante da Receita</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="message-view" class="message hidden">
+      <h1>Mensagem importante</h1>
+      <p>Mensagem lida com sucesso. O portal agora permite continuar usando o novo perfil.</p>
+      <button id="back-to-home">Concluir leitura</button>
+    </section>
+  </main>
+
+  <div id="notice-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2>Atenção</h2>
+      <p>
+        Você possui mensagens importantes (com o indicativo "!") ainda não lidas na sua Caixa Postal.
+        É necessário que você leia as mensagens importantes, antes de utilizar os demais serviços do Portal e-CAC.
+      </p>
+      <div class="footer">
+        <button id="go-mailbox">Ir para a Caixa Postal</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const homeView = document.getElementById("home-view");
+    const mailboxView = document.getElementById("mailbox-view");
+    const messageView = document.getElementById("message-view");
+    const noticeModal = document.getElementById("notice-modal");
+    const contextLine = document.getElementById("context-line");
+    const homeCopy = document.getElementById("home-copy");
+    const homeButton = document.getElementById("go-home");
+
+    function show(section) {
+      for (const view of [homeView, mailboxView, messageView]) {
+        view.classList.add("hidden");
+      }
+      section.classList.remove("hidden");
+    }
+
+    document.getElementById("switch-profile").addEventListener("click", () => {
+      contextLine.textContent =
+        "Titular (Acesso GOV.BR por Certificado): 37.197.978/0001-03 - EG FLEURY ASSESSORIA E SERVICOS LTDA | Procurador de: 07.132.222/0001-07 - ABACAXI.COM COMERCIO DE FRUTAS LTDA";
+      homeCopy.textContent = "Novo perfil selecionado, mas existe leitura obrigatória da Caixa Postal.";
+      noticeModal.classList.remove("hidden");
+    });
+
+    document.getElementById("go-mailbox").addEventListener("click", () => {
+      noticeModal.classList.add("hidden");
+      homeButton.classList.remove("hidden");
+      show(mailboxView);
+    });
+
+    document.getElementById("open-message").addEventListener("click", () => {
+      show(messageView);
+    });
+
+    document.getElementById("back-to-home").addEventListener("click", () => {
+      show(homeView);
+      homeCopy.textContent = "Leitura concluída. Serviços liberados para ABACAXI.COM COMERCIO DE FRUTAS LTDA.";
+    });
+
+    homeButton.addEventListener("click", () => {
+      show(homeView);
+    });
+  </script>
+</body>
+</html>

@@ -11,11 +11,14 @@ import textwrap
 import threading
 import time
 import traceback
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import urljoin
 
 import requests
 
@@ -69,13 +72,7 @@ import_pfx_and_get_metadata = ecac_base.import_pfx_and_get_metadata
 LOGIN_URL = ecac_base.LOGIN_URL
 PGDAS_ENTRY_URL = "https://cav.receita.fazenda.gov.br/ecac/Aplicacao.aspx?id=10009&origem=menu"
 
-DEFAULT_TEST_CERT_PFX = (
-    Path(__file__).resolve().parents[3]
-    / "ecac"
-    / "caixa postal"
-    / "2026 - EG FLEURY ASSESSORIA E SERVICOS LTDA_37197978000103.pfx"
-)
-DEFAULT_TEST_CERT_PASSWORD = "12345678"
+ROBOT_SEGMENT_PATH_DEFAULT = ""
 
 PROFILE_MENU_LABELS = list(ecac_base.PROFILE_MENU_LABELS)
 PGDAS_READY_MARKERS = [
@@ -87,10 +84,18 @@ PGDAS_READY_MARKERS = [
     "Consultar declaracoes",
 ]
 HCAPTCHA_ERROR_URL_TOKEN = "/Erro/93003"
+DEFIS_ENTRY_URL = "https://sinac.cav.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/defis.app/entrada.aspx"
 
 
 def _stack_tail(exc: BaseException) -> str:
     return "".join(traceback.format_exception_only(type(exc), exc)).strip()
+
+
+def _normalize_portal_text(value: str) -> str:
+    raw = str(value or "")
+    decomposed = unicodedata.normalize("NFKD", raw)
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(without_accents.split()).lower()
 
 
 def _extract_document_from_subject(subject: str) -> str:
@@ -107,6 +112,21 @@ def _extract_common_name_from_subject(subject: str) -> str:
         common_name = re.sub(r":\d{11,14}$", "", common_name).strip()
         return common_name
     return ""
+
+
+def sanitize_company_folder(name: str) -> str:
+    normalized = str(name or "").strip()
+    normalized = re.sub(r'[<>:"/\\|?*]', "_", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip().rstrip(" .")
+    return normalized or "Empresa"
+
+
+def _normalize_folder_token(value: str) -> str:
+    raw = str(value or "")
+    decomposed = unicodedata.normalize("NFKD", raw)
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    collapsed = re.sub(r"[^a-zA-Z0-9]+", " ", without_accents.lower())
+    return " ".join(collapsed.split())
 
 
 def build_runtime(
@@ -187,6 +207,93 @@ class DashboardClient:
         self._robot_config_cache = payload
         return payload
 
+    def fetch_robot_runtime_metadata(self) -> dict[str, Any]:
+        try:
+            client = self._supabase()
+            response = (
+                client.table("robots")
+                .select("segment_path,notes_mode")
+                .eq("technical_id", self.technical_id)
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(response, "data", None) or []
+            if not rows:
+                return {}
+            row = rows[0] if isinstance(rows[0], dict) else {}
+            return {
+                "segment_path": str(row.get("segment_path") or "").strip() or None,
+                "notes_mode": str(row.get("notes_mode") or "").strip() or None,
+            }
+        except Exception as exc:
+            self.runtime.logger.warning(f"Falha ao consultar segment_path do robo na tabela robots: {exc}")
+            return {}
+
+    def derive_segment_path_from_folder_structure(self, payload: Optional[dict[str, Any]]) -> str:
+        nodes = payload.get("folder_structure") if isinstance(payload, dict) else None
+        if not isinstance(nodes, list):
+            return ""
+
+        if self.technical_id == "ecac_simples_consulta_extratos_defis":
+            candidates = {
+                "extrato do simples e defis",
+                "extratos e defis",
+                "consulta extratos e defis",
+                "consulta de extratos e defis",
+            }
+        else:
+            candidates = {_normalize_folder_token(self.display_name), _normalize_folder_token(self.technical_id)}
+        candidates = {item for item in candidates if item}
+        if not candidates:
+            return ""
+
+        indexed: dict[str, dict[str, Any]] = {}
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id") or "").strip()
+            if node_id:
+                indexed[node_id] = node
+
+        matches: list[tuple[int, int, str]] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_name = str(node.get("name") or "").strip()
+            node_slug = str(node.get("slug") or "").strip()
+            name_norm = _normalize_folder_token(node_name)
+            slug_norm = _normalize_folder_token(node_slug)
+            score = 0
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                if name_norm == candidate or slug_norm == candidate:
+                    score = max(score, 3)
+                elif candidate in name_norm or candidate in slug_norm:
+                    score = max(score, 2)
+                elif name_norm in candidate or slug_norm in candidate:
+                    score = max(score, 1)
+            if score <= 0:
+                continue
+
+            path_names: list[str] = []
+            current = node
+            guard = 0
+            while isinstance(current, dict) and guard < 20:
+                current_name = str(current.get("name") or "").strip()
+                if current_name:
+                    path_names.append(current_name)
+                parent_id = str(current.get("parent_id") or "").strip()
+                current = indexed.get(parent_id) if parent_id else None
+                guard += 1
+            if path_names:
+                matches.append((score, len(path_names), "/".join(reversed(path_names))))
+
+        if not matches:
+            return ""
+        matches.sort(key=lambda item: (item[0], item[1], len(item[2])), reverse=True)
+        return matches[0][2]
+
     def register_robot_presence(self, status: str = "active") -> Optional[str]:
         try:
             client = self._supabase()
@@ -196,11 +303,14 @@ class DashboardClient:
                     api_cfg = self.fetch_robot_config_from_api()
                 except Exception:
                     api_cfg = None
+            segment_path = str((api_cfg or {}).get("segment_path") or "").strip()
+            if not segment_path:
+                segment_path = self.derive_segment_path_from_folder_structure(api_cfg)
             payload = {
                 "display_name": self.display_name,
                 "status": status,
                 "last_heartbeat_at": utc_now_iso(),
-                "segment_path": str((api_cfg or {}).get("segment_path") or "").strip() or None,
+                "segment_path": segment_path or None,
                 "notes_mode": str((api_cfg or {}).get("notes_mode") or "").strip() or None,
             }
             response = client.table("robots").select("id").eq("technical_id", self.technical_id).limit(1).execute()
@@ -262,9 +372,18 @@ class DashboardClient:
             office_server_id = str(payload.get("office_server_id") or "").strip()
             base_path = str(payload.get("base_path") or "").strip()
             segment_path = str(payload.get("segment_path") or "").strip()
+            if not segment_path:
+                segment_path = self.derive_segment_path_from_folder_structure(payload)
             notes_mode = str(payload.get("notes_mode") or "").strip()
             if office_id:
                 source = "server_api"
+
+        if not segment_path or not notes_mode:
+            robot_cfg = self.fetch_robot_runtime_metadata()
+            if not segment_path:
+                segment_path = str(robot_cfg.get("segment_path") or "").strip()
+            if not notes_mode:
+                notes_mode = str(robot_cfg.get("notes_mode") or "").strip()
 
         if not office_id and job:
             office_id = job.office_id
@@ -744,6 +863,139 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         except Exception:
             pass
 
+    def _profile_switch_success_relaxed(self, company: CompanyRecord) -> bool:
+        targets = [target for target in self._profile_switch_targets(company) if target]
+        if not targets:
+            return False
+        context_text = self._current_profile_context().lower()
+        body_text = self._body_text().lower()
+        return any(target in context_text or target in body_text for target in targets)
+
+    def _profile_modal_visible(self, company: Optional[CompanyRecord] = None) -> bool:
+        profile_markers = [
+            "alterar perfil",
+            "perfil de acesso",
+            "responsavel legal",
+            "responsável legal",
+            "procurador",
+            "empresa filial",
+            "sucessora",
+        ]
+        for scope in self._visible_modal_scopes():
+            try:
+                text = " ".join(self._body_text(scope).split()).lower()
+            except Exception:
+                text = ""
+            if any(marker in text for marker in profile_markers):
+                return True
+            if company and company.document:
+                digits = only_digits(company.document)
+                if digits and digits in only_digits(text):
+                    return True
+            try:
+                if scope.locator("#txtNIPapel1, #txtNIPapel2, #txtNIPapel3, #txtNIPapel4, #txtNIPapel5, #txtCnpj").count() > 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _is_valid_profile_input(self, field: Any) -> bool:
+        attributes: dict[str, str] = {}
+        for attr_name in ("id", "name", "placeholder", "title", "aria-label", "class"):
+            try:
+                attributes[attr_name] = str(field.get_attribute(attr_name) or "")
+            except Exception:
+                attributes[attr_name] = ""
+        attrs_text = " ".join(attributes.values()).lower()
+        if any(token in attrs_text for token in ("txtpesquisar", "frmpesquisar", "localizar serviço", "localizar servico")):
+            return False
+        try:
+            if field.locator("xpath=ancestor::form[@id='frmPesquisar' or @name='pesquisa']").count() > 0:
+                return False
+        except Exception:
+            pass
+        accepted_tokens = ("nipapel", "cnpj", "cpf", "empresa", "documento", "papel", "txtcnpj")
+        if any(token in attrs_text for token in accepted_tokens):
+            return True
+        try:
+            form = field.locator("xpath=ancestor::form[1]").first
+            form_id = str(form.get_attribute("id") or "").lower()
+            form_name = str(form.get_attribute("name") or "").lower()
+            form_text = " ".join(self._body_text(form).split()).lower()
+        except Exception:
+            form_id = ""
+            form_name = ""
+            form_text = ""
+        if any(token in form_id or token in form_name for token in ("formpj", "formpf", "formmatriz", "formsucessora", "formentefederativovinculado")):
+            return True
+        return "perfil" in form_text and "acesso" in form_text
+
+    def _find_company_input(self, company: CompanyRecord) -> Optional[Any]:
+        digits = only_digits(company.document)
+        is_cnpj = len(digits) >= 14
+        preferred_pairs = []
+        if is_cnpj:
+            preferred_pairs = [
+                ("form#formPJ", "#txtNIPapel2"),
+                ("form#formMatriz", "#txtNIPapel3"),
+                ("form#formSucessora", "#txtNIPapel4"),
+                ("form#formEnteFederativoVinculado", "#txtNIPapel5"),
+            ]
+        else:
+            preferred_pairs = [("form#formPF", "#txtNIPapel1")]
+
+        for scope in self._profile_scopes():
+            for form_selector, field_selector in preferred_pairs:
+                try:
+                    form = scope.locator(form_selector).first
+                    if form.count() < 1:
+                        continue
+                    form.wait_for(state="visible", timeout=700)
+                    field = form.locator(field_selector).first
+                    field.wait_for(state="visible", timeout=700)
+                    if not self._is_valid_profile_input(field):
+                        continue
+                    field.scroll_into_view_if_needed(timeout=1000)
+                    self._last_profile_form = form
+                    return field
+                except Exception:
+                    continue
+
+        fallback_selectors = [
+            "input[id*='NIPapel' i]",
+            "input[name*='NIPapel' i]",
+            "input[id*='cnpj' i]",
+            "input[name*='cnpj' i]",
+            "input[id*='cpf' i]",
+            "input[name*='cpf' i]",
+            "input[placeholder*='CNPJ' i]",
+            "input[placeholder*='CPF' i]",
+            "input[placeholder*='empresa' i]",
+            "#txtCnpj",
+        ]
+        for scope in self._profile_scopes():
+            for selector in fallback_selectors:
+                locator = scope.locator(selector)
+                try:
+                    count = locator.count()
+                except Exception:
+                    continue
+                for index in range(min(count, 8)):
+                    field = locator.nth(index)
+                    try:
+                        field.wait_for(state="visible", timeout=500)
+                        if not self._is_valid_profile_input(field):
+                            continue
+                        field.scroll_into_view_if_needed(timeout=1000)
+                        try:
+                            self._last_profile_form = field.locator("xpath=ancestor::form[1]")
+                        except Exception:
+                            self._last_profile_form = None
+                        return field
+                    except Exception:
+                        continue
+        return None
+
     def required_mailbox_notice_visible(self) -> bool:
         scopes = self._visible_modal_scopes() or list(self._iter_scopes())
         for scope in scopes:
@@ -753,6 +1005,221 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             ):
                 return True
         return False
+
+    def _click_locator_candidate(self, locator: Any, *, timeout_ms: int = 4000) -> bool:
+        try:
+            locator.wait_for(state="visible", timeout=min(timeout_ms, 1500))
+        except Exception:
+            pass
+        try:
+            locator.scroll_into_view_if_needed(timeout=1200)
+        except Exception:
+            pass
+        try:
+            locator.click(timeout=timeout_ms, force=True)
+            return True
+        except Exception:
+            pass
+        try:
+            locator.evaluate(
+                """el => {
+                    if (!el) {
+                        return false;
+                    }
+                    el.click();
+                    return true;
+                }"""
+            )
+            return True
+        except Exception:
+            return False
+
+    def _open_required_mailbox_from_notice(self) -> bool:
+        labels = ["Ir para a Caixa Postal", "Caixa Postal"]
+        for scope in self._visible_modal_scopes() or [self.page]:
+            for label in labels:
+                pattern = re.compile(re.escape(label), re.IGNORECASE)
+                candidates = [
+                    scope.get_by_role("button", name=pattern),
+                    scope.get_by_role("link", name=pattern),
+                    scope.get_by_text(pattern),
+                    scope.locator(".ui-dialog-buttonpane button"),
+                    scope.locator(".ui-dialog-buttonset button"),
+                    scope.locator("button"),
+                    scope.locator("a"),
+                ]
+                for locator in candidates:
+                    try:
+                        count = locator.count()
+                    except Exception:
+                        continue
+                    for index in range(min(count, 6)):
+                        candidate = locator.nth(index)
+                        try:
+                            text = _normalize_portal_text(" ".join((candidate.inner_text(timeout=700) or "").split()))
+                        except Exception:
+                            text = ""
+                        if "caixa postal" not in text:
+                            continue
+                        if self._click_locator_candidate(candidate, timeout_ms=4000):
+                            return True
+        try:
+            clicked = bool(
+                self.page.evaluate(
+                    """labels => {
+                        const normalize = (value) =>
+                            String(value || '')
+                                .normalize('NFD')
+                                .replace(/[\u0300-\u036f]/g, '')
+                                .replace(/\\s+/g, ' ')
+                                .trim()
+                                .toLowerCase();
+                        const wanted = (labels || []).map(normalize);
+                        const dialogs = Array.from(document.querySelectorAll('.ui-dialog, [role="dialog"], dialog, .modal.show'));
+                        const roots = dialogs.length ? dialogs : [document.body];
+                        const isVisible = (el) => {
+                            if (!el) return false;
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0;
+                        };
+                        for (const root of roots) {
+                            const buttons = Array.from(root.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+                            for (const button of buttons) {
+                                const text = normalize(button.innerText || button.value || button.getAttribute('aria-label') || '');
+                                if (!isVisible(button) || !text) continue;
+                                if (!wanted.some((label) => text.includes(label) || text.includes('caixa postal'))) continue;
+                                button.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }""",
+                    labels,
+                )
+            )
+            if clicked:
+                return True
+        except Exception:
+            pass
+        try:
+            self.page.goto(
+                "https://cav.receita.fazenda.gov.br/eCAC/Aplicacao.aspx?id=00006",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _apply_unread_mailbox_filter(self) -> bool:
+        labels = ["Não lidas", "Nao lidas", "Não visualizadas", "Nao visualizadas"]
+        for scope in self._iter_scopes():
+            for label in labels:
+                pattern = re.compile(re.escape(label), re.IGNORECASE)
+                interactive_locators = [
+                    scope.get_by_role("radio", name=pattern),
+                    scope.get_by_role("checkbox", name=pattern),
+                    scope.get_by_role("tab", name=pattern),
+                    scope.get_by_role("button", name=pattern),
+                    scope.get_by_role("link", name=pattern),
+                    scope.get_by_text(pattern),
+                ]
+                for locator in interactive_locators:
+                    try:
+                        if locator.count() < 1:
+                            continue
+                        candidate = locator.first
+                        try:
+                            if not candidate.is_visible():
+                                continue
+                        except Exception:
+                            pass
+                        for attr_name in ("aria-checked", "aria-selected", "aria-pressed", "checked"):
+                            try:
+                                state = str(candidate.get_attribute(attr_name) or "").strip().lower()
+                            except Exception:
+                                state = ""
+                            if state in {"true", "checked"}:
+                                return True
+                        if self._click_locator_candidate(candidate, timeout_ms=2500):
+                            try:
+                                self.page.wait_for_load_state("networkidle", timeout=4000)
+                            except Exception:
+                                pass
+                            try:
+                                self.page.wait_for_timeout(500)
+                            except Exception:
+                                time.sleep(0.5)
+                            state_confirmed = False
+                            for attr_name in ("aria-checked", "aria-selected", "aria-pressed", "checked"):
+                                try:
+                                    state = str(candidate.get_attribute(attr_name) or "").strip().lower()
+                                except Exception:
+                                    state = ""
+                                if state in {"true", "checked"}:
+                                    state_confirmed = True
+                                    break
+                            if state_confirmed:
+                                return True
+                    except Exception:
+                        continue
+            try:
+                selects = scope.locator("select")
+                select_count = selects.count()
+            except Exception:
+                select_count = 0
+            for index in range(min(select_count, 4)):
+                select = selects.nth(index)
+                try:
+                    options = select.locator("option")
+                    option_count = options.count()
+                except Exception:
+                    option_count = 0
+                for option_index in range(min(option_count, 12)):
+                    option = options.nth(option_index)
+                    try:
+                        text = " ".join((option.inner_text(timeout=500) or "").split())
+                    except Exception:
+                        continue
+                    if not any(_normalize_portal_text(label) == _normalize_portal_text(text) for label in labels):
+                        continue
+                    try:
+                        value = str(option.get_attribute("value") or "").strip()
+                    except Exception:
+                        value = ""
+                    try:
+                        if value:
+                            select.select_option(value=value, timeout=2500)
+                        else:
+                            select.select_option(label=text, timeout=2500)
+                        try:
+                            self.page.wait_for_load_state("networkidle", timeout=4000)
+                        except Exception:
+                            pass
+                        return True
+                    except Exception:
+                        continue
+        return False
+
+    def required_mailbox_notice_visible(self) -> bool:
+        scopes = self._visible_modal_scopes() or list(self._iter_scopes())
+        for scope in scopes:
+            text = _normalize_portal_text(" ".join(self._body_text(scope).split()))
+            if "mensagens importantes" in text and "caixa postal" in text and "nao lidas" in text:
+                return True
+        return False
+
+    def _mailbox_row_requires_read(self, text: str) -> bool:
+        normalized = " ".join(str(text or "").split())
+        lowered = _normalize_portal_text(normalized)
+        if not lowered:
+            return False
+        if "assunto" in lowered and "data" in lowered and len(lowered) < 120:
+            return False
+        unread_tokens = ["nao lida", "nao lido", "novo"]
+        important_tokens = ["importante", "prioridade", "urgente"]
+        return "!" in normalized or any(token in lowered for token in unread_tokens + important_tokens)
 
     def _mailbox_row_requires_read(self, text: str) -> bool:
         normalized = " ".join(str(text or "").split())
@@ -765,7 +1232,18 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         important_tokens = ["importante", "prioridade", "urgente"]
         return "!" in normalized or any(token in lowered for token in unread_tokens + important_tokens)
 
-    def mark_required_mailbox_messages_as_read(self, limit: int = 12) -> int:
+    def _mailbox_row_requires_read(self, text: str) -> bool:
+        normalized = " ".join(str(text or "").split())
+        lowered = _normalize_portal_text(normalized)
+        if not lowered:
+            return False
+        if "assunto" in lowered and "data" in lowered and len(lowered) < 120:
+            return False
+        unread_tokens = ["nao lida", "nao lido", "novo"]
+        important_tokens = ["importante", "prioridade", "urgente"]
+        return "!" in normalized or any(token in lowered for token in unread_tokens + important_tokens)
+
+    def mark_required_mailbox_messages_as_read(self, limit: int = 30) -> int:
         opened = 0
         seen_rows: set[str] = set()
         locator, _, _ = self._message_rows_locator()
@@ -779,8 +1257,9 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             self._return_to_message_list()
             locator, _, _ = self._message_rows_locator()
 
+        filter_applied = self._apply_unread_mailbox_filter()
         page_cycles = 0
-        while locator is not None and opened < limit and page_cycles < 4:
+        while locator is not None and opened < limit and page_cycles < 8:
             try:
                 row_count = locator.count()
             except Exception:
@@ -788,26 +1267,33 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             if row_count <= 0:
                 break
 
-            candidate_indexes: list[int] = []
-            fallback_indexes: list[int] = []
+            target_index: Optional[int] = None
+            fallback_index: Optional[int] = None
+            target_text = ""
             for index in range(row_count):
                 row = locator.nth(index)
                 try:
                     if not row.is_visible():
                         continue
-                    raw_text = " ".join(row.inner_text(timeout=1500).split())
+                    cells = row.locator("td, th, [role='cell'], [role='gridcell']").all_inner_texts()
+                    raw_text = "\n".join(item.strip() for item in cells if item.strip()) or row.inner_text(timeout=1500)
+                    raw_text = " ".join(raw_text.split())
                 except Exception:
                     continue
                 if not raw_text or raw_text in seen_rows:
                     continue
-                seen_rows.add(raw_text)
                 if self._mailbox_row_requires_read(raw_text):
-                    candidate_indexes.append(index)
-                elif page_cycles == 0 and len(fallback_indexes) < 2:
-                    fallback_indexes.append(index)
+                    target_index = index
+                    target_text = raw_text
+                    break
+                if not filter_applied and fallback_index is None and page_cycles == 0:
+                    fallback_index = index
+                    target_text = raw_text
 
-            target_indexes = candidate_indexes or fallback_indexes
-            if not target_indexes:
+            if target_index is None and fallback_index is not None:
+                target_index = fallback_index
+
+            if target_index is None:
                 if not self._click_next_page():
                     break
                 page_cycles += 1
@@ -815,40 +1301,31 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                     self.page.wait_for_load_state("networkidle", timeout=5000)
                 except Exception:
                     pass
+                if filter_applied:
+                    self._apply_unread_mailbox_filter()
                 locator, _, _ = self._message_rows_locator()
                 continue
 
-            for index in target_indexes:
-                if opened >= limit:
-                    break
-                locator_missing = False
-                try:
-                    row = locator.nth(index)
-                    detail_text = self._open_row_detail(row)
-                    if detail_text or self._is_message_detail_view():
-                        opened += 1
-                        try:
-                            self.page.wait_for_timeout(1000)
-                        except Exception:
-                            time.sleep(1.0)
-                finally:
-                    self.close_blocking_modals()
-                    self._return_to_message_list()
-                    locator, _, _ = self._message_rows_locator()
-                    locator_missing = locator is None
-                if locator_missing:
-                    break
-
-            if opened >= limit:
-                break
-            if not self._click_next_page():
-                break
-            page_cycles += 1
+            seen_rows.add(target_text)
+            locator_missing = False
             try:
-                self.page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
-            locator, _, _ = self._message_rows_locator()
+                row = locator.nth(target_index)
+                detail_text = self._open_row_detail(row)
+                if detail_text or self._is_message_detail_view():
+                    opened += 1
+                    try:
+                        self.page.wait_for_timeout(1200)
+                    except Exception:
+                        time.sleep(1.2)
+            finally:
+                self.close_blocking_modals()
+                self._return_to_message_list()
+                if filter_applied:
+                    self._apply_unread_mailbox_filter()
+                locator, _, _ = self._message_rows_locator()
+                locator_missing = locator is None
+            if locator_missing:
+                break
 
         return opened
 
@@ -856,7 +1333,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         if not self.required_mailbox_notice_visible():
             return False
         self.runtime.logger.info("Modal de leitura obrigatoria da Caixa Postal detectado.")
-        if not self._click_by_label(["Ir para a Caixa Postal", "Caixa Postal"], timeout_ms=6000):
+        if not self._open_required_mailbox_from_notice():
             raise RuntimeError("O modal de leitura obrigatoria apareceu, mas o acesso para a Caixa Postal nao foi localizado.")
         ready = self._wait_until(
             lambda: self._message_rows_locator()[0] is not None or self._is_message_detail_view(),
@@ -865,7 +1342,388 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         )
         if not ready:
             raise RuntimeError("A Caixa Postal nao ficou disponivel apos o modal de leitura obrigatoria.")
-        opened = self.mark_required_mailbox_messages_as_read(limit=12)
+        opened = self.mark_required_mailbox_messages_as_read(limit=30)
+        self.runtime.logger.info(f"Leitura obrigatoria da Caixa Postal concluida; {opened} mensagem(ns) aberta(s).")
+        try:
+            self.page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
+        except Exception:
+            pass
+        self.close_blocking_modals()
+        return True
+
+    def _open_required_mailbox_from_notice(self) -> bool:
+        labels = ["Ir para a Caixa Postal", "Caixa Postal"]
+        for scope in self._visible_modal_scopes() or [self.page]:
+            for label in labels:
+                pattern = re.compile(re.escape(label), re.IGNORECASE)
+                candidates = [
+                    scope.get_by_role("button", name=pattern),
+                    scope.get_by_role("link", name=pattern),
+                    scope.get_by_text(pattern),
+                    scope.locator(".ui-dialog-buttonpane button"),
+                    scope.locator(".ui-dialog-buttonset button"),
+                    scope.locator("button"),
+                    scope.locator("a"),
+                ]
+                for locator in candidates:
+                    try:
+                        count = locator.count()
+                    except Exception:
+                        continue
+                    for index in range(min(count, 8)):
+                        candidate = locator.nth(index)
+                        try:
+                            text = _normalize_portal_text(" ".join((candidate.inner_text(timeout=700) or "").split()))
+                        except Exception:
+                            text = ""
+                        if "caixa postal" not in text:
+                            continue
+                        if self._click_locator_candidate(candidate, timeout_ms=4000):
+                            return True
+        try:
+            clicked = bool(
+                self.page.evaluate(
+                    """labels => {
+                        const normalize = (value) =>
+                            String(value || '')
+                                .normalize('NFD')
+                                .replace(/[\\u0300-\\u036f]/g, '')
+                                .replace(/\\s+/g, ' ')
+                                .trim()
+                                .toLowerCase();
+                        const wanted = (labels || []).map(normalize);
+                        const dialogs = Array.from(document.querySelectorAll('.ui-dialog, [role="dialog"], dialog, .modal.show'));
+                        const roots = dialogs.length ? dialogs : [document.body];
+                        const isVisible = (el) => {
+                            if (!el) return false;
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0;
+                        };
+                        for (const root of roots) {
+                            const buttons = Array.from(root.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+                            for (const button of buttons) {
+                                const text = normalize(button.innerText || button.value || button.getAttribute('aria-label') || '');
+                                if (!isVisible(button) || !text) continue;
+                                if (!wanted.some((label) => text.includes(label) || text.includes('caixa postal'))) continue;
+                                button.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }""",
+                    labels,
+                )
+            )
+            if clicked:
+                return True
+        except Exception:
+            pass
+        try:
+            self.page.goto(
+                "https://cav.receita.fazenda.gov.br/eCAC/Aplicacao.aspx?id=00006",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _apply_unread_mailbox_filter(self) -> bool:
+        labels = ["Nao lidas", "Nao visualizadas"]
+        normalized_labels = {_normalize_portal_text(label) for label in labels}
+        for scope in self._iter_scopes():
+            for label in labels:
+                pattern = re.compile(re.escape(label), re.IGNORECASE)
+                interactive_locators = [
+                    scope.get_by_role("radio", name=pattern),
+                    scope.get_by_role("checkbox", name=pattern),
+                    scope.get_by_role("tab", name=pattern),
+                    scope.get_by_role("button", name=pattern),
+                    scope.get_by_role("link", name=pattern),
+                    scope.get_by_text(pattern),
+                ]
+                for locator in interactive_locators:
+                    try:
+                        if locator.count() < 1:
+                            continue
+                        candidate = locator.first
+                        for attr_name in ("aria-checked", "aria-selected", "aria-pressed", "checked"):
+                            try:
+                                state = str(candidate.get_attribute(attr_name) or "").strip().lower()
+                            except Exception:
+                                state = ""
+                            if state in {"true", "checked"}:
+                                return True
+                        if self._click_locator_candidate(candidate, timeout_ms=2500):
+                            try:
+                                self.page.wait_for_load_state("networkidle", timeout=4000)
+                            except Exception:
+                                pass
+                            try:
+                                self.page.wait_for_timeout(500)
+                            except Exception:
+                                time.sleep(0.5)
+                            return True
+                    except Exception:
+                        continue
+            try:
+                selects = scope.locator("select")
+                select_count = selects.count()
+            except Exception:
+                select_count = 0
+            for index in range(min(select_count, 4)):
+                select = selects.nth(index)
+                try:
+                    options = select.locator("option")
+                    option_count = options.count()
+                except Exception:
+                    option_count = 0
+                for option_index in range(min(option_count, 12)):
+                    option = options.nth(option_index)
+                    try:
+                        text = " ".join((option.inner_text(timeout=500) or "").split())
+                    except Exception:
+                        continue
+                    if _normalize_portal_text(text) not in normalized_labels:
+                        continue
+                    try:
+                        value = str(option.get_attribute("value") or "").strip()
+                    except Exception:
+                        value = ""
+                    try:
+                        if value:
+                            select.select_option(value=value, timeout=2500)
+                        else:
+                            select.select_option(label=text, timeout=2500)
+                        try:
+                            self.page.wait_for_load_state("networkidle", timeout=4000)
+                        except Exception:
+                            pass
+                        return True
+                    except Exception:
+                        continue
+        try:
+            clicked = bool(
+                self.page.evaluate(
+                    """labels => {
+                        const normalize = (value) =>
+                            String(value || '')
+                                .normalize('NFD')
+                                .replace(/[\\u0300-\\u036f]/g, '')
+                                .replace(/\\s+/g, ' ')
+                                .trim()
+                                .toLowerCase();
+                        const wanted = new Set((labels || []).map(normalize));
+                        const isVisible = (el) => {
+                            if (!el) return false;
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0;
+                        };
+                        const textFrom = (el) => normalize(
+                            el?.innerText ||
+                            el?.textContent ||
+                            el?.value ||
+                            el?.getAttribute?.('aria-label') ||
+                            el?.getAttribute?.('title') ||
+                            ''
+                        );
+                        const candidates = Array.from(document.querySelectorAll('button, a, label, span, div, li, input, option'));
+                        for (const element of candidates) {
+                            if (!isVisible(element)) continue;
+                            const text = textFrom(element);
+                            if (!text || !wanted.has(text)) continue;
+                            if (element.tagName === 'OPTION' && element.parentElement?.tagName === 'SELECT') {
+                                element.parentElement.value = element.value;
+                                element.parentElement.dispatchEvent(new Event('change', { bubbles: true }));
+                                return true;
+                            }
+                            if (element.tagName === 'LABEL') {
+                                element.click();
+                                element.dispatchEvent(new Event('change', { bubbles: true }));
+                                const clickedText = textFrom(element);
+                                if (wanted.has(clickedText)) {
+                                    return true;
+                                }
+                                const htmlFor = element.getAttribute('for');
+                                if (htmlFor) {
+                                    const target = document.getElementById(htmlFor);
+                                    if (target) {
+                                        target.click();
+                                        target.dispatchEvent(new Event('change', { bubbles: true }));
+                                        return true;
+                                    }
+                                }
+                            }
+                            element.click();
+                            element.dispatchEvent(new Event('change', { bubbles: true }));
+                            return true;
+                        }
+                        return false;
+                    }""",
+                    list(normalized_labels),
+                )
+            )
+            if clicked:
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=4000)
+                except Exception:
+                    pass
+                try:
+                    self.page.wait_for_timeout(700)
+                except Exception:
+                    time.sleep(0.7)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def required_mailbox_notice_visible(self) -> bool:
+        scopes = self._visible_modal_scopes() or list(self._iter_scopes())
+        for scope in scopes:
+            text = _normalize_portal_text(" ".join(self._body_text(scope).split()))
+            if "mensagens importantes" in text and "caixa postal" in text:
+                return True
+        try:
+            clicked_label_exists = self.page.get_by_text(re.compile("Ir para a Caixa Postal", re.IGNORECASE)).count() > 0
+        except Exception:
+            clicked_label_exists = False
+        page_text = _normalize_portal_text(" ".join(self._body_text().split()))
+        return clicked_label_exists and "caixa postal" in page_text and "mensagens importantes" in page_text
+
+    def _mailbox_row_requires_read(self, text: str) -> bool:
+        normalized = " ".join(str(text or "").split())
+        lowered = _normalize_portal_text(normalized)
+        if not lowered:
+            return False
+        if "assunto" in lowered and "data" in lowered and len(lowered) < 120:
+            return False
+        unread_tokens = ["nao lida", "nao lido", "novo"]
+        important_tokens = ["importante", "prioridade", "urgente"]
+        return "!" in normalized or any(token in lowered for token in unread_tokens + important_tokens)
+
+    def mark_required_mailbox_messages_as_read(self, limit: int = 30) -> int:
+        def _visible_rows_locator() -> Optional[Any]:
+            locator, _, _ = self._message_rows_locator()
+            if locator is None:
+                return None
+            try:
+                count = locator.count()
+            except Exception:
+                return None
+            for index in range(min(count, 8)):
+                try:
+                    if locator.nth(index).is_visible():
+                        return locator
+                except Exception:
+                    continue
+            return None
+
+        opened = 0
+        seen_rows: set[str] = set()
+        locator = _visible_rows_locator()
+
+        if locator is None and self._is_message_detail_view():
+            opened += 1
+            try:
+                self.page.wait_for_timeout(1000)
+            except Exception:
+                time.sleep(1.0)
+            self._return_to_message_list()
+            locator = _visible_rows_locator()
+
+        filter_applied = self._apply_unread_mailbox_filter()
+        page_cycles = 0
+        while locator is not None and opened < limit and page_cycles < 8:
+            try:
+                row_count = locator.count()
+            except Exception:
+                row_count = 0
+            if row_count <= 0:
+                break
+
+            target_index: Optional[int] = None
+            fallback_index: Optional[int] = None
+            target_text = ""
+            for index in range(row_count):
+                row = locator.nth(index)
+                try:
+                    if not row.is_visible():
+                        continue
+                    cells = row.locator("td, th, [role='cell'], [role='gridcell']").all_inner_texts()
+                    raw_text = "\n".join(item.strip() for item in cells if item.strip()) or row.inner_text(timeout=1500)
+                    raw_text = " ".join(raw_text.split())
+                except Exception:
+                    continue
+                if not raw_text or raw_text in seen_rows:
+                    continue
+                if self._mailbox_row_requires_read(raw_text):
+                    target_index = index
+                    target_text = raw_text
+                    break
+                if fallback_index is None and (filter_applied or page_cycles == 0):
+                    fallback_index = index
+                    target_text = raw_text
+
+            if target_index is None and fallback_index is not None:
+                target_index = fallback_index
+
+            if target_index is None:
+                if not self._click_next_page():
+                    break
+                page_cycles += 1
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                if filter_applied:
+                    self._apply_unread_mailbox_filter()
+                locator = _visible_rows_locator()
+                continue
+
+            seen_rows.add(target_text)
+            locator_missing = False
+            try:
+                row = locator.nth(target_index)
+                detail_text = self._open_row_detail(row)
+                if detail_text or self._is_message_detail_view():
+                    opened += 1
+                    try:
+                        self.page.wait_for_timeout(1200)
+                    except Exception:
+                        time.sleep(1.2)
+            finally:
+                self.close_blocking_modals()
+                if self._is_message_detail_view() or _visible_rows_locator() is None:
+                    try:
+                        self._click_by_label(ecac_base.BACK_TO_LIST_LABELS, timeout_ms=3000)
+                    except Exception:
+                        pass
+                self._return_to_message_list()
+                if filter_applied:
+                    self._apply_unread_mailbox_filter()
+                locator = _visible_rows_locator()
+                locator_missing = locator is None
+            if locator_missing:
+                break
+
+        return opened
+
+    def resolve_required_mailbox_notice(self) -> bool:
+        if not self.required_mailbox_notice_visible():
+            return False
+        self.runtime.logger.info("Modal de leitura obrigatoria da Caixa Postal detectado.")
+        if not self._open_required_mailbox_from_notice():
+            raise RuntimeError("O modal de leitura obrigatoria apareceu, mas o acesso para a Caixa Postal nao foi localizado.")
+        ready = self._wait_until(
+            lambda: self._message_rows_locator()[0] is not None or self._is_message_detail_view(),
+            timeout_ms=20000,
+            interval_ms=400,
+        )
+        if not ready:
+            raise RuntimeError("A Caixa Postal nao ficou disponivel apos o modal de leitura obrigatoria.")
+        opened = self.mark_required_mailbox_messages_as_read(limit=30)
         self.runtime.logger.info(f"Leitura obrigatoria da Caixa Postal concluida; {opened} mensagem(ns) aberta(s).")
         try:
             self.page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
@@ -885,6 +1743,22 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         return "Titular (Acesso GOV.BR por Certificado)" in html or "Responsavel Legal" in html
 
     def _current_profile_context(self) -> str:
+        try:
+            locator = self.page.locator("#informacao-perfil span")
+            count = locator.count()
+        except Exception:
+            count = 0
+        if count > 0:
+            snippets: list[str] = []
+            for index in range(min(count, 6)):
+                try:
+                    text = " ".join(locator.nth(index).inner_text(timeout=1200).split())
+                except Exception:
+                    continue
+                if text:
+                    snippets.append(text)
+            if snippets:
+                return " | ".join(snippets)
         context = super()._current_profile_context()
         if context:
             return context
@@ -914,22 +1788,67 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             return False
         return self.expected_document in only_digits(html)
 
+    def _find_frame_by_url_tokens(self, *tokens: str):
+        wanted = [str(token or "").strip().lower() for token in tokens if str(token or "").strip()]
+        if not wanted:
+            return None
+        for frame in self.page.frames:
+            url = str(getattr(frame, "url", "") or "").lower()
+            if any(token in url for token in wanted):
+                return frame
+        return None
+
+    def _hcaptcha_visible_in_dom(self) -> bool:
+        try:
+            return bool(
+                self.page.locator("body").evaluate(
+                    """() => {
+                        const nodes = Array.from(
+                            document.querySelectorAll(
+                                "iframe[src*='hcaptcha'], iframe[title*='hCaptcha'], .h-captcha, [data-sitekey][data-size]"
+                            )
+                        );
+                        return nodes.some((node) => {
+                            const rect = node.getBoundingClientRect();
+                            const style = window.getComputedStyle(node);
+                            if (!style || style.display === "none" || style.visibility === "hidden") {
+                                return false;
+                            }
+                            if (Number(style.opacity || "1") <= 0) {
+                                return false;
+                            }
+                            if (rect.width < 100 || rect.height < 50) {
+                                return false;
+                            }
+                            return rect.bottom > 0 &&
+                                rect.right > 0 &&
+                                rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
+                                rect.left < (window.innerWidth || document.documentElement.clientWidth);
+                        });
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
     def captcha_visible(self) -> bool:
         try:
             if HCAPTCHA_ERROR_URL_TOKEN.lower() in self.page.url.lower():
                 return True
         except Exception:
             pass
+        if self._hcaptcha_visible_in_dom():
+            return True
         markers = [
             "Por favor, tente novamente.",
             "Verificar",
             "Desafio hCaptcha",
             "hCaptcha",
         ]
-        for scope in self._iter_scopes():
+        for scope in [self.page]:
             text = self._body_text(scope)
-            lowered = text.lower()
-            if any(marker.lower() in lowered for marker in markers):
+            lowered = _normalize_portal_text(text)
+            if any(_normalize_portal_text(marker) in lowered for marker in markers):
                 return True
         return False
 
@@ -1014,8 +1933,137 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             return
         self.login()
 
+    def _finalize_profile_switch(self, company: CompanyRecord, initial_state: str = "") -> bool:
+        deadline = time.time() + 45.0
+        state = initial_state
+        mailbox_processed = False
+        while time.time() < deadline:
+            if self._profile_switch_success(company):
+                return True
+            if self.required_mailbox_notice_visible():
+                self._log_step("profile_switch_mailbox_notice")
+                self.resolve_required_mailbox_notice()
+                mailbox_processed = True
+                state = ""
+                self.return_to_ecac_home()
+                continue
+            locator, _, _ = self._message_rows_locator()
+            if self._is_message_detail_view() or locator is not None or state in {"detail_message", "mailbox_list"}:
+                self._log_step(f"profile_switch_mailbox_state state={state or 'unknown'}")
+                opened = self.mark_required_mailbox_messages_as_read(limit=12)
+                self._log_step(f"profile_switch_mailbox_read opened={opened}")
+                mailbox_processed = True
+                state = ""
+                try:
+                    self.page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
+                except Exception:
+                    pass
+                self.close_blocking_modals()
+                self.return_to_ecac_home()
+                continue
+            if mailbox_processed:
+                self.close_blocking_modals()
+            try:
+                self.page.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
+        return self._profile_switch_success(company)
+
+    def switch_company_profile(self, company: CompanyRecord) -> str:
+        self.ensure_logged_in()
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                self.close_blocking_modals()
+                self._log_step(f"clicked_alterar_acesso attempt={attempt}")
+                if not self._click_by_label(PROFILE_MENU_LABELS, timeout_ms=7000):
+                    raise RuntimeError("Fluxo de 'Alterar perfil de acesso' nao foi localizado.")
+                visible = self._wait_until(
+                    lambda: self._profile_modal_visible(company) or self._find_company_input(company) is not None,
+                    timeout_ms=15000,
+                )
+                if not visible:
+                    raise RuntimeError("Modal de alteracao de perfil nao ficou visivel.")
+                self._log_step("modal_visible")
+                if not self._fill_company_search(company):
+                    raise RuntimeError("Campo de busca do perfil nao foi localizado ou nao aceitou o CNPJ.")
+                selected = self._wait_until(
+                    lambda: self._select_company_in_profile(company),
+                    timeout_ms=4000,
+                    interval_ms=350,
+                )
+                if selected:
+                    self._log_step("profile_option_selected")
+                confirmed = self._confirm_profile_switch()
+                if not confirmed and not selected:
+                    raise RuntimeError("Botao de confirmacao do perfil nao foi localizado.")
+                if not confirmed:
+                    self._log_step("clicked_confirm skipped_button_not_found")
+                modal_closed = self._wait_until(
+                    lambda: (
+                        bool(self._extract_profile_modal_error())
+                        or self.required_mailbox_notice_visible()
+                        or self._is_message_detail_view()
+                        or self._message_rows_locator()[0] is not None
+                        or self._profile_switch_success_relaxed(company)
+                        or not self._profile_modal_visible(company)
+                    ),
+                    timeout_ms=20000,
+                    interval_ms=350,
+                )
+                if not modal_closed:
+                    raise RuntimeError("O modal de alteracao de perfil permaneceu aberto apos a confirmacao.")
+                modal_error = self._extract_profile_modal_error()
+                if modal_error:
+                    lowered_error = modal_error.lower()
+                    if "não existe procuração eletrônica" in lowered_error or "nao existe procuracao eletronica" in lowered_error:
+                        raise ecac_base.ProfileSwitchNoPowerOfAttorneyError(
+                            f"Falha retornada pelo portal ao alterar perfil: {modal_error}"
+                        )
+                    raise ecac_base.ProfileSwitchError(f"Falha retornada pelo portal ao alterar perfil: {modal_error}")
+                cleanup_state = self._after_profile_switch_cleanup()
+                changed = self._finalize_profile_switch(company, cleanup_state)
+                context = self._current_profile_context()
+                if not changed and self._profile_switch_success_relaxed(company):
+                    self._log_step(f"profile_switched_relaxed attempt={attempt} state={cleanup_state}")
+                    return context
+                if not changed:
+                    raise RuntimeError(
+                        "A troca de perfil nao foi validada visualmente no portal para a empresa alvo."
+                    )
+                self._log_step(f"profile_switched attempt={attempt} state={cleanup_state}")
+                return context
+            except ecac_base.ProfileSwitchNoPowerOfAttorneyError as exc:
+                last_error = exc
+                self.runtime.logger.warning(f"profile_switch_failed attempt={attempt} company={company.name}: {exc}")
+                self._capture_debug_artifacts(f"profile_switch_failed_{company.company_id}_attempt_{attempt}")
+                self.close_blocking_modals()
+                raise
+            except Exception as exc:
+                last_error = exc
+                self.runtime.logger.warning(f"profile_switch_failed attempt={attempt} company={company.name}: {exc}")
+                self._capture_debug_artifacts(f"profile_switch_failed_{company.company_id}_attempt_{attempt}")
+                self.close_blocking_modals()
+                if attempt < 3:
+                    try:
+                        self.page.wait_for_timeout(600 * attempt)
+                    except Exception:
+                        pass
+        raise RuntimeError(str(last_error or "Falha desconhecida ao trocar o perfil da empresa."))
+
+    def return_to_ecac_home(self) -> None:
+        self.ensure_logged_in()
+        try:
+            self.page.goto("https://cav.receita.fazenda.gov.br/ecac/", wait_until="domcontentloaded", timeout=120000)
+        except Exception:
+            return
+        if self.required_mailbox_notice_visible():
+            self.resolve_required_mailbox_notice()
+        self.close_blocking_modals()
+
     def ensure_company_profile(self, company: CompanyRecord) -> tuple[bool, str]:
         self.ensure_logged_in()
+        self.return_to_ecac_home()
         self.resolve_required_mailbox_notice()
         current_context = self._current_profile_context()
         if company.document and only_digits(company.document) and only_digits(company.document) in only_digits(current_context):
@@ -1023,6 +2071,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         if company.name and company.name.lower() in current_context.lower():
             return False, current_context
         switched_context = self.switch_company_profile(company)
+        self.return_to_ecac_home()
         self.resolve_required_mailbox_notice()
         return True, self._current_profile_context() or switched_context
 
@@ -1035,26 +2084,28 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         if self.captcha_visible():
             self.handle_captcha_if_present()
         iframe_ready = self._wait_until(
-            lambda: self.page.locator("#frmApp").count() > 0 or "pgdasd2018.app" in self.page.content().lower(),
-            timeout_ms=60000,
+            lambda: self.page.locator("#frmApp").count() > 0
+            or self._find_frame_by_url_tokens("pgdasd2018.app", "simplesnacional") is not None,
+            timeout_ms=120000,
             interval_ms=500,
         )
         if not iframe_ready:
+            self._capture_debug("pgdas_iframe_unavailable")
             raise RuntimeError("Iframe principal do PGDAS-D / DEFIS nao ficou disponivel.")
-        src = ""
+        frame = self._find_frame_by_url_tokens("pgdasd2018.app", "simplesnacional")
+        if frame is not None:
+            return str(getattr(frame, "url", "") or "").strip()
         try:
-            src = str(self.page.locator("#frmApp").first.get_attribute("src") or "").strip()
+            return str(self.page.locator("#frmApp").first.get_attribute("src") or "").strip()
         except Exception:
-            pass
-        return src
+            return ""
 
     def wait_for_pgdas_frame(self, timeout_ms: int = 120000):
         deadline = time.time() + (timeout_ms / 1000)
         while time.time() < deadline:
-            for frame in self.page.frames:
-                url = str(getattr(frame, "url", "") or "")
-                if "pgdasd2018" in url.lower() or "simplesnacional" in url.lower():
-                    return frame
+            frame = self._find_frame_by_url_tokens("pgdasd2018", "simplesnacional")
+            if frame is not None:
+                return frame
             try:
                 self.page.wait_for_timeout(500)
             except Exception:
@@ -1079,6 +2130,18 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             except Exception:
                 time.sleep(0.5)
         return frame
+
+    def wait_for_defis_frame(self, timeout_ms: int = 120000):
+        deadline = time.time() + (timeout_ms / 1000)
+        while time.time() < deadline:
+            frame = self._find_frame_by_url_tokens("defis.app")
+            if frame is not None:
+                return frame
+            try:
+                self.page.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
+        return None
 
     def click_anywhere(self, labels: list[str], *, timeout_ms: int = 7000) -> bool:
         return self._click_by_label(labels, timeout_ms=timeout_ms)
@@ -1112,6 +2175,608 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             return scope.locator("body").inner_text(timeout=4000)
         except Exception:
             return ""
+
+    def navigate_scope(self, scope: Any, url: str, *, timeout_ms: int = 120000) -> None:
+        scope.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+
+    def submit_consulta_year(self, frame: Any, year: int) -> None:
+        year_value = str(int(year))
+        form_submitted = False
+        try:
+            form_submitted = bool(
+                frame.locator("form[action$='/Consulta']").evaluate(
+                    """(form, year) => {
+                        if (!form) {
+                            return false;
+                        }
+                        const input = form.querySelector("#ano");
+                        if (!input) {
+                            return false;
+                        }
+                        input.value = String(year);
+                        input.dispatchEvent(new Event("input", { bubbles: true }));
+                        input.dispatchEvent(new Event("change", { bubbles: true }));
+                        form.submit();
+                        return true;
+                    }""",
+                    year_value,
+                )
+            )
+        except Exception:
+            form_submitted = False
+        if not form_submitted:
+            field = frame.locator("#ano").first
+            field.wait_for(state="visible", timeout=10000)
+            field.click(timeout=5000)
+            field.fill(year_value, timeout=5000)
+            frame.get_by_role("button", name=re.compile("Consultar", re.IGNORECASE)).click(timeout=15000, force=True)
+        updated = self._wait_until(
+            lambda: f"declaracoes de {year_value}" in _normalize_portal_text(self.collect_scope_text(frame)),
+            timeout_ms=25000,
+            interval_ms=400,
+        )
+        if not updated:
+            raise RuntimeError(f"A consulta do ano-calendario {year_value} nao atualizou a tela do PGDAS-D.")
+
+    def collect_extrato_targets(self, frame: Any) -> list[dict[str, Any]]:
+        try:
+            html = frame.content()
+        except Exception:
+            return []
+        rows: list[dict[str, Any]] = []
+        section_pattern = re.compile(
+            r"PA\s*(\d{2})/(\d{4})</th>(.*?)(?=PA\s*\d{2}/\d{4}</th>|Vers[aã]o\s+\d|\Z)",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        for month, year, section_html in section_pattern.findall(html):
+            hrefs = re.findall(
+                r'href="([^"]*?/Consulta/Extrato[^"]+)"',
+                section_html,
+                flags=re.IGNORECASE,
+            )
+            section_text = re.sub(r"<[^>]+>", " ", section_html)
+            rows.append(
+                {
+                    "competencia": f"{int(year):04d}-{int(month):02d}",
+                    "pa": f"{int(month):02d}/{int(year):04d}",
+                    "href": unescape(hrefs[-1]) if hrefs else "",
+                    "extrato_count": len(hrefs),
+                    "raw_text": " ".join(f"PA {int(month):02d}/{int(year):04d} {section_text}".split()),
+                }
+            )
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in rows or []:
+            if not isinstance(item, dict):
+                continue
+            competencia = str(item.get("competencia") or "").strip()
+            if not competencia or competencia in seen:
+                continue
+            seen.add(competencia)
+            normalized.append(
+                {
+                    "competencia": competencia,
+                    "pa": str(item.get("pa") or "").strip(),
+                    "href": str(item.get("href") or "").strip(),
+                    "extrato_count": int(item.get("extrato_count") or 0),
+                    "raw_text": str(item.get("raw_text") or "").strip(),
+                }
+            )
+        normalized.sort(key=lambda row: row["competencia"])
+        return normalized
+
+    def collect_extrato_targets(self, frame: Any) -> list[dict[str, Any]]:
+        try:
+            html = frame.content()
+        except Exception:
+            return []
+        rows: list[dict[str, Any]] = []
+        pa_pattern = re.compile(r"PA\s*0?(\d{1,2})/(\d{4})", flags=re.IGNORECASE)
+        href_pattern = re.compile(r'href=(["\'])([^"\']*?/Consulta/Extrato[^"\']+)\1', flags=re.IGNORECASE)
+        pa_matches = list(pa_pattern.finditer(html))
+        href_matches = list(href_pattern.finditer(html))
+        grouped: dict[str, dict[str, Any]] = {}
+        pa_index = 0
+        current_pa: Optional[re.Match[str]] = None
+        for href_match in href_matches:
+            while pa_index < len(pa_matches) and pa_matches[pa_index].start() < href_match.start():
+                current_pa = pa_matches[pa_index]
+                pa_index += 1
+            if current_pa is None:
+                continue
+            month = int(current_pa.group(1))
+            year = int(current_pa.group(2))
+            competencia = f"{year:04d}-{month:02d}"
+            pa = f"{month:02d}/{year:04d}"
+            row = grouped.setdefault(
+                competencia,
+                {"competencia": competencia, "pa": pa, "hrefs": [], "raw_text": ""},
+            )
+            row["hrefs"].append(unescape(href_match.group(2)))
+            if not row["raw_text"]:
+                context_html = html[current_pa.start():min(len(html), href_match.end() + 1200)]
+                row["raw_text"] = " ".join(re.sub(r"<[^>]+>", " ", context_html).split())
+        for competencia, item in grouped.items():
+            hrefs = [str(value or "").strip() for value in item.get("hrefs") or [] if str(value or "").strip()]
+            rows.append(
+                {
+                    "competencia": competencia,
+                    "pa": str(item.get("pa") or "").strip(),
+                    "href": hrefs[-1] if hrefs else "",
+                    "extrato_count": len(hrefs),
+                    "raw_text": str(item.get("raw_text") or "").strip(),
+                }
+            )
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in rows or []:
+            if not isinstance(item, dict):
+                continue
+            competencia = str(item.get("competencia") or "").strip()
+            if not competencia or competencia in seen:
+                continue
+            seen.add(competencia)
+            normalized.append(
+                {
+                    "competencia": competencia,
+                    "pa": str(item.get("pa") or "").strip(),
+                    "href": str(item.get("href") or "").strip(),
+                    "extrato_count": int(item.get("extrato_count") or 0),
+                    "raw_text": str(item.get("raw_text") or "").strip(),
+                }
+            )
+        normalized.sort(key=lambda row: row["competencia"])
+        return normalized
+
+    def collect_defis_year_options(self, frame: Any) -> list[str]:
+        try:
+            values = frame.evaluate(
+                """() => Array.from(
+                    document.querySelectorAll("input[type='radio'][name='ctl00$conteudo$AnoC']")
+                ).map((input) => (input.value || "").trim()).filter(Boolean)"""
+            )
+        except Exception:
+            values = []
+        years = sorted({value for value in values if re.fullmatch(r"20\d{2}", value)})
+        return years
+
+    def open_defis_year(self, frame: Any, year: str) -> None:
+        year_value = str(year).strip()
+        radio = frame.locator(f"input[type='radio'][value='{year_value}']").first
+        radio.wait_for(state="attached", timeout=10000)
+        radio.check(timeout=10000)
+        clicked = False
+        try:
+            clicked = bool(
+                frame.evaluate(
+                    """() => {
+                        const link = Array.from(document.querySelectorAll("a[href]")).find((anchor) =>
+                            (anchor.getAttribute("href") || "").includes("lnkContinuar")
+                        );
+                        if (!link) {
+                            return false;
+                        }
+                        link.click();
+                        return true;
+                    }"""
+                )
+            )
+        except Exception:
+            clicked = False
+        if not clicked:
+            frame.get_by_text("Continuar", exact=True).click(timeout=15000, force=True)
+        ready = self._wait_until(
+            lambda: "ja existe uma declaracao" in _normalize_portal_text(self.collect_scope_text(frame))
+            or "declarar imprimir ajuda sair" in _normalize_portal_text(self.collect_scope_text(frame)),
+            timeout_ms=25000,
+            interval_ms=400,
+        )
+        if not ready:
+            raise RuntimeError(f"A DEFIS do ano {year_value} nao abriu a tela de detalhes.")
+
+    def open_defis_print_page(self, frame: Any) -> None:
+        clicked = False
+        try:
+            clicked = bool(
+                frame.evaluate(
+                    """() => {
+                        const link = Array.from(document.querySelectorAll("a[href]")).find((anchor) =>
+                            (anchor.textContent || "").trim() === "Imprimir" ||
+                            (anchor.getAttribute("href") || "").includes("Imprimir()")
+                        );
+                        if (!link) {
+                            return false;
+                        }
+                        link.click();
+                        return true;
+                    }"""
+                )
+            )
+        except Exception:
+            clicked = False
+        if not clicked:
+            frame.get_by_text("Imprimir", exact=True).click(timeout=15000, force=True)
+        ready = self._wait_until(
+            lambda: "relacao de declaracoes transmitidas" in _normalize_portal_text(self.collect_scope_text(frame))
+            or "imprimir.aspx" in str(getattr(frame, "url", "") or "").lower(),
+            timeout_ms=25000,
+            interval_ms=400,
+        )
+        if not ready:
+            raise RuntimeError("A tela de impressao da DEFIS nao foi carregada.")
+
+    def collect_defis_print_rows(self, frame: Any) -> list[dict[str, Any]]:
+        try:
+            rows = frame.evaluate(
+                """() => {
+                    return Array.from(document.querySelectorAll("tr")).map((row) => {
+                        const cells = Array.from(row.querySelectorAll("td"));
+                        if (cells.length < 6) {
+                            return null;
+                        }
+                        const year = (cells[0].innerText || "").trim();
+                        if (!/^20\\d{2}$/.test(year)) {
+                            return null;
+                        }
+                        const links = Array.from(row.querySelectorAll("a[href]")).map((anchor) => anchor.getAttribute("href") || "");
+                        const iddec = row.querySelector("a[iddec]")?.getAttribute("iddec") || (cells[cells.length - 1].innerText || "").trim();
+                        return {
+                            year,
+                            iddec,
+                            recibo_href: links[0] || "",
+                            declaracao_href: links[1] || "",
+                            raw_text: (row.innerText || "").replace(/\\s+/g, " ").trim(),
+                        };
+                    }).filter(Boolean);
+                }"""
+            )
+        except Exception:
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in rows or []:
+            if not isinstance(item, dict):
+                continue
+            year = str(item.get("year") or "").strip()
+            if not re.fullmatch(r"20\d{2}", year):
+                continue
+            normalized.append(
+                {
+                    "year": year,
+                    "iddec": str(item.get("iddec") or "").strip(),
+                    "recibo_href": str(item.get("recibo_href") or "").strip(),
+                    "declaracao_href": str(item.get("declaracao_href") or "").strip(),
+                    "raw_text": str(item.get("raw_text") or "").strip(),
+                }
+            )
+        return normalized
+
+    def expect_download_href(
+        self,
+        scope: Any,
+        href: str,
+        output_path: Path,
+        *,
+        timeout_ms: int = 45000,
+        fallback_capture_pdf: bool = False,
+    ) -> Optional[Path]:
+        target_href = str(href or "").strip()
+        if not target_href:
+            return None
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        base_url = str(getattr(scope, "url", "") or self.page.url or "").strip()
+        absolute_url = urljoin(base_url, target_href)
+
+        def _capture_current_page_pdf() -> Optional[Path]:
+            marker_attr = "data-codex-prev-height"
+            resized_iframe = False
+            try:
+                if scope is not self.page:
+                    try:
+                        frame_height = int(
+                            scope.evaluate(
+                                """() => {
+                                    const body = document.body;
+                                    const doc = document.documentElement;
+                                    return Math.max(
+                                        body ? body.scrollHeight : 0,
+                                        body ? body.offsetHeight : 0,
+                                        doc ? doc.clientHeight : 0,
+                                        doc ? doc.scrollHeight : 0,
+                                        doc ? doc.offsetHeight : 0
+                                    );
+                                }"""
+                            )
+                        )
+                    except Exception:
+                        frame_height = 0
+                    if frame_height > 0:
+                        try:
+                            self.page.locator("#frmApp").evaluate(
+                                """(el, payload) => {
+                                    el.setAttribute(payload.attr, el.style.height || "");
+                                    el.style.height = `${payload.height}px`;
+                                }""",
+                                {"attr": marker_attr, "height": max(frame_height + 64, 1200)},
+                            )
+                            resized_iframe = True
+                            self.page.wait_for_timeout(250)
+                        except Exception:
+                            resized_iframe = False
+                dimensions = self.page.evaluate(
+                    """() => {
+                        const body = document.body;
+                        const doc = document.documentElement;
+                        return {
+                            width: Math.max(
+                                body ? body.scrollWidth : 0,
+                                body ? body.offsetWidth : 0,
+                                doc ? doc.clientWidth : 0,
+                                doc ? doc.scrollWidth : 0,
+                                doc ? doc.offsetWidth : 0
+                            ),
+                            height: Math.max(
+                                body ? body.scrollHeight : 0,
+                                body ? body.offsetHeight : 0,
+                                doc ? doc.clientHeight : 0,
+                                doc ? doc.scrollHeight : 0,
+                                doc ? doc.offsetHeight : 0
+                            )
+                        };
+                    }"""
+                )
+                width_px = max(1024, min(int(dimensions.get("width") or 1280) + 32, 2200))
+                height_px = max(1400, min(int(dimensions.get("height") or 2200) + 64, 18000))
+                try:
+                    self.page.emulate_media(media="screen")
+                except Exception:
+                    pass
+                self.page.pdf(
+                    path=str(output_path),
+                    width=f"{width_px}px",
+                    height=f"{height_px}px",
+                    print_background=True,
+                    margin={"top": "12px", "right": "12px", "bottom": "12px", "left": "12px"},
+                )
+                return output_path if output_path.exists() else None
+            finally:
+                if resized_iframe:
+                    try:
+                        self.page.locator("#frmApp").evaluate(
+                            """(el, attr) => {
+                                const previous = el.getAttribute(attr) || "";
+                                el.style.height = previous;
+                                el.removeAttribute(attr);
+                            }""",
+                            marker_attr,
+                        )
+                    except Exception:
+                        pass
+
+        def _build_requests_session(target_url: str) -> requests.Session:
+            http = requests.Session()
+            try:
+                user_agent = str(self.page.evaluate("() => navigator.userAgent") or "").strip()
+            except Exception:
+                user_agent = ""
+            if user_agent:
+                http.headers["User-Agent"] = user_agent
+            http.headers["Referer"] = base_url or target_url
+            try:
+                cookies = self.session.context.cookies([target_url])
+            except Exception:
+                cookies = []
+            for cookie in cookies:
+                name = str(cookie.get("name") or "").strip()
+                if not name:
+                    continue
+                http.cookies.set(
+                    name,
+                    str(cookie.get("value") or ""),
+                    domain=str(cookie.get("domain") or "").lstrip(".") or None,
+                    path=str(cookie.get("path") or "/") or "/",
+                )
+            return http
+
+        def _render_html_to_pdf(html_text: str) -> Optional[Path]:
+            browser = None
+            context = None
+            render_page = None
+            prepared_html = str(html_text or "")
+            if "<head" in prepared_html.lower():
+                prepared_html = re.sub(
+                    r"(<head[^>]*>)",
+                    rf"\1<base href=\"{absolute_url}\">",
+                    prepared_html,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+            else:
+                prepared_html = f"<base href=\"{absolute_url}\">{prepared_html}"
+            try:
+                browser = self.session.playwright.chromium.launch(
+                    headless=True,
+                    executable_path=self.session.executable_path or None,
+                    args=["--disable-gpu", "--ignore-certificate-errors", "--no-sandbox"],
+                )
+                context = browser.new_context(ignore_https_errors=True, viewport={"width": 1600, "height": 1200})
+                render_page = context.new_page()
+                render_page.set_content(prepared_html, wait_until="domcontentloaded")
+                try:
+                    render_page.evaluate(
+                        """() => {
+                            const normalize = (value) => String(value || '')
+                                .normalize('NFKD')
+                                .replace(/[\\u0300-\\u036f]/g, '')
+                                .toLowerCase()
+                                .replace(/\\s+/g, ' ')
+                                .trim();
+                            const selectors = [
+                                "div.container[style*='width: 98%']",
+                                "div.container",
+                                ".container-fluid .container",
+                                ".container-fluid",
+                            ];
+                            const candidates = [];
+                            for (const selector of selectors) {
+                                for (const element of Array.from(document.querySelectorAll(selector))) {
+                                    const text = normalize(element.innerText || '');
+                                    if (!text || !text.includes('extrato detalhado')) continue;
+                                    candidates.push(element);
+                                }
+                            }
+                            const target = candidates.sort((a, b) => (b.innerText || '').length - (a.innerText || '').length)[0];
+                            if (!target) {
+                                return false;
+                            }
+                            const targetWidth = Math.max(
+                                Math.ceil(target.getBoundingClientRect().width || 0),
+                                Math.ceil(target.scrollWidth || 0),
+                                900
+                            );
+                            const clone = target.cloneNode(true);
+                            const wrapper = document.createElement('div');
+                            wrapper.id = 'codex-print-root';
+                            wrapper.style.margin = '0 auto';
+                            wrapper.style.width = `${targetWidth}px`;
+                            wrapper.style.maxWidth = 'none';
+                            wrapper.style.padding = '0';
+                            wrapper.style.background = '#ffffff';
+                            wrapper.appendChild(clone);
+                            document.body.innerHTML = '';
+                            document.body.style.margin = '0';
+                            document.body.style.padding = '8px';
+                            document.body.style.background = '#ffffff';
+                            document.body.appendChild(wrapper);
+                            return true;
+                        }"""
+                    )
+                except Exception:
+                    pass
+                try:
+                    render_page.emulate_media(media="screen")
+                except Exception:
+                    pass
+                dimensions = render_page.evaluate(
+                    """() => {
+                        const root = document.querySelector('#codex-print-root') || document.body;
+                        const body = document.body;
+                        const doc = document.documentElement;
+                        return {
+                            width: Math.max(
+                                root ? root.scrollWidth : 0,
+                                root ? root.offsetWidth : 0,
+                                body ? body.scrollWidth : 0,
+                                body ? body.offsetWidth : 0,
+                                doc ? doc.clientWidth : 0,
+                                doc ? doc.scrollWidth : 0,
+                                doc ? doc.offsetWidth : 0
+                            ),
+                            height: Math.max(
+                                root ? root.scrollHeight : 0,
+                                root ? root.offsetHeight : 0,
+                                body ? body.scrollHeight : 0,
+                                body ? body.offsetHeight : 0,
+                                doc ? doc.clientHeight : 0,
+                                doc ? doc.scrollHeight : 0,
+                                doc ? doc.offsetHeight : 0
+                            )
+                        };
+                    }"""
+                )
+                width_px = max(1024, min(int(dimensions.get("width") or 1280) + 32, 2200))
+                height_px = max(1400, min(int(dimensions.get("height") or 2200) + 64, 18000))
+                render_page.pdf(
+                    path=str(output_path),
+                    width=f"{width_px}px",
+                    height=f"{height_px}px",
+                    print_background=True,
+                    margin={"top": "12px", "right": "12px", "bottom": "12px", "left": "12px"},
+                )
+                return output_path if output_path.exists() else None
+            finally:
+                try:
+                    if render_page is not None:
+                        render_page.close()
+                except Exception:
+                    pass
+                try:
+                    if context is not None:
+                        context.close()
+                except Exception:
+                    pass
+                try:
+                    if browser is not None:
+                        browser.close()
+                except Exception:
+                    pass
+
+        if target_href.lower().startswith("javascript:"):
+            try:
+                with self.page.expect_download(timeout=timeout_ms) as download_info:
+                    clicked = bool(
+                        scope.evaluate(
+                            """href => {
+                                const candidates = Array.from(document.querySelectorAll("a[href]")).filter((anchor) =>
+                                    (anchor.getAttribute("href") || "").trim() === href
+                                );
+                                const link = candidates.length ? candidates[candidates.length - 1] : null;
+                                if (!link) {
+                                    return false;
+                                }
+                                link.click();
+                                return true;
+                            }""",
+                            target_href,
+                        )
+                    )
+                if not clicked:
+                    return None
+                download = download_info.value
+                download.save_as(str(output_path))
+                return output_path
+            except Exception:
+                return None
+
+        try:
+            http = _build_requests_session(absolute_url)
+            response = http.get(
+                absolute_url,
+                timeout=max(10, timeout_ms // 1000),
+                allow_redirects=True,
+            )
+            response.raise_for_status()
+        except Exception:
+            return None
+
+        content_type = str(response.headers.get("content-type") or "").lower()
+        content_disposition = str(response.headers.get("content-disposition") or "").lower()
+        payload_bytes = response.content or b""
+        if (
+            "application/pdf" in content_type
+            or ".pdf" in content_disposition
+            or payload_bytes.startswith(b"%PDF")
+        ):
+            output_path.write_bytes(payload_bytes)
+            return output_path
+
+        if not fallback_capture_pdf:
+            return None
+
+        try:
+            html_text = response.text
+        except Exception:
+            html_text = payload_bytes.decode("utf-8", errors="ignore")
+        normalized = _normalize_portal_text(html_text)
+        if "extrato detalhado" not in normalized:
+            return None
+        self.runtime.logger.info(
+            f"Extrato sem download detectado em {absolute_url}; salvando a pagina completa em PDF."
+        )
+        return _render_html_to_pdf(html_text)
 
     def expect_download_click(
         self,
@@ -1159,13 +2824,87 @@ def cleanup_old_outputs(root_dir: Path) -> None:
             continue
 
 
-def ensure_company_output_dir(runtime_env: RuntimeEnvironment, company: CompanyRecord) -> Path:
+def ensure_company_output_dir(
+    runtime_env: RuntimeEnvironment,
+    office_context: OfficeContext,
+    company: CompanyRecord,
+) -> Path:
+    base_path = str(getattr(office_context, "base_path", "") or "").strip()
+    segment_path = str(getattr(office_context, "segment_path", "") or "").strip()
+    if base_path:
+        company_folder = sanitize_company_folder(company.name)
+        if not segment_path:
+            output_dir = Path(base_path) / company_folder
+            output_dir.mkdir(parents=True, exist_ok=True)
+            runtime_env.logger.warning(
+                "segment_path nao foi resolvido no SaaS; salvando apenas em base_path/empresa."
+            )
+            runtime_env.logger.info(f"Diretorio de saida resolvido para {company.name}: {output_dir}")
+            return output_dir
+        relative_dir = f"{company_folder}/{segment_path.strip().replace(chr(92), '/')}".replace("\\", "/")
+        output_dir = Path(base_path) / relative_dir.replace("/", os.sep)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        runtime_env.logger.info(f"Diretorio de saida resolvido para {company.name}: {output_dir}")
+        return output_dir
     output_root = runtime_env.paths.data_dir / "output"
     cleanup_old_outputs(output_root)
     day_dir = output_root / datetime.now().strftime("%Y-%m-%d")
     company_dir = day_dir / f"{slugify(company.name)}_{only_digits(company.document)}"
     company_dir.mkdir(parents=True, exist_ok=True)
+    runtime_env.logger.info(f"Diretorio de saida resolvido para {company.name}: {company_dir}")
     return company_dir
+
+
+def shutdown_runtime_logger(runtime_env: RuntimeEnvironment) -> None:
+    logger = getattr(runtime_env, "logger", None)
+    if logger is None:
+        return
+    try:
+        logger.bind_sink(None)
+    except Exception:
+        pass
+    internal_logger = getattr(logger, "_logger", None)
+    if internal_logger is None:
+        return
+    handlers = list(getattr(internal_logger, "handlers", []) or [])
+    for handler in handlers:
+        try:
+            handler.flush()
+        except Exception:
+            pass
+        try:
+            handler.close()
+        except Exception:
+            pass
+        try:
+            internal_logger.removeHandler(handler)
+        except Exception:
+            pass
+
+
+def cleanup_runtime_artifacts(runtime_env: RuntimeEnvironment) -> None:
+    try:
+        shutdown_runtime_logger(runtime_env)
+    except Exception:
+        pass
+
+    data_dir = getattr(runtime_env.paths, "data_dir", None)
+    logs_dir = getattr(runtime_env.paths, "logs_dir", None)
+    if data_dir:
+        try:
+            shutil.rmtree(Path(data_dir) / "output", ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            for gitkeep in Path(data_dir).rglob(".gitkeep"):
+                gitkeep.unlink(missing_ok=True)
+        except Exception:
+            pass
+    if logs_dir:
+        try:
+            shutil.rmtree(Path(logs_dir), ignore_errors=True)
+        except Exception:
+            pass
 
 
 def ensure_default_certificate(
@@ -1191,8 +2930,6 @@ def ensure_default_certificate(
     dashboard_certificate = resolve_certificate_from_dashboard(runtime_env, companies)
     if dashboard_certificate:
         return dashboard_certificate
-    if DEFAULT_TEST_CERT_PFX.exists():
-        return import_pfx_and_get_metadata(DEFAULT_TEST_CERT_PFX, DEFAULT_TEST_CERT_PASSWORD)
     raise RuntimeError("Nenhum certificado digital foi resolvido para o fluxo do e-CAC.")
 
 
@@ -1346,7 +3083,7 @@ def apply_execution_eligibility(
         elif updated.source in {"cli", "certificate_default", "ui_certificate_default"}:
             updated.eligible = True
         else:
-            updated.eligible = updated.has_certificate_credentials and str(updated.auth_mode or "").strip().lower() == "certificate"
+            updated.eligible = updated.has_certificate_credentials
             if not updated.eligible:
                 updated.block_reason = "Empresa sem certificado digital configurado no dashboard."
         normalized.append(updated)
@@ -1362,7 +3099,7 @@ def resolve_company_certificate_for_execution(
 ) -> CertificateMetadata:
     if pfx_path:
         return import_pfx_and_get_metadata(Path(pfx_path), pfx_password)
-    if company.has_certificate_credentials and str(company.auth_mode or "").strip().lower() == "certificate":
+    if company.has_certificate_credentials:
         metadata = resolve_certificate_from_dashboard(runtime_env, [company])
         if metadata:
             return metadata
@@ -1370,8 +3107,6 @@ def resolve_company_certificate_for_execution(
     env_certificate = resolve_certificate_from_env()
     if env_certificate:
         return env_certificate
-    if DEFAULT_TEST_CERT_PFX.exists():
-        return import_pfx_and_get_metadata(DEFAULT_TEST_CERT_PFX, DEFAULT_TEST_CERT_PASSWORD)
     raise RuntimeError(f"Nenhum certificado digital foi resolvido para {company.name}.")
 
 
@@ -1521,7 +3256,7 @@ class RobotRunner:
                         switched, context = False, automation._current_profile_context()
                     result.profile_switched = switched
                     result.company_profile_context = context
-                    company_dir = ensure_company_output_dir(self.runtime, company)
+                    company_dir = ensure_company_output_dir(self.runtime, office_context, company)
                     processed = self.process_company(automation, company, company_dir, self.args)
                     processed.profile_switched = switched
                     processed.company_profile_context = processed.company_profile_context or context
@@ -1631,6 +3366,7 @@ class RobotRunner:
                 heartbeat_thread.join(timeout=2)
             self.dashboard.update_robot_presence(status="inactive", robot_id=robot_id)
             self.runtime.mark_inactive("runner_exit")
+            cleanup_runtime_artifacts(self.runtime)
 
 
 def build_common_parser(description: str) -> argparse.ArgumentParser:
@@ -1678,52 +3414,179 @@ def _rows_with_pa(frame) -> list[tuple[str, Any]]:
 
 
 def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, company_dir: Path, args: argparse.Namespace) -> CompanyExecutionResult:
-    result = CompanyExecutionResult(company_id=company.company_id, company_name=company.name, company_document=company.document, status="pending", eligible=True)
+    result = CompanyExecutionResult(
+        company_id=company.company_id,
+        company_name=company.name,
+        company_document=company.document,
+        status="pending",
+        eligible=True,
+    )
+    current_year = datetime.now().year
+    automation.runtime.logger.info(
+        f"{company.name} [{format_document(company.document)}] | Abrindo PGDAS-D e DEFIS."
+    )
+
     automation.open_pgdas_defis()
     result.flags["pgdas_opened"] = True
-    frame = automation.wait_for_pgdas_ready()
-    result.flags["consultas_opened"] = automation.click_anywhere(CONSULTAR_DECLARACOES_LABELS, timeout_ms=12000)
-    last_by_competencia: dict[str, tuple[str, Any]] = {}
-    for text, row in _rows_with_pa(frame):
-        match = re.search(r"PA\s*(\d{1,2})/(\d{4})", text, flags=re.IGNORECASE)
-        if match:
-            last_by_competencia[f"{int(match.group(2)):04d}-{int(match.group(1)):02d}"] = (text, row)
+    frame = automation.wait_for_pgdas_frame()
+    if frame is None:
+        raise RuntimeError("Frame do PGDAS-D nao ficou disponivel para consulta de extratos.")
+
+    consulta_url = urljoin(str(getattr(frame, "url", "") or ""), "Consulta")
+    if not consulta_url.lower().endswith("/consulta"):
+        consulta_url = "https://sinac.cav.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/pgdasd2018.app/Consulta"
+    automation.navigate_scope(frame, consulta_url)
+    result.flags["consultas_opened"] = True
+
     extratos: list[dict[str, Any]] = []
-    for competencia_key in sorted(last_by_competencia):
-        text, row = last_by_competencia[competencia_key]
-        item = {"competencia": competencia_key, "raw_text": text, "downloaded": False}
-        file_path = company_dir / f"extrato_simples_{competencia_key.replace('-', '_')}.pdf"
-        saved = automation.expect_download_click(row, EXTRATO_DOWNLOAD_LABELS, file_path)
-        if saved is not None and saved.exists():
-            item["downloaded"] = True
-            item["path"] = str(saved)
-            result.files.append({"kind": "extrato", "path": str(saved), "filename": saved.name})
-        extratos.append(item)
-    result.flags["extratos_count"] = len(extratos)
+    for year in range(2018, current_year + 1):
+        automation.runtime.logger.info(f"{company.name} | Consultando extratos do ano {year}.")
+        automation.submit_consulta_year(frame, year)
+        normalized_body = _normalize_portal_text(automation.collect_scope_text(frame))
+        if "nao existem declaracoes transmitidas para o ano informado" in normalized_body:
+            extratos.append(
+                {
+                    "kind": "extrato",
+                    "year": year,
+                    "downloaded": False,
+                    "skipped": True,
+                    "reason": "no_declarations",
+                }
+            )
+            continue
+
+        targets = automation.collect_extrato_targets(frame)
+        if not targets:
+            extratos.append(
+                {
+                    "kind": "extrato",
+                    "year": year,
+                    "downloaded": False,
+                    "skipped": True,
+                    "reason": "no_extrato_links",
+                }
+            )
+            continue
+
+        for target in targets:
+            competencia = str(target.get("competencia") or "").strip()
+            href = str(target.get("href") or "").strip()
+            payload = {
+                "kind": "extrato",
+                "year": year,
+                "competencia": competencia,
+                "pa": str(target.get("pa") or "").strip(),
+                "raw_text": str(target.get("raw_text") or "").strip(),
+                "downloaded": False,
+                "extrato_count": int(target.get("extrato_count") or 0),
+            }
+            if not href:
+                payload["warning"] = "Mes sem link de extrato."
+                extratos.append(payload)
+                continue
+            file_path = company_dir / f"Extrato do Simples - {competencia}.pdf"
+            saved = automation.expect_download_href(
+                frame,
+                href,
+                file_path,
+                fallback_capture_pdf=True,
+            )
+            if saved is not None and saved.exists():
+                payload["downloaded"] = True
+                payload["path"] = str(saved)
+                result.files.append(
+                    {"kind": "extrato", "path": str(saved), "filename": saved.name}
+                )
+            extratos.append(payload)
+
+    result.flags["extratos_count"] = sum(1 for item in extratos if item.get("downloaded"))
     result.records.extend(extratos)
+
+    automation.runtime.logger.info(f"{company.name} | Abrindo DEFIS.")
+    automation.navigate_scope(frame, DEFIS_ENTRY_URL)
+    defis_frame = automation.wait_for_defis_frame(timeout_ms=30000) or frame
+    result.flags["defis_opened"] = True
+
+    defis_years = automation.collect_defis_year_options(defis_frame)
+    result.flags["defis_year_options"] = len(defis_years)
     defis_files: list[dict[str, Any]] = []
-    if automation.click_anywhere(DEFIS_LABELS, timeout_ms=12000):
-        result.flags["defis_opened"] = True
-        years_found = sorted(set(re.findall(r"\b20\d{2}\b", automation.collect_scope_text(frame))))
-        for year in years_found:
-            payload = {"kind": "defis", "year": year, "declaracao_downloaded": False, "recibo_downloaded": False}
-            declaracao_path = company_dir / f"defis_declaracao_{year}.pdf"
-            recibo_path = company_dir / f"defis_recibo_{year}.pdf"
-            saved_declaracao = automation.expect_download_click(frame, DECLARACAO_DOWNLOAD_LABELS, declaracao_path)
-            saved_recibo = automation.expect_download_click(frame, RECIBO_DOWNLOAD_LABELS, recibo_path)
-            if saved_declaracao is not None and saved_declaracao.exists():
-                payload["declaracao_downloaded"] = True
-                payload["declaracao_path"] = str(saved_declaracao)
-                result.files.append({"kind": "defis_declaracao", "path": str(saved_declaracao), "filename": saved_declaracao.name})
-            if saved_recibo is not None and saved_recibo.exists():
-                payload["recibo_downloaded"] = True
-                payload["recibo_path"] = str(saved_recibo)
-                result.files.append({"kind": "defis_recibo", "path": str(saved_recibo), "filename": saved_recibo.name})
-            defis_files.append(payload)
-    result.flags["defis_count"] = len(defis_files)
+    if defis_years:
+        selected_year = defis_years[0]
+        result.flags["defis_selected_year"] = selected_year
+        automation.runtime.logger.info(
+            f"{company.name} | Abrindo DEFIS a partir do primeiro ano disponivel: {selected_year}."
+        )
+        try:
+            automation.open_defis_year(defis_frame, selected_year)
+            automation.open_defis_print_page(defis_frame)
+        except Exception as exc:
+            defis_files.append(
+                {
+                    "kind": "defis",
+                    "year": selected_year,
+                    "recibo_downloaded": False,
+                    "declaracao_downloaded": False,
+                    "warning": str(exc),
+                }
+            )
+        else:
+            rows = automation.collect_defis_print_rows(defis_frame)
+            if not rows:
+                defis_files.append(
+                    {
+                        "kind": "defis",
+                        "year": selected_year,
+                        "recibo_downloaded": False,
+                        "declaracao_downloaded": False,
+                        "warning": "Nenhuma linha foi encontrada na tela de impressao da DEFIS.",
+                    }
+                )
+            for row in rows:
+                year = str(row.get("year") or "").strip()
+                payload = {
+                    "kind": "defis",
+                    "year": year,
+                    "recibo_downloaded": False,
+                    "declaracao_downloaded": False,
+                }
+                recibo_path = company_dir / f"DEFIS - {year} - Recibo.pdf"
+                declaracao_path = company_dir / f"DEFIS - {year} - Declaracao.pdf"
+                saved_recibo = automation.expect_download_href(
+                    defis_frame, str(row.get("recibo_href") or ""), recibo_path
+                )
+                saved_declaracao = automation.expect_download_href(
+                    defis_frame, str(row.get("declaracao_href") or ""), declaracao_path
+                )
+                if saved_recibo is not None and saved_recibo.exists():
+                    payload["recibo_downloaded"] = True
+                    payload["recibo_path"] = str(saved_recibo)
+                    result.files.append(
+                        {"kind": "defis_recibo", "path": str(saved_recibo), "filename": saved_recibo.name}
+                    )
+                if saved_declaracao is not None and saved_declaracao.exists():
+                    payload["declaracao_downloaded"] = True
+                    payload["declaracao_path"] = str(saved_declaracao)
+                    result.files.append(
+                        {
+                            "kind": "defis_declaracao",
+                            "path": str(saved_declaracao),
+                            "filename": saved_declaracao.name,
+                        }
+                    )
+                payload["raw_text"] = str(row.get("raw_text") or "").strip()
+                defis_files.append(payload)
+
+    result.flags["defis_count"] = sum(
+        1 for item in defis_files if item.get("recibo_downloaded") or item.get("declaracao_downloaded")
+    )
     result.records.extend(defis_files)
     result.records.append(default_company_payload(company))
-    result.status = "success" if extratos or defis_files else "partial"
+    automation.return_to_ecac_home()
+    downloaded_any = any(item.get("downloaded") for item in extratos) or any(
+        item.get("recibo_downloaded") or item.get("declaracao_downloaded")
+        for item in defis_files
+    )
+    result.status = "success" if downloaded_any else "partial"
     return result
 
 
@@ -1807,8 +3670,8 @@ class MainWindow(QMainWindow):
         self.resize(1180, 760)
         self._build_ui()
         self.runtime.logger.bind_sink(self.append_log)
-        self.reload_companies()
         self.robot_dashboard_id = self.dashboard.register_robot_presence(status="active")
+        self.reload_companies()
         self.robot_heartbeat_timer.start()
 
     def _build_ui(self) -> None:
@@ -1894,6 +3757,7 @@ class MainWindow(QMainWindow):
         self.robot_heartbeat_timer.stop()
         self.dashboard.update_robot_presence(status="inactive", robot_id=self.robot_dashboard_id or "")
         self.runtime.mark_inactive()
+        cleanup_runtime_artifacts(self.runtime)
         super().closeEvent(event)
 
 

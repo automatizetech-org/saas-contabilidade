@@ -1,19 +1,19 @@
 {
-  "event_id": "593fedcb-a181-4240-aa4d-e621a5a9737e",
-  "job_id": "593fedcb-a181-4240-aa4d-e621a5a9737e",
+  "event_id": "223a1554-093d-43e8-b0f8-f852c6924c41",
+  "job_id": "223a1554-093d-43e8-b0f8-f852c6924c41",
   "execution_request_id": null,
   "robot_technical_id": "ecac_simples_consulta_extratos_defis",
   "display_name": "e-CAC - Simples Nacional - Consulta Extratos e DEFIS",
   "status": "failed",
-  "started_at": "2026-03-26T07:28:06.932043+00:00",
-  "finished_at": "2026-03-26T07:32:14.434929+00:00",
+  "started_at": "2026-03-26T22:58:01.010275+00:00",
+  "finished_at": "2026-03-26T23:11:35.885332+00:00",
   "error_message": null,
   "summary": {
-    "run_id": "20260326_042806_4ab77054",
+    "run_id": "20260326_195801_644e3197",
     "technical_id": "ecac_simples_consulta_extratos_defis",
     "display_name": "e-CAC - Simples Nacional - Consulta Extratos e DEFIS",
-    "started_at": "2026-03-26T07:28:06.932043+00:00",
-    "finished_at": "2026-03-26T07:32:14.434929+00:00",
+    "started_at": "2026-03-26T22:58:01.010275+00:00",
+    "finished_at": "2026-03-26T23:11:35.885332+00:00",
     "status": "failed",
     "company_results": [
       {
@@ -26,14 +26,14 @@
         "profile_switched": false,
         "company_profile_context": "Titular (Acesso GOV.BR por Certificado): 37.197.978/0001-03 - EG FLEURY ASSESSORIA E SERVICOS LTDA | Alterar perfil de acesso | Alterar perfil de acesso | Para utilizar os serviços disponibilizados como responsável legal, procurador, empresa filial ou sucessora, é necessário alterar o perfil de acesso.",
         "errors": [
-          "HCaptchaVisibleError: O hCaptcha permaneceu visivel apos o timeout configurado."
+          "playwright._impl._errors.TimeoutError: Locator.wait_for: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"#ano\").first to be visible"
         ],
         "warnings": [],
         "files": [],
         "records": [],
         "flags": {},
-        "started_at": "2026-03-26T07:31:43.518643+00:00",
-        "finished_at": "2026-03-26T07:31:43.518651+00:00"
+        "started_at": "2026-03-26T23:07:34.822512+00:00",
+        "finished_at": "2026-03-26T23:07:34.822521+00:00"
       },
       {
         "company_id": "cd37f5c5-60ce-4392-85f3-e2ae0bcf1078",
@@ -45,14 +45,14 @@
         "profile_switched": false,
         "company_profile_context": "",
         "errors": [
-          "RuntimeError: Fluxo de 'Alterar perfil de acesso' não foi localizado."
+          "RuntimeError: Falha retornada pelo portal ao alterar perfil: ATENÇÃO: Prezado usuário, o seu acesso foi bloqueado por possuir atributos que o caracteriza como um acesso automatizado. Favor tentar novamente. (191.54.128.192 - 1 - )"
         ],
         "warnings": [],
         "files": [],
         "records": [],
         "flags": {},
-        "started_at": "2026-03-26T07:32:10.888876+00:00",
-        "finished_at": "2026-03-26T07:32:10.888890+00:00"
+        "started_at": "2026-03-26T23:09:33.999223+00:00",
+        "finished_at": "2026-03-26T23:09:33.999236+00:00"
       },
       {
         "company_id": "2a2e6aa7-4b70-420d-8392-94397e0aaa68",
@@ -64,14 +64,14 @@
         "profile_switched": false,
         "company_profile_context": "",
         "errors": [
-          "RuntimeError: Page.goto: Target page, context or browser has been closed"
+          "RuntimeError: Falha retornada pelo portal ao alterar perfil: ATENÇÃO: Prezado usuário, o seu acesso foi bloqueado por possuir atributos que o caracteriza como um acesso automatizado. Favor tentar novamente. (191.54.128.192 - 1 - )"
         ],
         "warnings": [],
         "files": [],
         "records": [],
         "flags": {},
-        "started_at": "2026-03-26T07:32:13.970986+00:00",
-        "finished_at": "2026-03-26T07:32:13.970995+00:00"
+        "started_at": "2026-03-26T23:11:35.404185+00:00",
+        "finished_at": "2026-03-26T23:11:35.404199+00:00"
       }
     ],
     "metadata": {
@@ -99,14 +99,14 @@
       "profile_switched": false,
       "company_profile_context": "Titular (Acesso GOV.BR por Certificado): 37.197.978/0001-03 - EG FLEURY ASSESSORIA E SERVICOS LTDA | Alterar perfil de acesso | Alterar perfil de acesso | Para utilizar os serviços disponibilizados como responsável legal, procurador, empresa filial ou sucessora, é necessário alterar o perfil de acesso.",
       "errors": [
-        "HCaptchaVisibleError: O hCaptcha permaneceu visivel apos o timeout configurado."
+        "playwright._impl._errors.TimeoutError: Locator.wait_for: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator(\"#ano\").first to be visible"
       ],
       "warnings": [],
       "files": [],
       "records": [],
       "flags": {},
-      "started_at": "2026-03-26T07:31:43.518643+00:00",
-      "finished_at": "2026-03-26T07:31:43.518651+00:00"
+      "started_at": "2026-03-26T23:07:34.822512+00:00",
+      "finished_at": "2026-03-26T23:07:34.822521+00:00"
     },
     {
       "company_id": "cd37f5c5-60ce-4392-85f3-e2ae0bcf1078",
@@ -118,14 +118,14 @@
       "profile_switched": false,
       "company_profile_context": "",
       "errors": [
-        "RuntimeError: Fluxo de 'Alterar perfil de acesso' não foi localizado."
+        "RuntimeError: Falha retornada pelo portal ao alterar perfil: ATENÇÃO: Prezado usuário, o seu acesso foi bloqueado por possuir atributos que o caracteriza como um acesso automatizado. Favor tentar novamente. (191.54.128.192 - 1 - )"
       ],
       "warnings": [],
       "files": [],
       "records": [],
       "flags": {},
-      "started_at": "2026-03-26T07:32:10.888876+00:00",
-      "finished_at": "2026-03-26T07:32:10.888890+00:00"
+      "started_at": "2026-03-26T23:09:33.999223+00:00",
+      "finished_at": "2026-03-26T23:09:33.999236+00:00"
     },
     {
       "company_id": "2a2e6aa7-4b70-420d-8392-94397e0aaa68",
@@ -137,14 +137,14 @@
       "profile_switched": false,
       "company_profile_context": "",
       "errors": [
-        "RuntimeError: Page.goto: Target page, context or browser has been closed"
+        "RuntimeError: Falha retornada pelo portal ao alterar perfil: ATENÇÃO: Prezado usuário, o seu acesso foi bloqueado por possuir atributos que o caracteriza como um acesso automatizado. Favor tentar novamente. (191.54.128.192 - 1 - )"
       ],
       "warnings": [],
       "files": [],
       "records": [],
       "flags": {},
-      "started_at": "2026-03-26T07:32:13.970986+00:00",
-      "finished_at": "2026-03-26T07:32:13.970995+00:00"
+      "started_at": "2026-03-26T23:11:35.404185+00:00",
+      "finished_at": "2026-03-26T23:11:35.404199+00:00"
     }
   ],
   "responsible_office_result": null,
