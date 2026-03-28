@@ -122,6 +122,7 @@ public/contratos/*.pdf
 docs/fiscal/nfs/**/data/
 docs/fiscal/**/Instalador/
 docs/fiscal/**/Output/
+**/Chrome/
 **/Automacao_*_Setup.exe
 docs/paralegal/taxas e impostos/goiania-taxas-impostos-robot/data/Chrome/
 docs/paralegal/taxas e impostos/goiania-taxas-impostos-robot/data/chrome_cdp_profile/

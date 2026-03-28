@@ -1443,6 +1443,44 @@ function buildDateSegments(dateRule, competence) {
   return [];
 }
 
+function buildDeclarationSearchDirectories({
+  action,
+  source,
+  companyName,
+  competence,
+}) {
+  const companySegment = sanitizeDiskSegment(companyName);
+  const folderSegments = splitLogicalSegments(
+    source.physicalFolderPath || source.logicalFolderPath,
+  );
+  const dateSegments = buildDateSegments(source.dateRule, competence);
+  const candidates = [];
+  const seen = new Set();
+
+  const pushCandidate = (segments) => {
+    const normalizedSegments = [companySegment, ...segments].filter(Boolean);
+    if (normalizedSegments.length === 0) return;
+    const key = normalizedSegments.join("/").toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(normalizedSegments);
+  };
+
+  pushCandidate([...folderSegments, ...dateSegments]);
+  pushCandidate(folderSegments);
+
+  if (action === "simples_emitir_guia" && folderSegments.length > 0) {
+    const lastSegment = normalizeToken(folderSegments[folderSegments.length - 1]);
+    if (lastSegment === "guias") {
+      const parentSegments = folderSegments.slice(0, -1);
+      pushCandidate([...parentSegments, ...dateSegments]);
+      pushCandidate(parentSegments);
+    }
+  }
+
+  return candidates;
+}
+
 function walkDirectoryFiles(rootPath, directoryPath, recursive) {
   const safeDirectory = ensureSafeDirectory(rootPath, directoryPath);
   if (!safeDirectory) return [];
@@ -1635,31 +1673,39 @@ async function listDeclarationArtifacts({
       : await companyQuery;
   if (companiesError) throw companiesError;
 
-  const logicalSegments = splitLogicalSegments(
-    source.physicalFolderPath || source.logicalFolderPath,
-  );
-  const dateSegments = buildDateSegments(source.dateRule, parsedCompetence);
   const recursive = !parsedCompetence
     ? Boolean(source.dateRule)
     : source.dateRule === "year_month_day";
   const items = [];
+  const seenArtifacts = new Set();
 
   for (const company of companies ?? []) {
-    const companySegments = [sanitizeDiskSegment(company.name), ...logicalSegments, ...dateSegments];
-    const directoryPath = resolveWithin(basePath, companySegments);
-    const files = walkDirectoryFiles(basePath, directoryPath, recursive);
+    const searchDirectories = buildDeclarationSearchDirectories({
+      action: normalizedAction,
+      source,
+      companyName: company.name,
+      competence: parsedCompetence,
+    });
 
-    for (const file of files) {
-      const relativePath = normalizeRelativeFromBase(basePath, file.realPath);
-      items.push({
-        artifact_key: encodeArtifactKey(relativePath),
-        company_id: company.id,
-        company_name: company.name,
-        company_document: company.document ?? null,
-        file_name: path.basename(file.realPath),
-        modified_at: file.stats.mtime.toISOString(),
-        size_bytes: file.stats.size,
-      });
+    for (const directorySegments of searchDirectories) {
+      const directoryPath = resolveWithin(basePath, directorySegments);
+      const files = walkDirectoryFiles(basePath, directoryPath, recursive);
+
+      for (const file of files) {
+        const relativePath = normalizeRelativeFromBase(basePath, file.realPath);
+        const dedupeKey = `${company.id}:${relativePath}`.toLowerCase();
+        if (seenArtifacts.has(dedupeKey)) continue;
+        seenArtifacts.add(dedupeKey);
+        items.push({
+          artifact_key: encodeArtifactKey(relativePath),
+          company_id: company.id,
+          company_name: company.name,
+          company_document: company.document ?? null,
+          file_name: path.basename(file.realPath),
+          modified_at: file.stats.mtime.toISOString(),
+          size_bytes: file.stats.size,
+        });
+      }
     }
   }
 

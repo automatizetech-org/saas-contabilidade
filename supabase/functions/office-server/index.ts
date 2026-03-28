@@ -598,7 +598,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS")
     return new Response("ok", { headers: corsHeaders });
 
-  const action = new URL(req.url).searchParams.get("action")?.trim() || "";
+  const requestBody =
+    req.method === "GET" ? {} : await req.json().catch(() => ({}));
+  const action =
+    new URL(req.url).searchParams.get("action")?.trim() ||
+    String((requestBody as Record<string, unknown>).action ?? "").trim();
   const context = await getContext(req);
   if ("error" in context) return context.error;
 
@@ -612,7 +616,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     try {
       const requestedPath = validateRelativePath(String(body.file_path ?? ""));
       const candidatePaths = await buildRequestedPathCandidates(
@@ -667,7 +671,7 @@ Deno.serve(async (req) => {
         403,
       );
     }
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const rawItems = Array.isArray(body.items) ? body.items : [];
     if (rawItems.length === 0)
       return json({ error: "Nenhum arquivo informado para o ZIP." }, 400);
@@ -791,7 +795,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const documentId = String(body.document_id ?? "").trim();
     if (!documentId) return json({ error: "document_id is required" }, 400);
 
@@ -830,7 +834,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     try {
       await validateOfficeCompanies(
         admin,
@@ -869,7 +873,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     try {
       await validateOfficeCompanies(
         admin,
@@ -908,7 +912,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const robotTechnicalIds = Array.isArray(body.robot_technical_ids)
       ? body.robot_technical_ids
           .map((value) => String(value ?? "").trim())
@@ -946,7 +950,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const ids = [
       ...new Set(
         Array.isArray(body.ids)
@@ -1008,7 +1012,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const companyIds = [
       ...new Set(
         Array.isArray(body.company_ids)
@@ -1057,7 +1061,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const companyIds = [
       ...new Set(
         Array.isArray(body.company_ids)
@@ -1137,7 +1141,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body = await req.json().catch(() => ({}));
+    const body = requestBody as Record<string, unknown>;
     const call = String(body.call ?? "").trim();
     const allowed = new Set([
       "status",

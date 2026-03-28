@@ -20,6 +20,8 @@ import {
   asArray,
   asObject,
   createRunId,
+  formatCompetenceLabel,
+  formatYearLabel,
   isValidCompetence,
   isValidIsoDate,
   isValidYear,
@@ -34,6 +36,7 @@ import type {
   DeclarationArtifactListResponse,
   DeclarationCompany,
   DeclarationGuideSubmitInput,
+  DeclarationRunHistoryEntry,
   DeclarationRunHistoryPage,
   DeclarationRunItem,
   DeclarationRunState,
@@ -382,6 +385,14 @@ function mapRunItems(items: DeclarationRunItem[]) {
   return new Map(items.map((item) => [item.companyId, item]));
 }
 
+function hasArtifact(item: DeclarationRunItem | DeclarationRunHistoryEntry) {
+  return Boolean(item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey);
+}
+
+function runNeedsArtifactResolution(run: DeclarationRunState) {
+  return run.items.some((item) => item.status === "sucesso" && !hasArtifact(item));
+}
+
 function buildRunState(params: {
   action: DeclarationActionKind;
   mode: DeclarationActionMode;
@@ -466,6 +477,81 @@ function mapHistoryRowToRun(row: DeclarationRunHistoryRow): DeclarationRunState 
     finishedAt: payload.finishedAt == null ? row.finished_at : String(payload.finishedAt ?? ""),
     terminal: Boolean(payload.terminal ?? row.status !== "processando"),
   };
+}
+
+function formatReferenceLabel(action: DeclarationActionKind, reference: string | null) {
+  if (!reference) return "-";
+  return action === "simples_defis" ? formatYearLabel(reference) : formatCompetenceLabel(reference);
+}
+
+export function buildDeclarationRunHistoryEntries(runs: DeclarationRunState[]): DeclarationRunHistoryEntry[] {
+  return runs.flatMap((run) =>
+    run.items.map((item, index) => ({
+      entryId: `${run.runId}:${index}`,
+      runId: run.runId,
+      action: run.action,
+      mode: run.mode,
+      title: run.title,
+      requestIds: run.requestIds,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      terminal: run.terminal,
+      referenceLabel: formatReferenceLabel(
+        run.action,
+        extractReferenceFromSummary(run.action, asObject(item.meta ?? null)),
+      ),
+      dueDateLabel: extractDueDateFromSummary(run.action, asObject(item.meta ?? null)),
+      companyId: item.companyId,
+      companyName: item.companyName,
+      companyDocument: item.companyDocument,
+      status: item.status,
+      message: item.message,
+      executionRequestId: item.executionRequestId,
+      artifact: item.artifact ?? null,
+      meta: item.meta ?? null,
+    })),
+  );
+}
+
+async function listAllDeclarationRunHistoryRows(params?: {
+  actions?: DeclarationActionKind[];
+}): Promise<DeclarationRunHistoryRow[]> {
+  const chunkSize = 200;
+  let from = 0;
+  const rows: DeclarationRunHistoryRow[] = [];
+  const actions = Array.from(new Set((params?.actions ?? []).map((value) => String(value).trim()).filter(Boolean)));
+
+  while (true) {
+    let query = supabase
+      .from("declaration_run_history")
+      .select("*")
+      .order("started_at", { ascending: false })
+      .order("created_at", { ascending: false })
+      .range(from, from + chunkSize - 1);
+
+    if (actions.length > 0) {
+      query = query.in("action", actions);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const chunk = (data ?? []) as DeclarationRunHistoryRow[];
+    rows.push(...chunk);
+    if (chunk.length < chunkSize) {
+      break;
+    }
+    from += chunkSize;
+  }
+
+  return rows;
+}
+
+export async function listAllDeclarationRunHistoryRuns(params?: {
+  actions?: DeclarationActionKind[];
+}): Promise<DeclarationRunState[]> {
+  const rows = await listAllDeclarationRunHistoryRows(params);
+  return Promise.all(rows.map((row) => hydrateDeclarationRunArtifacts(mapHistoryRowToRun(row))));
 }
 
 function findRobotForAction(action: DeclarationActionKind, robots: Robot[]): Robot | null {
@@ -774,6 +860,59 @@ function extractReferenceFromSummary(action: DeclarationActionKind, summary: Rec
   return parsePortalCompetence(recordCompetence);
 }
 
+function formatHistoryDateLabel(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "-";
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    return raw;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [year, month, day] = raw.split("-");
+    return `${day}/${month}/${year}`;
+  }
+
+  const normalized = parsePortalDateToIso(raw);
+  if (normalized) {
+    return formatHistoryDateLabel(normalized);
+  }
+
+  return "-";
+}
+
+function extractDueDateFromSummary(
+  action: DeclarationActionKind,
+  summary: Record<string, Json>,
+) {
+  if (action !== "simples_emitir_guia") return "-";
+
+  const directCandidates = [
+    summary.data_vencimento_guia,
+    summary.guia_data_vencimento,
+    summary.data_vencimento_pdf,
+    summary.data_vencimento,
+  ];
+  for (const candidate of directCandidates) {
+    const label = formatHistoryDateLabel(candidate == null ? null : String(candidate));
+    if (label !== "-") return label;
+  }
+
+  const record = asObject(asArray(summary.records)[0] ?? null);
+  const recordCandidates = [
+    record.data_vencimento_guia,
+    record.guia_data_vencimento,
+    record.data_vencimento_pdf,
+    record.data_vencimento,
+  ];
+  for (const candidate of recordCandidates) {
+    const label = formatHistoryDateLabel(candidate == null ? null : String(candidate));
+    if (label !== "-") return label;
+  }
+
+  return "-";
+}
+
 function extractArtifact(summary: Record<string, Json>) {
   const filePath = toRelativeOfficePath(String(summary.file_path ?? summary.document_path ?? "").trim(), summary);
   const url = String(summary.download_url ?? summary.file_url ?? summary.document_url ?? "").trim();
@@ -862,8 +1001,141 @@ async function resolveArtifactsFromStorage(params: {
   return byCompanyId;
 }
 
+type ExecutionRuntimeProgress = {
+  current: number;
+  companyId: string | null;
+  companyName: string | null;
+  status: string;
+};
+
+async function getRuntimeProgressByRequestIds(
+  requestIds: string[],
+): Promise<Map<string, ExecutionRuntimeProgress>> {
+  const normalizedRequestIds = Array.from(new Set(requestIds.map((value) => String(value ?? "").trim()).filter(Boolean)));
+  if (normalizedRequestIds.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from("office_robot_runtime")
+    .select("current_execution_request_id, status, heartbeat_payload, updated_at")
+    .in("current_execution_request_id", normalizedRequestIds);
+  if (error) throw error;
+
+  const progressByRequestId = new Map<string, ExecutionRuntimeProgress>();
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    const requestId = String(row.current_execution_request_id ?? "").trim();
+    if (!requestId) continue;
+
+    const heartbeat = asObject((row.heartbeat_payload as Json | undefined) ?? null);
+    const progress = asObject(heartbeat.progress ?? null);
+    const currentRaw = Number(progress.current ?? 0);
+    const current = Number.isFinite(currentRaw) && currentRaw > 0 ? Math.trunc(currentRaw) : 0;
+    const companyId = String(progress.company_id ?? "").trim() || null;
+    const companyName = String(progress.company_name ?? "").trim() || null;
+    const status = String(row.status ?? heartbeat.status ?? "").trim().toLowerCase() || "inactive";
+    const updatedAt = Date.parse(String(row.updated_at ?? ""));
+    const existing = progressByRequestId.get(requestId);
+    const existingUpdatedAt = existing ? Date.parse(String((existing as { updatedAt?: string }).updatedAt ?? "")) : Number.NaN;
+
+    if (!existing || (!Number.isNaN(updatedAt) && (Number.isNaN(existingUpdatedAt) || updatedAt >= existingUpdatedAt))) {
+      progressByRequestId.set(
+        requestId,
+        {
+          current,
+          companyId,
+          companyName,
+          status,
+          updatedAt: String(row.updated_at ?? ""),
+        } as ExecutionRuntimeProgress & { updatedAt: string },
+      );
+    }
+  }
+
+  return new Map(
+    Array.from(progressByRequestId.entries()).map(([requestId, progress]) => [
+      requestId,
+      {
+        current: progress.current,
+        companyId: progress.companyId,
+        companyName: progress.companyName,
+        status: progress.status,
+      },
+    ]),
+  );
+}
+
+async function promoteSequentialRuntimeArtifacts(params: {
+  action: DeclarationActionKind;
+  items: DeclarationRunItem[];
+  requestIds: string[];
+}): Promise<DeclarationRunItem[]> {
+  const progressByRequestId = await getRuntimeProgressByRequestIds(params.requestIds).catch(() => new Map());
+  if (progressByRequestId.size === 0) return params.items;
+
+  const candidateCompanyIds = new Set<string>();
+  const candidateItems = new Map<string, DeclarationRunItem>();
+
+  for (const requestId of params.requestIds) {
+    const progress = progressByRequestId.get(requestId);
+    if (!progress || progress.status !== "processing") continue;
+
+    const requestItems = params.items.filter((item) => item.executionRequestId === requestId);
+    if (requestItems.length === 0) continue;
+
+    let completedCount = progress.current > 0 ? progress.current - 1 : 0;
+    if (progress.companyId) {
+      const currentIndex = requestItems.findIndex((item) => item.companyId === progress.companyId);
+      if (currentIndex >= 0) {
+        completedCount = Math.max(completedCount, currentIndex);
+      }
+    }
+
+    for (const item of requestItems.slice(0, Math.min(completedCount, requestItems.length))) {
+      if (item.status === "sucesso" || item.status === "erro") continue;
+      candidateCompanyIds.add(item.companyId);
+      candidateItems.set(item.companyId, item);
+    }
+  }
+
+  if (candidateItems.size === 0) return params.items;
+
+  const provisionalItems = Array.from(candidateItems.values()).map((item) => ({
+    ...item,
+    status: "sucesso" as const,
+    artifact: item.artifact ?? extractArtifact(asObject(item.meta ?? null)),
+  }));
+  const provisionalArtifactMap = new Map(
+    provisionalItems
+      .filter((item) => hasArtifact(item))
+      .map((item) => [item.companyId, item.artifact ?? null] as const),
+  );
+  const unresolvedItems = provisionalItems.filter((item) => !provisionalArtifactMap.has(item.companyId));
+  const storageArtifactMap =
+    unresolvedItems.length > 0
+      ? await resolveArtifactsFromStorage({
+          action: params.action,
+          items: unresolvedItems,
+        }).catch(() => new Map<string, DeclarationRunItem["artifact"]>())
+      : new Map<string, DeclarationRunItem["artifact"]>();
+
+  if (provisionalArtifactMap.size === 0 && storageArtifactMap.size === 0) {
+    return params.items;
+  }
+
+  return params.items.map((item) => {
+    if (!candidateCompanyIds.has(item.companyId) || item.status === "erro") return item;
+    const artifact = item.artifact ?? provisionalArtifactMap.get(item.companyId) ?? storageArtifactMap.get(item.companyId) ?? null;
+    if (!artifact) return item;
+    return {
+      ...item,
+      status: "sucesso",
+      message: "PDF gerado e disponível para download.",
+      artifact,
+    };
+  });
+}
+
 export async function hydrateDeclarationRunArtifacts(run: DeclarationRunState): Promise<DeclarationRunState> {
-  if (!run.items.some((item) => item.status === "sucesso" && !item.artifact)) {
+  if (!runNeedsArtifactResolution(run)) {
     return run;
   }
 
@@ -1231,7 +1503,12 @@ export async function startDeclarationRun(
 }
 
 export async function getDeclarationRunState(current: DeclarationRunState): Promise<DeclarationRunState> {
-  if (current.requestIds.length === 0 || current.terminal) return current;
+  if (current.requestIds.length === 0) {
+    return runNeedsArtifactResolution(current) ? hydrateDeclarationRunArtifacts(current) : current;
+  }
+  if (current.terminal) {
+    return runNeedsArtifactResolution(current) ? hydrateDeclarationRunArtifacts(current) : current;
+  }
 
   const [{ data: requests, error: requestsError }, { data: resultEvents, error: eventsError }] =
     await Promise.all([
@@ -1241,7 +1518,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
         .in("id", current.requestIds),
       supabase
         .from("robot_result_events")
-        .select("execution_request_id, status, summary, company_results, error_message")
+        .select("execution_request_id, status, summary, company_results, error_message, created_at")
         .in("execution_request_id", current.requestIds),
     ]);
 
@@ -1251,9 +1528,17 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
   const requestById = new Map(
     (requests ?? []).map((row) => [row.id, row]),
   );
-  const resultByExecutionId = new Map(
-    (resultEvents ?? []).map((row) => [String(row.execution_request_id ?? ""), row]),
-  );
+  const resultByExecutionId = new Map<string, Record<string, unknown>>();
+  for (const row of (resultEvents ?? []) as Array<Record<string, unknown>>) {
+    const requestId = String(row.execution_request_id ?? "").trim();
+    if (!requestId) continue;
+    const existing = resultByExecutionId.get(requestId);
+    const existingCreatedAt = existing ? Date.parse(String(existing.created_at ?? "")) : Number.NaN;
+    const nextCreatedAt = Date.parse(String(row.created_at ?? ""));
+    if (!existing || (!Number.isNaN(nextCreatedAt) && (Number.isNaN(existingCreatedAt) || nextCreatedAt >= existingCreatedAt))) {
+      resultByExecutionId.set(requestId, row);
+    }
+  }
 
   let nextItems = current.items.map((item) => {
     if (!item.executionRequestId) return item;
@@ -1349,6 +1634,12 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     };
   });
 
+  nextItems = await promoteSequentialRuntimeArtifacts({
+    action: current.action,
+    items: nextItems,
+    requestIds: current.requestIds,
+  });
+
   if (nextItems.some((item) => item.status === "sucesso" && !item.artifact)) {
     const artifactMap = await resolveArtifactsFromStorage({
       action: current.action,
@@ -1421,32 +1712,27 @@ export async function listDeclarationRunHistory(params: {
 }): Promise<DeclarationRunHistoryPage> {
   const page = Math.max(1, Number(params.page) || 1);
   const pageSize = Math.min(50, Math.max(1, Number(params.pageSize) || 10));
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
-
-  let query = supabase
-    .from("declaration_run_history")
-    .select("*", { count: "exact" })
-    .order("started_at", { ascending: false })
-    .order("created_at", { ascending: false })
-    .range(from, to);
-
-  const actions = Array.from(new Set((params.actions ?? []).map((value) => String(value).trim()).filter(Boolean)));
-  if (actions.length > 0) {
-    query = query.in("action", actions);
-  }
-
-  const { data, error, count } = await query;
-
-  if (error) throw error;
-
-  const hydratedItems = await Promise.all(
-    (data ?? []).map((row) => hydrateDeclarationRunArtifacts(mapHistoryRowToRun(row as DeclarationRunHistoryRow))),
+  const startIndex = (page - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const rows = await listAllDeclarationRunHistoryRows({ actions: params.actions });
+  const allRuns = rows.map((row) => mapHistoryRowToRun(row));
+  const allEntries = buildDeclarationRunHistoryEntries(allRuns);
+  const pageDescriptors = allEntries.slice(startIndex, endIndex);
+  const visibleRunIds = new Set(pageDescriptors.map((entry) => entry.runId));
+  const visibleRuns = await Promise.all(
+    allRuns
+      .filter((run) => visibleRunIds.has(run.runId))
+      .map((run) => hydrateDeclarationRunArtifacts(run)),
+  );
+  const visibleEntriesById = new Map(
+    buildDeclarationRunHistoryEntries(visibleRuns).map((entry) => [entry.entryId, entry] as const),
   );
 
   return {
-    items: hydratedItems,
-    total: Number(count ?? 0),
+    runs: visibleRuns,
+    entries: pageDescriptors
+      .map((entry) => visibleEntriesById.get(entry.entryId) ?? entry),
+    totalEntries: allEntries.length,
   };
 }
 

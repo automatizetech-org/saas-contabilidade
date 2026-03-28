@@ -229,7 +229,7 @@ export async function createCompany(params: {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user) throw new Error("NÃ£o autenticado")
+  if (!user) throw new Error("Não autenticado")
 
   const payload = sanitizeCompanyPayload(params)
   if (payload.document) {

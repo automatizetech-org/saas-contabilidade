@@ -23,12 +23,14 @@ import {
   sanitizeDeclarationError,
 } from "@/features/fiscal-declaracoes/helpers";
 import {
+  buildDeclarationRunHistoryEntries,
   downloadDeclarationRunHistoryZip,
   downloadDeclarationArtifact,
   deleteAllDeclarationRunHistory,
   hydrateDeclarationRunArtifacts,
   getDeclarationRunState,
   getFiscalDeclarationsBootstrap,
+  listAllDeclarationRunHistoryRuns,
   listDeclarationArtifacts,
   listDeclarationRunHistory,
   persistDeclarationRunState,
@@ -39,6 +41,7 @@ import type {
   DeclarationActionKind,
   DeclarationArtifactListItem,
   DeclarationGuideModalState,
+  DeclarationRunHistoryEntry,
   DeclarationRunItem,
   DeclarationRunState,
   DeclarationStoredDocumentsModalState,
@@ -56,6 +59,49 @@ function upsertRunHistory(
 ): DeclarationRunState[] {
   const next = [incoming, ...current.filter((run) => run.runId !== incoming.runId)];
   return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+}
+
+function syncVisibleRunHistoryEntries(
+  runs: DeclarationRunState[],
+  currentEntries: DeclarationRunHistoryEntry[],
+): DeclarationRunHistoryEntry[] {
+  const safeRuns = Array.isArray(runs) ? runs : [];
+  const safeEntries = Array.isArray(currentEntries) ? currentEntries : [];
+  const entriesById = new Map(
+    buildDeclarationRunHistoryEntries(safeRuns).map((entry) => [entry.entryId, entry] as const),
+  );
+  return safeEntries.map((entry) => entriesById.get(entry.entryId) ?? entry);
+}
+
+function normalizeRunHistoryPayload(
+  payload: unknown,
+): {
+  runs: DeclarationRunState[];
+  entries: DeclarationRunHistoryEntry[];
+  totalEntries: number;
+} {
+  const data = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+  const runs = Array.isArray(data?.runs)
+    ? (data.runs as DeclarationRunState[])
+    : Array.isArray(data?.items)
+      ? (data.items as DeclarationRunState[])
+      : [];
+  const entries = Array.isArray(data?.entries)
+    ? (data.entries as DeclarationRunHistoryEntry[])
+    : buildDeclarationRunHistoryEntries(runs);
+  const totalEntries =
+    typeof data?.totalEntries === "number" && Number.isFinite(data.totalEntries)
+      ? data.totalEntries
+      : entries.length;
+  return { runs, entries, totalEntries };
+}
+
+function hasEntryArtifact(entry: DeclarationRunHistoryEntry | DeclarationRunItem) {
+  return Boolean(entry.artifact?.filePath || entry.artifact?.url || entry.artifact?.artifactKey);
+}
+
+function runNeedsArtifactResolution(run: DeclarationRunState) {
+  return run.items.some((item) => item.status === "sucesso" && !hasEntryArtifact(item));
 }
 
 const initialGuideModalState: DeclarationGuideModalState = {
@@ -125,9 +171,11 @@ export default function FiscalDeclarationsPage() {
   );
   const defaultCompetence = useMemo(() => getDefaultDeclarationCompetence(), []);
   const [runHistory, setRunHistory] = useState<DeclarationRunState[]>([]);
+  const [runHistoryEntries, setRunHistoryEntries] = useState<DeclarationRunHistoryEntry[]>([]);
   const [runHistoryTotal, setRunHistoryTotal] = useState(0);
   const [runHistoryPage, setRunHistoryPage] = useState(1);
   const [runHistoryPageSize, setRunHistoryPageSize] = useState(10);
+  const safeRunHistory = Array.isArray(runHistory) ? runHistory : [];
   const [dispatching, setDispatching] = useState(false);
   const [zipDownloading, setZipDownloading] = useState(false);
   const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
@@ -171,19 +219,24 @@ export default function FiscalDeclarationsPage() {
       }),
     enabled: Boolean(officeId),
     placeholderData: keepPreviousData,
-    refetchInterval: 5_000,
+    refetchInterval: safeRunHistory.some((run) => !run.terminal || runNeedsArtifactResolution(run)) ? 5_000 : false,
     refetchIntervalInBackground: true,
   });
 
   useEffect(() => {
     if (!runHistoryQuery.data) return;
-    setRunHistory(runHistoryQuery.data.items);
-    setRunHistoryTotal(runHistoryQuery.data.total);
+    const normalizedHistory = normalizeRunHistoryPayload(runHistoryQuery.data);
+    setRunHistory(normalizedHistory.runs);
+    setRunHistoryEntries(normalizedHistory.entries);
+    setRunHistoryTotal(normalizedHistory.totalEntries);
   }, [runHistoryQuery.data]);
 
   const openRuns = useMemo(
-    () => runHistory.filter((run) => run.requestIds.length > 0 && !run.terminal),
-    [runHistory],
+    () =>
+      safeRunHistory.filter(
+        (run) => run.requestIds.length > 0 && (!run.terminal || runNeedsArtifactResolution(run)),
+      ),
+    [safeRunHistory],
   );
   const runStatusQueries = useQueries({
     queries: openRuns.map((run) => ({
@@ -206,7 +259,12 @@ export default function FiscalDeclarationsPage() {
       .map((query) => query.data)
       .filter((entry): entry is DeclarationRunState => Boolean(entry));
     if (updates.length === 0) return;
-    setRunHistory((current) => updates.reduce((runs, update) => upsertRunHistory(runs, update), current));
+    setRunHistory((current) => {
+      const baseRuns = Array.isArray(current) ? current : [];
+      const nextRuns = updates.reduce((runs, update) => upsertRunHistory(runs, update), baseRuns);
+      setRunHistoryEntries((currentEntries) => syncVisibleRunHistoryEntries(nextRuns, currentEntries));
+      return nextRuns;
+    });
     for (const update of updates) {
       void persistDeclarationRunState(update).catch(() => null);
     }
@@ -253,9 +311,14 @@ export default function FiscalDeclarationsPage() {
   );
 
   const applyRunUpdate = (run: DeclarationRunState, options?: { incrementTotal?: boolean }) => {
-    setRunHistory((current) => upsertRunHistory(current, run).slice(0, runHistoryPageSize));
+    setRunHistory((current) => {
+      const baseRuns = Array.isArray(current) ? current : [];
+      const nextRuns = upsertRunHistory(baseRuns, run);
+      setRunHistoryEntries(buildDeclarationRunHistoryEntries(nextRuns).slice(0, runHistoryPageSize));
+      return nextRuns.slice(0, runHistoryPageSize);
+    });
     if (options?.incrementTotal) {
-      setRunHistoryTotal((current) => current + 1);
+      setRunHistoryTotal((current) => current + run.items.length);
     }
     void persistDeclarationRunState(run).catch(() => null);
   };
@@ -370,42 +433,73 @@ export default function FiscalDeclarationsPage() {
     toast.error("Nenhum artefato disponivel para esta solicitacao.");
   };
 
-  const handleDownloadPrimaryRunArtifact = async (run: DeclarationRunState) => {
-    const hydratedRun = await hydrateDeclarationRunArtifacts(run).catch(() => run);
-    if (hydratedRun !== run) {
-      setRunHistory((current) => current.map((entry) => (entry.runId === hydratedRun.runId ? hydratedRun : entry)));
-      void persistDeclarationRunState(hydratedRun).catch(() => null);
+  const handleDownloadHistoryEntryArtifact = async (entry: DeclarationRunHistoryEntry) => {
+    const run = safeRunHistory.find((candidate) => candidate.runId === entry.runId) ?? null;
+    if (run) {
+      const hydratedRun = await hydrateDeclarationRunArtifacts(run).catch(() => run);
+      if (hydratedRun !== run) {
+        setRunHistory((current) => {
+          const baseRuns = Array.isArray(current) ? current : [];
+          const nextRuns = baseRuns.map((candidate) =>
+            candidate.runId === hydratedRun.runId ? hydratedRun : candidate,
+          );
+          setRunHistoryEntries((currentEntries) => syncVisibleRunHistoryEntries(nextRuns, currentEntries));
+          return nextRuns;
+        });
+        void persistDeclarationRunState(hydratedRun).catch(() => null);
+      }
+
+      const matchedItem = hydratedRun.items.find((item, index) => `${hydratedRun.runId}:${index}` === entry.entryId) ?? null;
+      if (matchedItem) {
+        await handleDownloadRunArtifact(hydratedRun, matchedItem);
+        return;
+      }
     }
 
-    const primaryItem =
-      hydratedRun.items.find((item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey) ?? null;
-    if (!primaryItem) {
-      toast.error("Nenhum PDF disponível para esta solicitação.");
+    if (entry.artifact?.filePath) {
+      try {
+        await downloadServerFileByPath(entry.artifact.filePath, entry.artifact.label);
+        toast.success("Download iniciado.");
+      } catch (error) {
+        toast.error(
+          sanitizeDeclarationError(error, "Não foi possível baixar o documento gerado."),
+        );
+      }
       return;
     }
-    await handleDownloadRunArtifact(hydratedRun, primaryItem);
+
+    if (entry.artifact?.artifactKey) {
+      const rawReference = String(
+        entry.meta && typeof entry.meta === "object"
+          ? (entry.meta as Record<string, unknown>).competencia ?? (entry.meta as Record<string, unknown>).competence ?? ""
+          : "",
+      ).trim();
+      try {
+        await downloadDeclarationArtifact({
+          action: entry.action,
+          companyId: entry.companyId,
+          competence: isValidCompetence(rawReference) ? rawReference : null,
+          artifactKey: entry.artifact.artifactKey,
+          suggestedName: entry.artifact.label,
+        });
+        toast.success("Download iniciado.");
+      } catch (error) {
+        toast.error(
+          sanitizeDeclarationError(error, "Não foi possível baixar o documento gerado."),
+        );
+      }
+      return;
+    }
+
+    toast.error("Nenhum PDF disponível para esta empresa.");
   };
 
   const handleDownloadAllRunHistoryZip = async () => {
     setZipDownloading(true);
     try {
-      const pageSize = 50;
-      const firstPage = await listDeclarationRunHistory({
-        page: 1,
-        pageSize,
+      const allRuns = await listAllDeclarationRunHistoryRuns({
         actions: ["simples_emitir_guia"],
       });
-
-      const allRuns = [...firstPage.items];
-      const totalPages = Math.max(1, Math.ceil(firstPage.total / pageSize));
-      for (let page = 2; page <= totalPages; page += 1) {
-        const nextPage = await listDeclarationRunHistory({
-          page,
-          pageSize,
-          actions: ["simples_emitir_guia"],
-        });
-        allRuns.push(...nextPage.items);
-      }
 
       const addedFiles = await downloadDeclarationRunHistoryZip({
         runs: allRuns,
@@ -446,14 +540,12 @@ export default function FiscalDeclarationsPage() {
   const handleClearAllRunHistory = async () => {
     setDispatching(true);
     try {
-      const allRuns = await listDeclarationRunHistory({
-        page: 1,
-        pageSize: 200,
+      const allRuns = await listAllDeclarationRunHistoryRuns({
         actions: ["simples_emitir_guia"],
       });
       const requestIds = Array.from(
         new Set(
-          allRuns.items
+          allRuns
             .filter((run) => !run.terminal)
             .flatMap((run) =>
             (run.requestIds ?? []).map((value) => String(value ?? "").trim()).filter(Boolean),
@@ -483,6 +575,7 @@ export default function FiscalDeclarationsPage() {
 
       await deleteAllDeclarationRunHistory({ actions: ["simples_emitir_guia"] });
       setRunHistory([]);
+      setRunHistoryEntries([]);
       setRunHistoryTotal(0);
       setRunHistoryPage(1);
       await runHistoryQuery.refetch();
@@ -650,7 +743,7 @@ export default function FiscalDeclarationsPage() {
           </div>
 
           <DeclarationRunHistoryTable
-            runs={runHistory}
+            entries={runHistoryEntries}
             loading={runHistoryQuery.isLoading || runHistoryQuery.isFetching}
             totalItems={runHistoryTotal}
             currentPage={runHistoryPage}
@@ -660,7 +753,7 @@ export default function FiscalDeclarationsPage() {
               setRunHistoryPageSize(pageSize);
               setRunHistoryPage(1);
             }}
-            onDownloadPrimaryArtifact={(run) => void handleDownloadPrimaryRunArtifact(run)}
+            onDownloadArtifact={(entry) => void handleDownloadHistoryEntryArtifact(entry)}
             onDownloadAllZip={() => void handleDownloadAllRunHistoryZip()}
             zipBusy={zipDownloading}
             onClearAll={() => void handleClearAllRunHistory()}

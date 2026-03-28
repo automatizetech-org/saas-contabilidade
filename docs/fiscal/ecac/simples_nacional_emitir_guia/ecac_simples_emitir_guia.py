@@ -7,6 +7,9 @@ import json
 import os
 import re
 import shutil
+import socket
+import stat
+import subprocess
 import sys
 import textwrap
 import threading
@@ -80,6 +83,11 @@ PGDAS_READY_MARKERS = [
 ]
 HCAPTCHA_ERROR_URL_TOKEN = "/Erro/93003"
 DEFIS_ENTRY_URL = "https://sinac.cav.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/defis.app/entrada.aspx"
+LOGIN_HCAPTCHA_RELOAD_LIMIT = 5
+LOGIN_HCAPTCHA_EXTENSION_WAIT_TIMEOUT_MS = 120000
+LOGIN_BROWSER_RESET_LIMIT = 3
+CAPTCHA_SOLVER_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
+CAPTCHA_SOLVER_EXTENSION_NAME = "Skill Up Agency LTD - Captcha Solver"
 
 
 def _stack_tail(exc: BaseException) -> str:
@@ -107,6 +115,111 @@ def _extract_common_name_from_subject(subject: str) -> str:
         common_name = re.sub(r":\d{11,14}$", "", common_name).strip()
         return common_name
     return ""
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+
+def _captcha_solver_extension_status(profile_root: Path) -> tuple[bool, str]:
+    root = Path(profile_root)
+    secure_preferences_path = root / "Default" / "Secure Preferences"
+    settings = (
+        (_read_json_dict(secure_preferences_path).get("extensions") or {}).get("settings") or {}
+    )
+    if not isinstance(settings, dict):
+        return False, "Secure Preferences sem registro de extensoes."
+    extension_entry = settings.get(CAPTCHA_SOLVER_EXTENSION_ID)
+    if not isinstance(extension_entry, dict):
+        return False, f"Extensao {CAPTCHA_SOLVER_EXTENSION_NAME} nao registrada no perfil."
+    disable_reasons = extension_entry.get("disable_reasons") or []
+    if isinstance(disable_reasons, list) and disable_reasons:
+        return False, f"Extensao {CAPTCHA_SOLVER_EXTENSION_NAME} desabilitada: {disable_reasons}."
+    extension_root = root / "Default" / "Extensions" / CAPTCHA_SOLVER_EXTENSION_ID
+    if not extension_root.exists():
+        return False, f"Diretorio da extensao {CAPTCHA_SOLVER_EXTENSION_NAME} ausente em {extension_root}."
+    versions = sorted([item.name for item in extension_root.iterdir() if item.is_dir()])
+    version = versions[-1] if versions else "sem_versao"
+    return True, f"{CAPTCHA_SOLVER_EXTENSION_NAME} pronta (id={CAPTCHA_SOLVER_EXTENSION_ID}, versao={version})."
+
+
+def _sync_captcha_solver_extension_from_bundle(runtime_env: RuntimeEnvironment) -> bool:
+    bundled_profile_root = SCRIPT_DIR / "data" / "chrome_profile_backup"
+    target_profile_root = Path(runtime_env.paths.chrome_profile_backup_dir)
+    try:
+        if bundled_profile_root.resolve() == target_profile_root.resolve():
+            return False
+    except Exception:
+        pass
+    source_status, _ = _captcha_solver_extension_status(bundled_profile_root)
+    if not source_status:
+        return False
+
+    copied = False
+    source_extension_root = bundled_profile_root / "Default" / "Extensions" / CAPTCHA_SOLVER_EXTENSION_ID
+    target_extension_root = target_profile_root / "Default" / "Extensions" / CAPTCHA_SOLVER_EXTENSION_ID
+    if source_extension_root.exists():
+        target_extension_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_extension_root, target_extension_root, dirs_exist_ok=True)
+        copied = True
+
+    for relative_name in ("Extension Rules", "Extension Scripts", "Extension State"):
+        source_dir = bundled_profile_root / "Default" / relative_name
+        target_dir = target_profile_root / "Default" / relative_name
+        if source_dir.exists():
+            shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+            copied = True
+
+    source_secure_preferences_path = bundled_profile_root / "Default" / "Secure Preferences"
+    target_secure_preferences_path = target_profile_root / "Default" / "Secure Preferences"
+    source_secure_preferences = _read_json_dict(source_secure_preferences_path)
+    target_secure_preferences = _read_json_dict(target_secure_preferences_path)
+    source_settings = (
+        (source_secure_preferences.get("extensions") or {}).get("settings") or {}
+    )
+    extension_entry = source_settings.get(CAPTCHA_SOLVER_EXTENSION_ID)
+    if isinstance(extension_entry, dict):
+        target_extensions = target_secure_preferences.setdefault("extensions", {})
+        if not isinstance(target_extensions, dict):
+            target_extensions = {}
+            target_secure_preferences["extensions"] = target_extensions
+        target_settings = target_extensions.setdefault("settings", {})
+        if not isinstance(target_settings, dict):
+            target_settings = {}
+            target_extensions["settings"] = target_settings
+        target_settings[CAPTCHA_SOLVER_EXTENSION_ID] = extension_entry
+        _write_json_dict(target_secure_preferences_path, target_secure_preferences)
+        copied = True
+
+    return copied
+
+
+def _ensure_captcha_solver_extension_ready(runtime_env: RuntimeEnvironment) -> bool:
+    profile_backup_dir = Path(runtime_env.paths.chrome_profile_backup_dir)
+    ready, detail = _captcha_solver_extension_status(profile_backup_dir)
+    if ready:
+        runtime_env.logger.info(detail)
+        return True
+    if _sync_captcha_solver_extension_from_bundle(runtime_env):
+        ready, detail = _captcha_solver_extension_status(profile_backup_dir)
+        if ready:
+            runtime_env.logger.info(f"Extensao solver restaurada no perfil Chrome: {detail}")
+            return True
+    runtime_env.logger.warning(
+        f"Extensao solver indisponivel no perfil Chrome: {detail}"
+    )
+    return False
 
 
 def sanitize_company_folder(name: str) -> str:
@@ -177,6 +290,281 @@ def build_runtime(
     logger = RuntimeLogger(paths.runtime_log_path, sink=sink)
     json_runtime = JsonRobotRuntime(technical_id, display_name, paths.json_dir)
     return RuntimeEnvironment(paths=paths, logger=logger, json_runtime=json_runtime)
+
+
+_embedded_close_browser = close_browser
+_external_chrome_processes: dict[int, subprocess.Popen[Any]] = {}
+_external_chrome_browsers: dict[int, Any] = {}
+
+
+def _remove_tree_force(path: Path) -> None:
+    target = Path(path)
+    if not target.exists():
+        return
+
+    def _onerror(func, failing_path, exc_info):
+        try:
+            os.chmod(failing_path, stat.S_IWRITE)
+        except Exception:
+            pass
+        try:
+            func(failing_path)
+        except Exception:
+            pass
+
+    shutil.rmtree(target, onerror=_onerror)
+
+
+def _resolve_portable_chrome_exe(runtime_env: RuntimeEnvironment) -> Path:
+    chrome_exe = Path(runtime_env.paths.data_dir) / "Chrome" / "chrome.exe"
+    if not chrome_exe.exists():
+        raise RuntimeError(f"Chrome portátil obrigatório não encontrado em {chrome_exe}.")
+    return chrome_exe
+
+
+def _allocate_local_debug_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
+
+
+def _terminate_external_chrome_process(proc: Optional[subprocess.Popen[Any]]) -> None:
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
+    except Exception:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+        except Exception:
+            pass
+
+
+def _terminate_runtime_portable_chrome_processes(runtime_env: RuntimeEnvironment) -> None:
+    chrome_exe = _resolve_portable_chrome_exe(runtime_env)
+    powershell_script = textwrap.dedent(
+        f"""
+        $target = {chrome_exe.as_posix()!r}
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {{ $_.ExecutablePath -eq $target }} |
+            ForEach-Object {{
+                try {{
+                    Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
+                }} catch {{
+                }}
+            }}
+        """
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", powershell_script],
+            check=False,
+            timeout=15,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+
+def _wait_for_cdp_ready(proc: subprocess.Popen[Any], port: int, timeout_seconds: float = 20.0) -> dict[str, Any]:
+    deadline = time.time() + max(timeout_seconds, 3.0)
+    cdp_url = f"http://127.0.0.1:{port}/json/version"
+    last_error = ""
+    while time.time() < deadline:
+        exit_code = proc.poll()
+        if exit_code is not None:
+            raise RuntimeError(f"Chrome portátil encerrou antes do CDP subir. Código de saída: {exit_code}.")
+        try:
+            response = requests.get(cdp_url, timeout=0.8)
+            if response.ok:
+                payload = response.json() if response.content else {}
+                if isinstance(payload, dict) and payload.get("webSocketDebuggerUrl"):
+                    return payload
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.25)
+    raise TimeoutError(f"Timeout ao aguardar CDP do Chrome portátil na porta {port}. {last_error}".strip())
+
+
+def _rebuild_chrome_profile_from_backup(
+    runtime_env: RuntimeEnvironment,
+    *,
+    require_backup: bool,
+) -> Path:
+    profile_dir = Path(runtime_env.paths.chrome_profile_dir)
+    backup_dir = Path(runtime_env.paths.chrome_profile_backup_dir)
+
+    if profile_dir.exists():
+        _terminate_runtime_portable_chrome_processes(runtime_env)
+        _remove_tree_force(profile_dir)
+        if profile_dir.exists():
+            time.sleep(0.5)
+            _remove_tree_force(profile_dir)
+
+    if not backup_dir.exists():
+        if require_backup:
+            raise RuntimeError(
+                f"Backup obrigatório do perfil não encontrado em {backup_dir}."
+            )
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        return profile_dir
+
+    shutil.copytree(backup_dir, profile_dir, dirs_exist_ok=profile_dir.exists())
+    return profile_dir
+
+
+def launch_browser(runtime_env: RuntimeEnvironment, *, headless: bool = False) -> BrowserSession:
+    from playwright.sync_api import sync_playwright
+
+    _ensure_captcha_solver_extension_ready(runtime_env)
+    chrome_exe = _resolve_portable_chrome_exe(runtime_env)
+    profile_dir = _rebuild_chrome_profile_from_backup(runtime_env, require_backup=True)
+    port = _allocate_local_debug_port()
+    runtime_env.logger.info(
+        f"Chrome persistente configurado com executável=data/Chrome/chrome.exe perfil=data/chrome_profile porta_cdp={port}"
+    )
+
+    chrome_args = [
+        f"--remote-debugging-port={port}",
+        "--remote-debugging-address=127.0.0.1",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--remote-allow-origins=*",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-popup-blocking",
+        "--start-maximized",
+        "--ignore-certificate-errors",
+        "--no-sandbox",
+    ]
+
+    chrome_proc = subprocess.Popen(
+        [str(chrome_exe), *chrome_args],
+        cwd=str(chrome_exe.parent),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+    playwright = None
+    try:
+        _wait_for_cdp_ready(chrome_proc, port, timeout_seconds=20.0)
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=20000)
+        contexts = getattr(browser, "contexts", []) or []
+        context = contexts[0] if contexts else browser.new_context(ignore_https_errors=True, viewport={"width": 1600, "height": 1200})
+        try:
+            context.set_default_timeout(120000)
+        except Exception:
+            pass
+        try:
+            context.set_default_navigation_timeout(120000)
+        except Exception:
+            pass
+        page = context.pages[0] if context.pages else context.new_page()
+        session = BrowserSession(
+            playwright=playwright,
+            context=context,
+            page=page,
+            executable_path=str(chrome_exe),
+        )
+        _external_chrome_processes[id(session)] = chrome_proc
+        _external_chrome_browsers[id(session)] = browser
+        return session
+    except Exception:
+        if playwright is not None:
+            try:
+                playwright.stop()
+            except Exception:
+                pass
+        _terminate_external_chrome_process(chrome_proc)
+        try:
+            _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
+        except Exception:
+            pass
+        raise
+
+
+def close_browser(session: Optional[BrowserSession], runtime_env: Optional[RuntimeEnvironment] = None) -> None:
+    session_id = id(session) if session is not None else None
+    browser = _external_chrome_browsers.pop(session_id, None) if session_id is not None else None
+    chrome_proc = _external_chrome_processes.pop(session_id, None) if session_id is not None else None
+    try:
+        try:
+            if session is not None and getattr(session, "page", None) is not None:
+                session.page.close()
+        except Exception:
+            pass
+        try:
+            if session is not None and getattr(session, "context", None) is not None:
+                session.context.close()
+        except Exception:
+            pass
+        try:
+            if browser is not None:
+                browser.close()
+        except Exception:
+            pass
+        try:
+            if session is not None and getattr(session, "playwright", None) is not None:
+                session.playwright.stop()
+        except Exception:
+            pass
+        if browser is None and chrome_proc is None:
+            _embedded_close_browser(session, runtime_env)
+    finally:
+        _terminate_external_chrome_process(chrome_proc)
+        if runtime_env is not None:
+            try:
+                _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
+            except Exception as exc:
+                runtime_env.logger.warning(f"Falha ao restaurar chrome_profile a partir do backup: {exc}")
+
+
+def cleanup_runtime_artifacts(runtime_env: RuntimeEnvironment) -> None:
+    try:
+        shutdown_runtime_logger(runtime_env)
+    except Exception:
+        pass
+
+    data_dir = getattr(runtime_env.paths, "data_dir", None)
+    logs_dir = getattr(runtime_env.paths, "logs_dir", None)
+    if data_dir:
+        try:
+            shutil.rmtree(Path(data_dir) / "output", ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            for gitkeep in Path(data_dir).rglob(".gitkeep"):
+                gitkeep.unlink(missing_ok=True)
+        except Exception:
+            pass
+    if logs_dir:
+        try:
+            shutil.rmtree(Path(logs_dir), ignore_errors=True)
+        except Exception:
+            pass
+
+    try:
+        stop_path = get_stop_signal_path(runtime_env)
+        if stop_path.exists():
+            stop_path.unlink()
+    finally:
+        try:
+            _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
+        except Exception as exc:
+            runtime_env.logger.warning(f"Falha ao restaurar chrome_profile a partir do backup: {exc}")
 
 
 class DashboardClient:
@@ -682,6 +1070,10 @@ class HCaptchaVisibleError(RuntimeError):
     pass
 
 
+class LoginBrowserResetRequiredError(RuntimeError):
+    pass
+
+
 def _ps_quote(value: str) -> str:
     return str(value or "").replace("'", "''")
 
@@ -965,6 +1357,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         self.allow_manual_captcha = allow_manual_captcha
         self.manual_captcha_timeout_ms = manual_captcha_timeout_ms
         self.expected_document = _extract_document_from_subject(certificate.subject)
+        self.captcha_solver_available = _ensure_captcha_solver_extension_ready(runtime_env)
 
     def _capture_debug(self, prefix: str) -> None:
         try:
@@ -1100,6 +1493,16 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         context_text = self._current_profile_context().lower()
         body_text = self._body_text().lower()
         return any(target in context_text or target in body_text for target in targets)
+
+    def _context_matches_company(self, company: CompanyRecord, context: str = "") -> bool:
+        current_context = str(context or self._current_profile_context() or "").strip()
+        if not current_context:
+            return False
+        current_lower = current_context.lower()
+        document = only_digits(company.document)
+        if document and document in only_digits(current_context):
+            return True
+        return bool(company.name and company.name.lower() in current_lower)
 
     def _extract_profile_modal_error(self) -> str:
         generic_tokens = {"atencao:", "atenção:", "atencao", "atenção"}
@@ -1375,7 +1778,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                             continue
         return False
 
-    def _wait_profile_postback_complete(self, company: CompanyRecord, timeout_ms: int = 2500) -> bool:
+    def _wait_profile_postback_complete(self, company: CompanyRecord, timeout_ms: int = 900) -> bool:
         deadline = time.time() + max(timeout_ms, 250) / 1000
         saw_postback = False
         while time.time() < deadline:
@@ -1478,7 +1881,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             except Exception:
                 pass
         self._log_step(f"filled_cnpj term='{digits}' field='{field_id or 'unknown'}'")
-        self._wait_profile_postback_complete(company, timeout_ms=2500)
+        self._wait_profile_postback_complete(company, timeout_ms=900)
         return True
 
     def _select_company_in_profile(self, company: CompanyRecord) -> bool:
@@ -1537,6 +1940,39 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         scopes = []
         if getattr(self, "_last_profile_form", None) is not None:
             scopes.append(self._last_profile_form)
+            fast_candidates = [
+                "input[type='submit'][value*='Alterar' i]",
+                "input[type='button'][value*='Alterar' i]",
+                "button",
+                "input[type='submit']",
+                "input[type='button']",
+            ]
+            for selector in fast_candidates:
+                locator = self._last_profile_form.locator(selector)
+                try:
+                    count = locator.count()
+                except Exception:
+                    continue
+                for index in range(min(count, 4)):
+                    candidate = locator.nth(index)
+                    try:
+                        text = _normalize_portal_text(
+                            " ".join(
+                                (
+                                    candidate.get_attribute("value")
+                                    or candidate.get_attribute("title")
+                                    or candidate.inner_text(timeout=80)
+                                    or ""
+                                ).split()
+                            )
+                        )
+                    except Exception:
+                        text = ""
+                    if text and not any(_normalize_portal_text(label) in text for label in labels):
+                        continue
+                    if self._click_locator_candidate(candidate, timeout_ms=180):
+                        self._log_step("clicked_confirm")
+                        return True
         scopes.extend(self._profile_scopes())
         for scope in scopes:
             for label in labels:
@@ -1570,7 +2006,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                             text = ""
                         if text and label and _normalize_portal_text(label) not in text:
                             continue
-                        if self._click_locator_candidate(candidate, timeout_ms=300):
+                        if self._click_locator_candidate(candidate, timeout_ms=180):
                             self._log_step("clicked_confirm")
                             return True
         return False
@@ -2459,6 +2895,78 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                 return True
         return False
 
+    def _reload_after_captcha(self, stage_label: str) -> None:
+        self.runtime.logger.warning(
+            f"hCaptcha detectado na etapa {stage_label}; recarregando a pagina para nova tentativa."
+        )
+        self._bring_browser_to_front()
+        try:
+            self.page.reload(wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            current_url = str(self.page.url or "").strip()
+            if not current_url:
+                raise
+            self.page.goto(current_url, wait_until="domcontentloaded", timeout=30000)
+
+    def _wait_for_solver_extension(self, stage_label: str, timeout_ms: int = LOGIN_HCAPTCHA_EXTENSION_WAIT_TIMEOUT_MS) -> None:
+        if not self.captcha_solver_available:
+            raise LoginBrowserResetRequiredError(
+                f"hCaptcha persistiu na etapa {stage_label} e a extensao {CAPTCHA_SOLVER_EXTENSION_NAME} nao esta disponivel no perfil Chrome."
+            )
+        self.runtime.logger.warning(
+            f"hCaptcha persistiu na etapa {stage_label}; aguardando a extensao resolver por ate {int(timeout_ms / 1000)}s."
+        )
+        deadline = time.time() + max(timeout_ms, 1000) / 1000
+        while time.time() < deadline:
+            if self.stop_requested():
+                raise RuntimeError("Execucao interrompida enquanto aguardava a extensao resolver o hCaptcha.")
+            if not self.captcha_visible():
+                self.runtime.logger.info(f"hCaptcha liberado na etapa {stage_label}; fluxo retomado.")
+                return
+            try:
+                self.page.wait_for_timeout(250)
+            except Exception:
+                time.sleep(0.25)
+        raise LoginBrowserResetRequiredError(
+            f"A extensao nao resolveu o hCaptcha na etapa {stage_label} dentro de {int(timeout_ms / 1000)}s."
+        )
+
+    def _advance_to_gov_br_with_retry_budget(self) -> None:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, LOGIN_HCAPTCHA_RELOAD_LIMIT + 2):
+            self._click_access_gov_br()
+            self._wait_until(
+                lambda: "acesso.gov.br" in str(self.page.url or "").lower()
+                or self._page_contains("Seu certificado digital")
+                or self.captcha_visible(),
+                timeout_ms=30000,
+                interval_ms=75,
+            )
+            current_url = str(self.page.url or "").lower()
+            if "acesso.gov.br" in current_url or self._page_contains("Seu certificado digital"):
+                if not self.captcha_visible():
+                    return
+                last_error = HCaptchaVisibleError("hCaptcha exibido ao tentar acessar o GOV.BR.")
+            elif self.captcha_visible():
+                last_error = HCaptchaVisibleError("hCaptcha exibido ao tentar acessar o GOV.BR.")
+            else:
+                last_error = RuntimeError("A navegacao para o GOV.BR nao ficou pronta apos o clique.")
+
+            if isinstance(last_error, HCaptchaVisibleError):
+                if attempt <= LOGIN_HCAPTCHA_RELOAD_LIMIT:
+                    self.runtime.logger.warning(
+                        f"hcaptcha_reload stage=gov_br attempt={attempt}/{LOGIN_HCAPTCHA_RELOAD_LIMIT}"
+                    )
+                    self._reload_after_captcha("gov_br")
+                    continue
+                self._wait_for_solver_extension("gov_br")
+                current_url = str(self.page.url or "").lower()
+                if "acesso.gov.br" in current_url or self._page_contains("Seu certificado digital"):
+                    return
+                continue
+            raise last_error
+        raise RuntimeError(str(last_error or "Falha ao avancar para o GOV.BR."))
+
     def handle_captcha_if_present(self) -> str:
         if not self.captcha_visible():
             return "not_present"
@@ -2574,6 +3082,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
     def _open_certificate_dialog_with_refresh(self, timeout_ms: int = 25000) -> None:
         deadline = time.time() + max(timeout_ms, 5000) / 1000
         attempt = 0
+        captcha_attempts = 0
         last_error: Optional[Exception] = None
         while time.time() < deadline:
             attempt += 1
@@ -2602,6 +3111,16 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                         raise
             if time.time() >= deadline:
                 break
+            if isinstance(last_error, HCaptchaVisibleError):
+                if captcha_attempts < LOGIN_HCAPTCHA_RELOAD_LIMIT:
+                    captcha_attempts += 1
+                    self.runtime.logger.warning(
+                        f"hcaptcha_reload stage=certificado_digital attempt={captcha_attempts}/{LOGIN_HCAPTCHA_RELOAD_LIMIT}"
+                    )
+                    self._refresh_certificate_login_page()
+                    continue
+                self._wait_for_solver_extension("certificado_digital")
+                continue
             self._refresh_certificate_login_page()
         raise RuntimeError(str(last_error or "A janela de selecao do certificado nao apareceu apos atualizar a pagina."))
 
@@ -2618,12 +3137,7 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                     self.resolve_required_mailbox_notice()
                     self.close_blocking_modals()
                     return
-                self._click_access_gov_br()
-                self._wait_until(
-                    lambda: "acesso.gov.br" in self.page.url or self._page_contains("Seu certificado digital"),
-                    timeout_ms=30000,
-                    interval_ms=75,
-                )
+                self._advance_to_gov_br_with_retry_budget()
                 self._open_certificate_dialog_with_refresh()
                 deadline = time.time() + 120
                 while time.time() < deadline:
@@ -2636,9 +3150,9 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                         self.close_blocking_modals()
                         return
                     if self.captcha_visible():
-                        self.handle_captcha_if_present()
+                        self._wait_for_solver_extension("certificado_digital")
                     if HCAPTCHA_ERROR_URL_TOKEN.lower() in self.page.url.lower():
-                        self.handle_captcha_if_present()
+                        self._wait_for_solver_extension("certificado_digital")
                     try:
                         self.page.wait_for_timeout(250)
                     except Exception:
@@ -2648,6 +3162,8 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                 last_error = exc
                 self.runtime.logger.warning(f"login_failed attempt={attempt}: {exc}")
                 self._capture_debug(f"login_failed_attempt_{attempt}")
+                if isinstance(exc, LoginBrowserResetRequiredError):
+                    raise
                 try:
                     self.page.goto(
                         "https://cav.receita.fazenda.gov.br/autenticacao/Login/Logout",
@@ -2667,11 +3183,11 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         self.login()
 
     def _finalize_profile_switch(self, company: CompanyRecord, initial_state: str = "") -> bool:
-        deadline = time.time() + 45.0
+        deadline = time.time() + 15.0
         state = initial_state
         mailbox_processed = False
         while time.time() < deadline:
-            if self._profile_switch_success(company):
+            if self._profile_switch_success(company) or self._profile_switch_success_relaxed(company):
                 return True
             if self.required_mailbox_notice_visible():
                 self._log_step("profile_switch_mailbox_notice")
@@ -2697,10 +3213,10 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             if mailbox_processed:
                 self.close_blocking_modals()
             try:
-                self.page.wait_for_timeout(200)
+                self.page.wait_for_timeout(120)
             except Exception:
-                time.sleep(0.2)
-        return self._profile_switch_success(company)
+                time.sleep(0.12)
+        return self._profile_switch_success(company) or self._profile_switch_success_relaxed(company)
 
     def switch_company_profile(self, company: CompanyRecord) -> str:
         self.ensure_logged_in()
@@ -2745,11 +3261,9 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                         or self._profile_switch_success_relaxed(company)
                         or not self._profile_modal_visible(company)
                     ),
-                    timeout_ms=8000,
+                    timeout_ms=2500,
                     interval_ms=75,
                 )
-                if not modal_closed:
-                    raise RuntimeError("O modal de alteracao de perfil permaneceu aberto apos a confirmacao.")
                 modal_error = self._extract_profile_modal_error()
                 if modal_error:
                     self._raise_profile_switch_modal_error(modal_error)
@@ -2761,7 +3275,11 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                             f"Falha retornada pelo portal ao alterar perfil: {modal_error}"
                         )
                     raise ecac_base.ProfileSwitchError(f"Falha retornada pelo portal ao alterar perfil: {modal_error}")
-                cleanup_state = self._after_profile_switch_cleanup()
+                cleanup_state = "portal"
+                if modal_closed:
+                    cleanup_state = self._after_profile_switch_cleanup()
+                else:
+                    self._log_step("profile_modal_still_processing")
                 changed = self._finalize_profile_switch(company, cleanup_state)
                 context = self._current_profile_context()
                 if not changed and self._profile_switch_success_relaxed(company):
@@ -2793,6 +3311,16 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
 
     def return_to_ecac_home(self) -> None:
         self.ensure_logged_in()
+        current_url = str(getattr(self.page, "url", "") or "").lower()
+        current_context = self._current_profile_context()
+        if (
+            "cav.receita.fazenda.gov.br/ecac/" in current_url
+            and "aplicacao.aspx?id=" not in current_url
+            and current_context
+            and not self.required_mailbox_notice_visible()
+        ):
+            self.close_blocking_modals()
+            return
         try:
             self.page.goto("https://cav.receita.fazenda.gov.br/ecac/", wait_until="domcontentloaded", timeout=120000)
         except Exception:
@@ -2803,15 +3331,15 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
 
     def ensure_company_profile(self, company: CompanyRecord) -> tuple[bool, str]:
         self.ensure_logged_in()
+        current_context = self._current_profile_context()
+        if self._context_matches_company(company, current_context):
+            return False, current_context
         self.return_to_ecac_home()
         self.resolve_required_mailbox_notice()
         current_context = self._current_profile_context()
-        if company.document and only_digits(company.document) and only_digits(company.document) in only_digits(current_context):
-            return False, current_context
-        if company.name and company.name.lower() in current_context.lower():
+        if self._context_matches_company(company, current_context):
             return False, current_context
         switched_context = self.switch_company_profile(company)
-        self.return_to_ecac_home()
         self.resolve_required_mailbox_notice()
         return True, self._current_profile_context() or switched_context
 
@@ -3724,8 +4252,11 @@ def cleanup_runtime_artifacts(runtime_env: RuntimeEnvironment) -> None:
         stop_path = get_stop_signal_path(runtime_env)
         if stop_path.exists():
             stop_path.unlink()
-    except Exception:
-        pass
+    finally:
+        try:
+            _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
+        except Exception as exc:
+            runtime_env.logger.warning(f"Falha ao restaurar chrome_profile a partir do backup: {exc}")
 
 
 def get_stop_signal_path(runtime_env: RuntimeEnvironment) -> Path:
@@ -4077,26 +4608,41 @@ class RobotRunner:
             pfx_password = str(getattr(self.args, "pfx_password", "") or "")
 
             def _open_authenticated_automation(certificate: CertificateMetadata, company_label: str) -> tuple[BrowserSession, SimplesEcacAutomation]:
-                session = launch_browser(self.runtime, headless=bool(getattr(self.args, "headless", False)))
-                self._register_active_session(session, company_label)
-                self.runtime.logger.info(f"Navegador iniciado em {session.executable_path} para {company_label}")
-                try:
-                    automation = SimplesEcacAutomation(
-                        self.runtime,
-                        session,
-                        certificate,
-                        stop_requested=lambda: self.stop_requested,
-                        headless=bool(getattr(self.args, "headless", False)),
-                        allow_manual_captcha=not bool(getattr(self.args, "headless", False)),
-                    )
-                    automation.login()
-                    if self.stop_requested:
-                        raise RuntimeError("Execucao interrompida pelo usuario.")
-                    return session, automation
-                except Exception:
-                    self._release_active_session(session)
-                    close_browser(session, self.runtime)
-                    raise
+                last_error: Optional[Exception] = None
+                for browser_attempt in range(1, LOGIN_BROWSER_RESET_LIMIT + 1):
+                    session = launch_browser(self.runtime, headless=bool(getattr(self.args, "headless", False)))
+                    self._register_active_session(session, company_label)
+                    self.runtime.logger.info(f"Navegador iniciado em {session.executable_path} para {company_label}")
+                    try:
+                        automation = SimplesEcacAutomation(
+                            self.runtime,
+                            session,
+                            certificate,
+                            stop_requested=lambda: self.stop_requested,
+                            headless=bool(getattr(self.args, "headless", False)),
+                            allow_manual_captcha=not bool(getattr(self.args, "headless", False)),
+                        )
+                        automation.login()
+                        if self.stop_requested:
+                            raise RuntimeError("Execucao interrompida pelo usuario.")
+                        return session, automation
+                    except LoginBrowserResetRequiredError as exc:
+                        last_error = exc
+                        self.runtime.logger.warning(
+                            f"login_browser_reset attempt={browser_attempt}/{LOGIN_BROWSER_RESET_LIMIT} company={company_label}: {exc}"
+                        )
+                        self._release_active_session(session)
+                        close_browser(session, self.runtime)
+                        if browser_attempt >= LOGIN_BROWSER_RESET_LIMIT:
+                            break
+                        time.sleep(min(1.5 * browser_attempt, 5.0))
+                        continue
+                    except Exception as exc:
+                        last_error = exc
+                        self._release_active_session(session)
+                        close_browser(session, self.runtime)
+                        raise
+                raise RuntimeError(str(last_error or f"Falha ao autenticar no e-CAC para {company_label}."))
 
             def _session_is_usable(session: Optional[BrowserSession]) -> bool:
                 if session is None:
@@ -4710,6 +5256,67 @@ def collect_das_summary(frame: Any) -> dict[str, str]:
     return summary
 
 
+def _extract_pdf_text(pdf_path: Path) -> str:
+    reader_cls = None
+    try:
+        from pypdf import PdfReader as _PdfReader  # type: ignore
+
+        reader_cls = _PdfReader
+    except Exception:
+        try:
+            from PyPDF2 import PdfReader as _PdfReader  # type: ignore
+
+            reader_cls = _PdfReader
+        except Exception:
+            return ""
+
+    try:
+        reader = reader_cls(str(pdf_path))
+    except Exception:
+        return ""
+
+    chunks: list[str] = []
+    for page in getattr(reader, "pages", []):
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        if text.strip():
+            chunks.append(text)
+    return "\n".join(chunks)
+
+
+def collect_das_pdf_summary(pdf_path: Path) -> dict[str, str]:
+    text = " ".join(_extract_pdf_text(pdf_path).split())
+    summary = {
+        "raw_text": text,
+        "data_vencimento": "",
+        "pagar_ate": "",
+    }
+    if not text:
+        return summary
+
+    due_date_patterns = [
+        r"cnpj\s+raz[aã]o\s+social\s+.+?\s+(?:[a-z]{3,12}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+c[oó]digo\s+principal",
+        r"per[ií]odo\s+de\s+apura[cç][aã]o\s+data\s+de\s+vencimento\s+n[uú]mero\s+do\s+documento\s+.+?\s+(?:[a-z]{3,12}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})",
+    ]
+    for pattern in due_date_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            summary["data_vencimento"] = str(match.group(1) or "").strip()
+            break
+
+    pagar_ate_match = re.search(
+        r"pagar(?:\s+este\s+documento)?\s+at[eé][^0-9]*(\d{2}/\d{2}/\d{4})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if pagar_ate_match:
+        summary["pagar_ate"] = str(pagar_ate_match.group(1) or "").strip()
+
+    return summary
+
+
 def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, company_dir: Path, args: argparse.Namespace) -> CompanyExecutionResult:
     result = CompanyExecutionResult(
         company_id=company.company_id,
@@ -4928,6 +5535,18 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
     automation.runtime.logger.info(f"Tentando capturar o DAS em {download_path}.")
     saved = automation.expect_download_click(frame, DOWNLOAD_DAS_LABELS, download_path)
     if saved is not None and saved.exists():
+        pdf_summary = collect_das_pdf_summary(saved)
+        if pdf_summary.get("data_vencimento"):
+            summary["data_vencimento"] = pdf_summary["data_vencimento"]
+            result.flags["data_vencimento_pdf"] = pdf_summary["data_vencimento"]
+        if pdf_summary.get("pagar_ate"):
+            result.flags["pagar_ate"] = pdf_summary["pagar_ate"]
+        if pdf_summary.get("data_vencimento") or pdf_summary.get("pagar_ate"):
+            automation.runtime.logger.info(
+                "PDF do DAS lido "
+                f"data_vencimento={pdf_summary.get('data_vencimento') or ''} "
+                f"pagar_ate={pdf_summary.get('pagar_ate') or ''}."
+            )
         result.files.append({"kind": "das", "path": str(saved), "filename": saved.name})
         result.status = "success"
     else:
@@ -4942,6 +5561,7 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
                 "data_vencimento": summary.get("data_vencimento") or "",
                 "validade_calculo": summary.get("validade_calculo") or "",
                 "saldo_devedor": summary.get("saldo_devedor") or "",
+                "pagar_ate": result.flags.get("pagar_ate") or "",
                 "portal_message": "",
             },
         )

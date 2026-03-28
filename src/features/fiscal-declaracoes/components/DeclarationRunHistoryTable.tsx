@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, FileArchive, FileText, Trash2, XCircle } from "lucide-react";
+import { Clock3, Download, FileArchive, Trash2 } from "lucide-react";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DataPagination } from "@/components/common/DataPagination";
@@ -11,74 +11,38 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { DeclarationRunState } from "../types";
-import { asArray, asObject, formatCompetenceLabel } from "../helpers";
+import type { DeclarationRunHistoryEntry } from "../types";
 
-function formatDateTime(value: string | null | undefined) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return "-";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("pt-BR");
-}
-
-function summarizeRun(run: DeclarationRunState) {
-  const successCount = run.items.filter((item) => item.status === "sucesso").length;
-  const errorCount = run.items.filter((item) => item.status === "erro").length;
-  const processingCount = run.items.filter((item) => item.status === "processando").length;
-  return {
-    total: run.items.length,
-    successCount,
-    errorCount,
-    processingCount,
-    status: !run.terminal ? "processando" : errorCount > 0 ? "divergente" : "sucesso",
-  };
-}
-
-function getRunReferenceLabel(run: DeclarationRunState) {
-  const firstMeta = asObject(run.items[0]?.meta ?? null);
-  const firstRecord = asObject(asArray(firstMeta.records)[0] ?? null);
-  const settings = asObject(firstMeta.settings ?? null);
-  const rawReference = String(
-    firstMeta.competencia
-      ?? firstMeta.competence
-      ?? firstRecord.competencia
-      ?? firstRecord.competence
-      ?? settings.competencia
-      ?? settings.competence
-      ?? "",
-  ).trim();
-  if (!rawReference) return "-";
-  if (run.action === "simples_defis") {
-    const yearMatch = rawReference.match(/^(\d{4})/);
-    return yearMatch?.[1] ?? "-";
+function getRoutineLabel(entry: DeclarationRunHistoryEntry) {
+  if (entry.mode === "recalcular") {
+    return `${entry.title} (Recalculo)`;
   }
-  return formatCompetenceLabel(rawReference);
+  return entry.title;
 }
 
 type DeclarationRunHistoryTableProps = {
-  runs: DeclarationRunState[];
+  entries: DeclarationRunHistoryEntry[];
   loading?: boolean;
   totalItems: number;
   currentPage: number;
   pageSize: number;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
-  onDownloadPrimaryArtifact?: (run: DeclarationRunState) => void;
+  onDownloadArtifact?: (entry: DeclarationRunHistoryEntry) => void;
   onDownloadAllZip?: () => void;
   zipBusy?: boolean;
   onClearAll?: () => void;
 };
 
 export function DeclarationRunHistoryTable({
-  runs,
+  entries,
   loading = false,
   totalItems,
   currentPage,
   pageSize,
   onPageChange,
   onPageSizeChange,
-  onDownloadPrimaryArtifact,
+  onDownloadArtifact,
   onDownloadAllZip,
   zipBusy = false,
   onClearAll,
@@ -92,9 +56,9 @@ export function DeclarationRunHistoryTable({
       <div className="border-b border-border/70 px-6 py-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-lg font-semibold font-display tracking-tight">Solicitações do processamento</h3>
+            <h3 className="text-lg font-semibold font-display tracking-tight">Solicitacoes do processamento</h3>
             <p className="text-sm text-muted-foreground">
-              Histórico compartilhado do escritório com paginação padrão do SaaS.
+              Cada linha representa uma empresa da fila, com status e download individual em tempo real.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -104,7 +68,7 @@ export function DeclarationRunHistoryTable({
                 Atualizando...
               </span>
             ) : null}
-            {runs.length > 0 && onDownloadAllZip ? (
+            {entries.length > 0 && onDownloadAllZip ? (
               <Button
                 type="button"
                 size="sm"
@@ -116,66 +80,56 @@ export function DeclarationRunHistoryTable({
                 {zipBusy ? "Gerando ZIP..." : "Baixar ZIP da lista"}
               </Button>
             ) : null}
-            {runs.length > 0 && onClearAll ? (
+            {entries.length > 0 && onClearAll ? (
               <Button type="button" variant="outline" size="sm" onClick={onClearAll}>
                 <Trash2 className="mr-2 h-4 w-4" />
-                Limpar histórico
+                Limpar historico
               </Button>
             ) : null}
           </div>
         </div>
       </div>
 
-      {runs.length > 0 ? (
+      {entries.length > 0 ? (
         <>
           <Table className="min-w-[980px] text-xs">
             <TableHeader>
               <TableRow>
                 <TableHead>Rotina</TableHead>
-                <TableHead>Competência</TableHead>
-                <TableHead>Iniciado em</TableHead>
+                <TableHead>Nome da empresa</TableHead>
+                <TableHead>Competencia</TableHead>
+                <TableHead>Vencimento</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="text-center">Empresas</TableHead>
-                <TableHead className="text-center">Sucesso</TableHead>
-                <TableHead className="text-center">Erro</TableHead>
-                <TableHead className="text-center">Em andamento</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
+                <TableHead className="text-right">Acoes</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {runs.map((run) => {
-                const summary = summarizeRun(run);
-                const hasArtifact = run.items.some(
-                  (item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey,
+              {entries.map((entry) => {
+                const hasArtifact = Boolean(
+                  entry.artifact?.filePath || entry.artifact?.url || entry.artifact?.artifactKey,
                 );
                 return (
-                  <TableRow key={run.runId}>
+                  <TableRow key={entry.entryId}>
                     <TableCell>
-                      <p className="font-medium">{run.title}</p>
+                      <p className="font-medium">{getRoutineLabel(entry)}</p>
                     </TableCell>
-                    <TableCell>{getRunReferenceLabel(run)}</TableCell>
-                    <TableCell>{formatDateTime(run.startedAt)}</TableCell>
                     <TableCell>
-                      <StatusBadge status={summary.status} />
+                      <div className="space-y-1">
+                        <p className="font-medium">{entry.companyName}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {entry.companyDocument || "CNPJ nao informado"}
+                        </p>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-center">{summary.total}</TableCell>
-                    <TableCell className="text-center">
-                      <span className="inline-flex items-center gap-1 text-success">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        {summary.successCount}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <span className="inline-flex items-center gap-1 text-destructive">
-                        <XCircle className="h-3.5 w-3.5" />
-                        {summary.errorCount}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <span className="inline-flex items-center gap-1 text-info">
-                        <Clock3 className="h-3.5 w-3.5" />
-                        {summary.processingCount}
-                      </span>
+                    <TableCell>{entry.referenceLabel}</TableCell>
+                    <TableCell>{entry.dueDateLabel}</TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <StatusBadge status={entry.status} />
+                        <p className="max-w-[260px] truncate text-[11px] text-muted-foreground">
+                          {entry.message || "-"}
+                        </p>
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
@@ -184,9 +138,9 @@ export function DeclarationRunHistoryTable({
                           variant="default"
                           size="sm"
                           disabled={!hasArtifact}
-                          onClick={() => onDownloadPrimaryArtifact?.(run)}
+                          onClick={() => onDownloadArtifact?.(entry)}
                         >
-                          <FileText className="mr-2 h-4 w-4" />
+                          <Download className="mr-2 h-4 w-4" />
                           PDF
                         </Button>
                       </div>
@@ -209,7 +163,7 @@ export function DeclarationRunHistoryTable({
         </>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-          Nenhuma solicitação persistida para este escritório até o momento.
+          Nenhuma solicitacao persistida para este escritorio ate o momento.
         </div>
       )}
     </GlassCard>

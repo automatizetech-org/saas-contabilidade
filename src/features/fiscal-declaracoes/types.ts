@@ -113,9 +113,32 @@ export type DeclarationRunState = {
   terminal: boolean;
 };
 
+export type DeclarationRunHistoryEntry = {
+  entryId: string;
+  runId: string;
+  action: DeclarationActionKind;
+  mode: DeclarationActionMode;
+  title: string;
+  requestIds: string[];
+  startedAt: string;
+  finishedAt: string | null;
+  terminal: boolean;
+  referenceLabel: string;
+  dueDateLabel: string;
+  companyId: string;
+  companyName: string;
+  companyDocument: string | null;
+  status: DeclarationRunItemStatus;
+  message: string;
+  executionRequestId?: string | null;
+  artifact?: DeclarationArtifact | null;
+  meta?: Json;
+};
+
 export type DeclarationRunHistoryPage = {
-  items: DeclarationRunState[];
-  total: number;
+  runs: DeclarationRunState[];
+  entries: DeclarationRunHistoryEntry[];
+  totalEntries: number;
 };
 
 export type DeclarationGuideModalState = {
