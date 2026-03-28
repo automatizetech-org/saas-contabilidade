@@ -21,6 +21,7 @@ import {
   asObject,
   createRunId,
   formatCompetenceLabel,
+  formatCurrencyFromCents,
   formatYearLabel,
   isValidCompetence,
   isValidIsoDate,
@@ -35,6 +36,9 @@ import type {
   DeclarationBootstrapData,
   DeclarationArtifactListResponse,
   DeclarationCompany,
+  DeclarationGuideDocumentListItem,
+  DeclarationGuideDocumentListResponse,
+  DeclarationGuideDocumentSortKey,
   DeclarationGuideSubmitInput,
   DeclarationRunHistoryEntry,
   DeclarationRunHistoryPage,
@@ -92,6 +96,8 @@ const OVERDUE_GUIDES_ROBOT_CANDIDATES = [
   "simples_debitos",
   "debitos_simples_nacional",
 ];
+
+const SIMPLES_GUIDE_DOCUMENT_TYPE = "GUIA_SIMPLES_DAS";
 
 function normalizeToken(value: string) {
   return String(value ?? "")
@@ -506,32 +512,42 @@ function formatReferenceLabel(action: DeclarationActionKind, reference: string |
   return action === "simples_defis" ? formatYearLabel(reference) : formatCompetenceLabel(reference);
 }
 
+function formatAmountLabel(amountCents: number | null | undefined) {
+  return formatCurrencyFromCents(amountCents);
+}
+
 export function buildDeclarationRunHistoryEntries(runs: DeclarationRunState[]): DeclarationRunHistoryEntry[] {
   return runs.flatMap((run) =>
-    run.items.map((item, index) => ({
-      entryId: `${run.runId}:${index}`,
-      runId: run.runId,
-      action: run.action,
-      mode: run.mode,
-      title: run.title,
-      requestIds: run.requestIds,
-      startedAt: run.startedAt,
-      finishedAt: run.finishedAt,
-      terminal: run.terminal,
-      referenceLabel: formatReferenceLabel(
-        run.action,
-        extractReferenceFromSummary(run.action, asObject(item.meta ?? null)),
-      ),
-      dueDateLabel: extractDueDateFromSummary(run.action, asObject(item.meta ?? null)),
-      companyId: item.companyId,
-      companyName: item.companyName,
-      companyDocument: item.companyDocument,
-      status: item.status,
-      message: item.message,
-      executionRequestId: item.executionRequestId,
-      artifact: item.artifact ?? null,
-      meta: item.meta ?? null,
-    })),
+    run.items.map((item, index) => {
+      const summary = asObject(item.meta ?? null);
+      const amountCents = extractAmountCentsFromSummary(run.action, summary);
+      return {
+        entryId: `${run.runId}:${index}`,
+        runId: run.runId,
+        action: run.action,
+        mode: run.mode,
+        title: run.title,
+        requestIds: run.requestIds,
+        startedAt: run.startedAt,
+        finishedAt: run.finishedAt,
+        terminal: run.terminal,
+        referenceLabel: formatReferenceLabel(
+          run.action,
+          extractReferenceFromSummary(run.action, summary),
+        ),
+        dueDateLabel: extractDueDateFromSummary(run.action, summary),
+        amountLabel: formatAmountLabel(amountCents),
+        amountCents,
+        companyId: item.companyId,
+        companyName: item.companyName,
+        companyDocument: item.companyDocument,
+        status: item.status,
+        message: item.message,
+        executionRequestId: item.executionRequestId,
+        artifact: item.artifact ?? null,
+        meta: item.meta ?? null,
+      };
+    }),
   );
 }
 
@@ -573,7 +589,9 @@ export async function listAllDeclarationRunHistoryRuns(params?: {
   actions?: DeclarationActionKind[];
 }): Promise<DeclarationRunState[]> {
   const rows = await listAllDeclarationRunHistoryRows(params);
-  return Promise.all(rows.map((row) => hydrateDeclarationRunArtifacts(mapHistoryRowToRun(row))));
+  return Promise.all(
+    rows.map(async (row) => hydrateDeclarationRunArtifacts(await hydrateGuideMetadataForRun(mapHistoryRowToRun(row)))),
+  );
 }
 
 function findRobotForAction(action: DeclarationActionKind, robots: Robot[]): Robot | null {
@@ -935,6 +953,48 @@ function extractDueDateFromSummary(
   return "-";
 }
 
+function extractAmountCentsFromSummary(
+  action: DeclarationActionKind,
+  summary: Record<string, Json>,
+): number | null {
+  if (action !== "simples_emitir_guia") return null;
+
+  const directCandidates = [
+    summary.amount_cents,
+    summary.valor_total_centavos,
+    summary.valor_total_cents,
+    summary.valor_total,
+    summary.saldo_devedor,
+  ];
+  for (const candidate of directCandidates) {
+    const parsed =
+      typeof candidate === "number"
+        ? Math.trunc(candidate)
+        : parseCurrencyToCents(candidate == null ? null : String(candidate));
+    if (Number.isFinite(parsed)) return Number(parsed);
+  }
+
+  const record = asObject(asArray(summary.records)[0] ?? null);
+  const recordCandidates = [
+    record.amount_cents,
+    record.valor_total_centavos,
+    record.valor_total_cents,
+    record.valor_total,
+    record.total,
+    record.saldo_devedor,
+    record.debito_declarado,
+  ];
+  for (const candidate of recordCandidates) {
+    const parsed =
+      typeof candidate === "number"
+        ? Math.trunc(candidate)
+        : parseCurrencyToCents(candidate == null ? null : String(candidate));
+    if (Number.isFinite(parsed)) return Number(parsed);
+  }
+
+  return null;
+}
+
 function extractArtifact(summary: Record<string, Json>) {
   const filePath = toRelativeOfficePath(String(summary.file_path ?? summary.document_path ?? "").trim(), summary);
   const url = String(summary.download_url ?? summary.file_url ?? summary.document_url ?? "").trim();
@@ -965,6 +1025,133 @@ function extractArtifact(summary: Record<string, Json>) {
     filePath: firstPath || null,
     url: firstUrl || null,
   };
+}
+
+function buildGuideLookupKey(companyId: string, competence: string) {
+  return `${String(companyId ?? "").trim()}:${String(competence ?? "").trim()}`;
+}
+
+function mergeGuideMetadataIntoSummary(
+  summary: Record<string, Json>,
+  document: DeclarationGuideDocumentListItem,
+): Record<string, Json> {
+  return {
+    ...summary,
+    document_id: summary.document_id ?? document.documentId,
+    document_type: summary.document_type ?? SIMPLES_GUIDE_DOCUMENT_TYPE,
+    competencia: summary.competencia ?? document.competence,
+    competence: summary.competence ?? document.competence,
+    data_vencimento: summary.data_vencimento ?? document.dueDate,
+    data_vencimento_pdf: summary.data_vencimento_pdf ?? document.dueDate,
+    amount_cents: summary.amount_cents ?? document.amountCents,
+    valor_total: summary.valor_total ?? (document.amountCents != null ? formatAmountLabel(document.amountCents) : null),
+    checksum: summary.checksum ?? document.checksum,
+    parser_version: summary.parser_version ?? document.parserVersion,
+    parsed_at: summary.parsed_at ?? document.parsedAt,
+    file_path: summary.file_path ?? document.filePath,
+    document_path: summary.document_path ?? document.filePath,
+    document_name: summary.document_name ?? document.fileName,
+    file_name: summary.file_name ?? document.fileName,
+  };
+}
+
+async function hydrateGuideMetadataForItems(
+  action: DeclarationActionKind,
+  items: DeclarationRunItem[],
+): Promise<DeclarationRunItem[]> {
+  if (action !== "simples_emitir_guia" || items.length === 0) {
+    return items;
+  }
+
+  const lookupRequests = new Map<string, { companyIds: Set<string>; items: DeclarationRunItem[] }>();
+  for (const item of items) {
+    const summary = asObject(item.meta ?? null);
+    const needsMetadata =
+      extractDueDateFromSummary(action, summary) === "-"
+      || extractAmountCentsFromSummary(action, summary) == null
+      || !item.artifact;
+    if (!needsMetadata) continue;
+    const competence = extractReferenceFromSummary(action, summary);
+    if (!competence) continue;
+    const year = competence.slice(0, 4);
+    if (!/^\d{4}$/.test(year)) continue;
+    const bucket = lookupRequests.get(year) ?? { companyIds: new Set<string>(), items: [] };
+    bucket.companyIds.add(item.companyId);
+    bucket.items.push(item);
+    lookupRequests.set(year, bucket);
+  }
+
+  if (lookupRequests.size === 0) {
+    return items;
+  }
+
+  const guideLookup = new Map<string, DeclarationGuideDocumentListItem>();
+  await Promise.all(
+    Array.from(lookupRequests.entries()).map(async ([year, bucket]) => {
+      const firstPage = await listSimplesGuideDocuments({
+        companyIds: Array.from(bucket.companyIds),
+        year,
+        page: 1,
+        pageSize: 100,
+        sortKey: "competencia",
+        sortDirection: "desc",
+        autoScan: false,
+      }).catch(() => null);
+      if (!firstPage) return;
+      const responses = [firstPage];
+      const totalPages = Math.max(1, Math.ceil(firstPage.total / firstPage.pageSize));
+      for (let page = 2; page <= totalPages; page += 1) {
+        const nextPage = await listSimplesGuideDocuments({
+          companyIds: Array.from(bucket.companyIds),
+          year,
+          page,
+          pageSize: firstPage.pageSize,
+          sortKey: "competencia",
+          sortDirection: "desc",
+          autoScan: false,
+        }).catch(() => null);
+        if (!nextPage) break;
+        responses.push(nextPage);
+      }
+      for (const document of responses.flatMap((response) => response.items)) {
+        if (!document.competence) continue;
+        guideLookup.set(buildGuideLookupKey(document.companyId, document.competence), document);
+      }
+    }),
+  );
+
+  if (guideLookup.size === 0) {
+    return items;
+  }
+
+  return items.map((item) => {
+    const summary = asObject(item.meta ?? null);
+    const competence = extractReferenceFromSummary(action, summary);
+    if (!competence) return item;
+    const document = guideLookup.get(buildGuideLookupKey(item.companyId, competence));
+    if (!document) return item;
+    const mergedMeta = mergeGuideMetadataIntoSummary(summary, document);
+    const artifact = item.artifact ?? {
+      label: document.fileName || "Baixar documento",
+      filePath: document.filePath || null,
+      url: null,
+      artifactKey: null,
+    };
+    return {
+      ...item,
+      artifact,
+      meta: mergedMeta,
+    };
+  });
+}
+
+async function hydrateGuideMetadataForRun(run: DeclarationRunState): Promise<DeclarationRunState> {
+  if (run.action !== "simples_emitir_guia" || run.items.length === 0) {
+    return run;
+  }
+  const items = await hydrateGuideMetadataForItems(run.action, run.items);
+  if (items === run.items) return run;
+  return { ...run, items };
 }
 
 async function resolveArtifactsFromStorage(params: {
@@ -1161,18 +1348,20 @@ async function promoteSequentialRuntimeArtifacts(params: {
 }
 
 export async function hydrateDeclarationRunArtifacts(run: DeclarationRunState): Promise<DeclarationRunState> {
-  if (!runNeedsArtifactResolution(run)) {
-    return run;
+  const runWithGuideMetadata = await hydrateGuideMetadataForRun(run);
+
+  if (!runNeedsArtifactResolution(runWithGuideMetadata)) {
+    return runWithGuideMetadata;
   }
 
-  const extractedItems = run.items.map((item) => ({
+  const extractedItems = runWithGuideMetadata.items.map((item) => ({
     ...item,
     artifact: item.artifact ?? extractArtifact(asObject(item.meta ?? null)),
   }));
 
   if (!extractedItems.some((item) => item.status === "sucesso" && !item.artifact)) {
     return {
-      ...run,
+      ...runWithGuideMetadata,
       items: extractedItems,
     };
   }
@@ -1184,13 +1373,13 @@ export async function hydrateDeclarationRunArtifacts(run: DeclarationRunState): 
 
   if (artifactMap.size === 0) {
     return {
-      ...run,
+      ...runWithGuideMetadata,
       items: extractedItems,
     };
   }
 
   return {
-    ...run,
+    ...runWithGuideMetadata,
     items: extractedItems.map((item) => ({
       ...item,
       artifact: item.artifact ?? artifactMap.get(item.companyId) ?? null,
@@ -1530,10 +1719,10 @@ export async function startDeclarationRun(
 
 export async function getDeclarationRunState(current: DeclarationRunState): Promise<DeclarationRunState> {
   if (current.requestIds.length === 0) {
-    return runNeedsArtifactResolution(current) ? hydrateDeclarationRunArtifacts(current) : current;
+    return hydrateDeclarationRunArtifacts(current);
   }
   if (current.terminal) {
-    return runNeedsArtifactResolution(current) ? hydrateDeclarationRunArtifacts(current) : current;
+    return hydrateDeclarationRunArtifacts(current);
   }
 
   const [{ data: requests, error: requestsError }, { data: resultEvents, error: eventsError }] =
@@ -1706,6 +1895,8 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       }));
     }
   }
+
+  nextItems = await hydrateGuideMetadataForItems(current.action, nextItems);
 
   nextItems = stabilizeRunItems(current.items, nextItems);
 
@@ -1908,6 +2099,129 @@ export async function openDeclarationArtifact(params: {
     },
     params.suggestedName,
   );
+}
+
+type RawDeclarationGuideDocumentListItem = {
+  document_id?: string | null;
+  company_id?: string | null;
+  company_name?: string | null;
+  company_document?: string | null;
+  competencia?: string | null;
+  data_vencimento?: string | null;
+  amount_cents?: number | null;
+  file_name?: string | null;
+  file_path?: string | null;
+  checksum?: string | null;
+  parsed_at?: string | null;
+  parser_version?: string | null;
+  status?: string | null;
+  meta?: Json;
+  updated_at?: string | null;
+};
+
+type RawDeclarationGuideDocumentListResponse = {
+  items?: RawDeclarationGuideDocumentListItem[];
+  total?: number;
+  page?: number;
+  page_size?: number;
+};
+
+function mapGuideDocumentListItem(
+  row: RawDeclarationGuideDocumentListItem,
+): DeclarationGuideDocumentListItem {
+  return {
+    documentId: String(row.document_id ?? "").trim(),
+    companyId: String(row.company_id ?? "").trim(),
+    companyName: String(row.company_name ?? "").trim(),
+    companyDocument: row.company_document == null ? null : String(row.company_document ?? "").trim(),
+    competence: row.competencia == null ? null : String(row.competencia ?? "").trim(),
+    dueDate: row.data_vencimento == null ? null : String(row.data_vencimento ?? "").trim(),
+    amountCents: Number.isFinite(Number(row.amount_cents)) ? Number(row.amount_cents) : null,
+    fileName: String(row.file_name ?? "").trim(),
+    filePath: String(row.file_path ?? "").trim(),
+    checksum: row.checksum == null ? null : String(row.checksum ?? "").trim(),
+    parsedAt: row.parsed_at == null ? null : String(row.parsed_at ?? "").trim(),
+    parserVersion: row.parser_version == null ? null : String(row.parser_version ?? "").trim(),
+    status: String(row.status ?? "").trim() || "novo",
+    meta: (row.meta as Json | undefined) ?? null,
+    updatedAt: row.updated_at == null ? null : String(row.updated_at ?? "").trim(),
+  };
+}
+
+export async function listSimplesGuideDocuments(params: {
+  companyIds: string[];
+  year?: string | null;
+  page?: number;
+  pageSize?: number;
+  sortKey?: DeclarationGuideDocumentSortKey;
+  sortDirection?: "asc" | "desc";
+  autoScan?: boolean;
+}): Promise<DeclarationGuideDocumentListResponse> {
+  const response = await postOfficeServerJson<RawDeclarationGuideDocumentListResponse>(
+    "list-simples-guide-documents",
+    {
+      company_ids: uniqueCompanyIds(params.companyIds ?? []),
+      year: /^\d{4}$/.test(String(params.year ?? "").trim()) ? String(params.year).trim() : null,
+      page: Math.max(1, Number(params.page) || 1),
+      page_size: Math.min(100, Math.max(1, Number(params.pageSize) || 12)),
+      sort_key: params.sortKey ?? "competencia",
+      sort_direction: params.sortDirection ?? "desc",
+      auto_scan: params.autoScan ?? true,
+    },
+  );
+  return {
+    items: (response.items ?? []).map(mapGuideDocumentListItem),
+    total: Number.isFinite(Number(response.total)) ? Number(response.total) : 0,
+    page: Math.max(1, Number(response.page) || 1),
+    pageSize: Math.min(100, Math.max(1, Number(response.page_size) || 12)),
+  };
+}
+
+export async function downloadSimplesGuideDocument(params: {
+  documentId: string;
+  suggestedName?: string;
+}): Promise<void> {
+  await downloadOfficeServerAction(
+    "download-simples-guide-document",
+    { document_id: params.documentId },
+    params.suggestedName,
+  );
+}
+
+export async function scanSimplesGuideDocuments(params: {
+  companyIds?: string[];
+  year?: string | null;
+  force?: boolean;
+}): Promise<{
+  scanned: number;
+  parsed: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ file: string; error: string }>;
+}> {
+  return postOfficeServerJson<{
+    scanned: number;
+    parsed: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+    errors: Array<{ file: string; error: string }>;
+  }>("scan-simples-guide-documents", {
+    company_ids: uniqueCompanyIds(params.companyIds ?? []),
+    year: /^\d{4}$/.test(String(params.year ?? "").trim()) ? String(params.year).trim() : null,
+    force: Boolean(params.force),
+  });
+}
+
+export async function scanSingleSimplesGuideDocument(params: {
+  documentId: string;
+  force?: boolean;
+}): Promise<{ ok: boolean; force: boolean; file_path: string }> {
+  return postOfficeServerJson<{ ok: boolean; force: boolean; file_path: string }>("scan-single-simples-guide-document", {
+    document_id: String(params.documentId ?? "").trim(),
+    force: params.force ?? true,
+  });
 }
 
 function sanitizeZipSegment(value: string): string {

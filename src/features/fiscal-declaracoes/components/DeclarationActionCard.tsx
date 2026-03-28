@@ -11,11 +11,14 @@ type DeclarationActionCardProps = {
   eyebrow: string;
   icon: ReactNode;
   ctaLabel: string;
+  secondaryCtaLabel?: string;
   disabled?: boolean;
+  secondaryDisabled?: boolean;
   disabledReason?: string | null;
   busy?: boolean;
   toneClassName?: string;
   onClick?: () => void;
+  onSecondaryClick?: () => void;
 };
 
 export function DeclarationActionCard({
@@ -24,11 +27,14 @@ export function DeclarationActionCard({
   eyebrow,
   icon,
   ctaLabel,
+  secondaryCtaLabel,
   disabled = false,
+  secondaryDisabled = false,
   disabledReason,
   busy = false,
   toneClassName,
   onClick,
+  onSecondaryClick,
 }: DeclarationActionCardProps) {
   return (
     <GlassCard
@@ -66,15 +72,28 @@ export function DeclarationActionCard({
               "Disponível para as empresas visíveis no contexto atual."
             )}
           </div>
-          <Button
-            type="button"
-            onClick={onClick}
-            disabled={disabled || busy}
-            className="shrink-0 gap-2"
-          >
-            {busy ? "Processando..." : ctaLabel}
-            <ArrowRight className="h-4 w-4" />
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            {secondaryCtaLabel ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onSecondaryClick}
+                disabled={secondaryDisabled || busy}
+                className="gap-2"
+              >
+                {secondaryCtaLabel}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              onClick={onClick}
+              disabled={disabled || busy}
+              className="gap-2"
+            >
+              {busy ? "Processando..." : ctaLabel}
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
     </GlassCard>

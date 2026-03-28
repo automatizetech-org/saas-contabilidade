@@ -1094,6 +1094,170 @@ class DashboardClient:
             )
         return normalized
 
+    def upsert_simples_guide_document(
+        self,
+        office_context: OfficeContext,
+        company: CompanyRecord,
+        result: CompanyExecutionResult,
+    ) -> None:
+        payload = _build_simples_guide_document_payload(office_context, company, result)
+        if not payload:
+            return
+        try:
+            client = self._supabase()
+            (
+                client.table("fiscal_documents")
+                .upsert(payload, on_conflict="office_id,company_id,type,file_path")
+                .execute()
+            )
+            self.runtime.logger.info(
+                "Metadados da guia gravados em fiscal_documents "
+                f"company={company.name} competencia={payload.get('periodo') or ''} "
+                f"vencimento={payload.get('data_vencimento') or ''} "
+                f"valor_centavos={payload.get('amount_cents') if payload.get('amount_cents') is not None else ''}."
+            )
+        except Exception as exc:
+            self.runtime.logger.warning(
+                f"Falha ao gravar metadados da guia no dashboard para {company.name}: {exc}"
+            )
+
+
+SIMPLES_GUIDE_DOCUMENT_TYPE = "GUIA_SIMPLES_DAS"
+SIMPLES_GUIDE_PARSER_VERSION = "das_pdf_v1"
+
+
+def _portal_date_to_iso(value: Any) -> str:
+    raw = str(value or "").strip()
+    match = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", raw)
+    if not match:
+        return ""
+    return f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
+
+
+def _normalize_guide_competence(value: Any) -> str:
+    raw = str(value or "").strip()
+    match = re.fullmatch(r"(\d{2})/(\d{4})", raw)
+    if match:
+        return f"{match.group(2)}-{match.group(1)}"
+    match = re.fullmatch(r"(\d{4})-(\d{2})", raw)
+    if match:
+        return raw
+    match = re.fullmatch(r"(\d{2})-(\d{4})", raw)
+    if match:
+        return f"{match.group(2)}-{match.group(1)}"
+    return ""
+
+
+def _parse_currency_to_cents(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.replace(".", "").replace(",", ".")
+    try:
+        amount = float(normalized)
+    except Exception:
+        return None
+    return int(round(amount * 100))
+
+
+def _compute_file_sha256(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _relative_office_file_path(base_path: str, file_path: Any) -> str:
+    raw_file_path = str(file_path or "").strip()
+    if not raw_file_path:
+        return ""
+    file_obj = Path(raw_file_path)
+    if not file_obj.is_absolute():
+        return raw_file_path.replace("\\", "/").lstrip("/")
+    normalized_base = str(base_path or "").strip()
+    if not normalized_base:
+        return raw_file_path.replace("\\", "/")
+    try:
+        return file_obj.resolve().relative_to(Path(normalized_base).resolve()).as_posix()
+    except Exception:
+        return raw_file_path.replace("\\", "/")
+
+
+def _build_simples_guide_document_payload(
+    office_context: OfficeContext,
+    company: CompanyRecord,
+    result: CompanyExecutionResult,
+) -> Optional[dict[str, Any]]:
+    if not office_context.office_id:
+        return None
+    guide_file = next(
+        (
+            item for item in result.files
+            if str(item.get("kind") or "").strip().lower() == "das" and str(item.get("path") or "").strip()
+        ),
+        None,
+    )
+    if not guide_file:
+        return None
+    file_path = Path(str(guide_file.get("path") or "").strip())
+    if not file_path.exists():
+        return None
+
+    record = result.records[0] if result.records else {}
+    amount_cents = guide_file.get("amount_cents")
+    if amount_cents is None:
+        amount_cents = record.get("amount_cents")
+    if amount_cents is None:
+        amount_cents = result.flags.get("amount_cents_pdf")
+    if amount_cents is None:
+        amount_cents = _parse_currency_to_cents(record.get("valor_total") or record.get("saldo_devedor"))
+
+    due_date_iso = (
+        str(guide_file.get("data_vencimento_iso") or "").strip()
+        or _portal_date_to_iso(record.get("data_vencimento"))
+        or _portal_date_to_iso(result.flags.get("data_vencimento_pdf"))
+        or _portal_date_to_iso(result.flags.get("data_vencimento"))
+    )
+    competence_iso = (
+        str(guide_file.get("competencia_iso") or "").strip()
+        or _normalize_guide_competence(record.get("competencia_iso") or record.get("competencia"))
+    )
+    checksum = str(guide_file.get("checksum") or "").strip() or _compute_file_sha256(file_path)
+    parsed_at = str(guide_file.get("parsed_at") or "").strip() or utc_now_iso()
+    relative_file_path = _relative_office_file_path(office_context.base_path, file_path)
+
+    meta = {
+        "parser_version": SIMPLES_GUIDE_PARSER_VERSION,
+        "parse_source": "robot",
+        "parse_error": None,
+        "company_name": company.name,
+        "company_document": format_document(company.document),
+        "file_name": str(guide_file.get("filename") or file_path.name),
+        "file_size_bytes": file_path.stat().st_size,
+        "file_mtime_ms": int(file_path.stat().st_mtime * 1000),
+        "pagar_ate": str(record.get("pagar_ate") or result.flags.get("pagar_ate") or "").strip() or None,
+        "raw_record": record,
+    }
+    return {
+        "office_id": office_context.office_id,
+        "company_id": company.company_id,
+        "type": SIMPLES_GUIDE_DOCUMENT_TYPE,
+        "chave": file_path.stem,
+        "periodo": competence_iso or str(datetime.now().date())[:7],
+        "status": "concluido" if due_date_iso and amount_cents is not None else "erro",
+        "document_date": due_date_iso or None,
+        "data_vencimento": due_date_iso or None,
+        "file_path": relative_file_path or str(file_path).replace("\\", "/"),
+        "checksum": checksum,
+        "parsed_at": parsed_at,
+        "parser_version": SIMPLES_GUIDE_PARSER_VERSION,
+        "amount_cents": int(amount_cents) if amount_cents is not None else None,
+        "meta": meta,
+    }
+
 
 class HCaptchaVisibleError(RuntimeError):
     pass
@@ -4691,6 +4855,11 @@ class RobotRunner:
                     heartbeat_state,
                 )
 
+            def _append_result(company: CompanyRecord, company_result: CompanyExecutionResult) -> None:
+                results.append(company_result)
+                self.dashboard.upsert_simples_guide_document(office_context, company, company_result)
+                _sync_progress_snapshot()
+
             def _open_authenticated_automation(certificate: CertificateMetadata, company_label: str) -> tuple[BrowserSession, SimplesEcacAutomation]:
                 last_error: Optional[Exception] = None
                 for browser_attempt in range(1, LOGIN_BROWSER_RESET_LIMIT + 1):
@@ -4850,14 +5019,14 @@ class RobotRunner:
                         processed_contexts += 1
                         heartbeat_state.update({"current": processed_contexts, "company_name": company.name, "company_id": company.company_id})
                         should_switch_profile = company.company_id != auth_company.company_id
-                        results.append(
+                        _append_result(
+                            company,
                             _process_company_with_automation(
                                 automation,
                                 company,
                                 switch_profile=should_switch_profile,
-                            )
+                            ),
                         )
-                        _sync_progress_snapshot()
                 finally:
                     self._release_active_session(session)
                     close_browser(session, self.runtime)
@@ -4869,8 +5038,7 @@ class RobotRunner:
                     processed_contexts += 1
                     heartbeat_state.update({"current": processed_contexts, "company_name": company.name, "company_id": company.company_id})
                     if not company.eligible:
-                        results.append(_blocked_result(company))
-                        _sync_progress_snapshot()
+                        _append_result(company, _blocked_result(company))
                         continue
                     session: Optional[BrowserSession] = None
                     try:
@@ -4881,17 +5049,14 @@ class RobotRunner:
                             pfx_password=pfx_password,
                         )
                         session, automation = _open_authenticated_automation(company_certificate, company.name)
-                        results.append(_process_company_with_automation(automation, company, switch_profile=False))
-                        _sync_progress_snapshot()
+                        _append_result(company, _process_company_with_automation(automation, company, switch_profile=False))
                     except Exception as exc:
                         if self.stop_requested:
                             self.runtime.logger.info(f"company_interrupted {company.name}: execucao interrompida pelo usuario.")
-                            results.append(_interrupted_result(company))
-                            _sync_progress_snapshot()
+                            _append_result(company, _interrupted_result(company))
                             break
                         self.runtime.logger.warning(f"company_failed {company.name}: {exc}")
-                        results.append(_error_result(company, _stack_tail(exc)))
-                        _sync_progress_snapshot()
+                        _append_result(company, _error_result(company, _stack_tail(exc)))
                     finally:
                         self._release_active_session(session)
                         close_browser(session, self.runtime)
@@ -5379,11 +5544,21 @@ def collect_das_pdf_summary(pdf_path: Path) -> dict[str, str]:
     text = " ".join(_extract_pdf_text(pdf_path).split())
     summary = {
         "raw_text": text,
+        "competencia": "",
         "data_vencimento": "",
         "pagar_ate": "",
+        "valor_total": "",
     }
     if not text:
         return summary
+
+    competence_match = re.search(
+        r"(?:per[ií]odo\s+de\s+apura[cç][aã]o|compet[eê]ncia)[^0-9]*(\d{2}/\d{4})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if competence_match:
+        summary["competencia"] = str(competence_match.group(1) or "").strip()
 
     due_date_patterns = [
         r"cnpj\s+raz[aã]o\s+social\s+.+?\s+(?:[a-z]{3,12}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+c[oó]digo\s+principal",
@@ -5402,6 +5577,14 @@ def collect_das_pdf_summary(pdf_path: Path) -> dict[str, str]:
     )
     if pagar_ate_match:
         summary["pagar_ate"] = str(pagar_ate_match.group(1) or "").strip()
+
+    total_match = re.search(
+        r"(?:valor\s+total\s+do\s+documento|valor\s+total|total\s+do\s+documento)[^0-9]*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if total_match:
+        summary["valor_total"] = str(total_match.group(1) or "").strip()
 
     return summary
 
@@ -5625,18 +5808,43 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
     saved = automation.expect_download_click(frame, DOWNLOAD_DAS_LABELS, download_path)
     if saved is not None and saved.exists():
         pdf_summary = collect_das_pdf_summary(saved)
+        checksum = _compute_file_sha256(saved)
+        parsed_at = utc_now_iso()
         if pdf_summary.get("data_vencimento"):
             summary["data_vencimento"] = pdf_summary["data_vencimento"]
             result.flags["data_vencimento_pdf"] = pdf_summary["data_vencimento"]
+        if pdf_summary.get("competencia"):
+            result.flags["competencia_pdf"] = pdf_summary["competencia"]
+        amount_cents = _parse_currency_to_cents(pdf_summary.get("valor_total"))
+        if amount_cents is None:
+            amount_cents = _parse_currency_to_cents(summary.get("saldo_devedor"))
+        if pdf_summary.get("valor_total"):
+            result.flags["valor_total_pdf"] = pdf_summary["valor_total"]
+        if amount_cents is not None:
+            result.flags["amount_cents_pdf"] = amount_cents
         if pdf_summary.get("pagar_ate"):
             result.flags["pagar_ate"] = pdf_summary["pagar_ate"]
-        if pdf_summary.get("data_vencimento") or pdf_summary.get("pagar_ate"):
+        if pdf_summary.get("data_vencimento") or pdf_summary.get("pagar_ate") or pdf_summary.get("valor_total"):
             automation.runtime.logger.info(
                 "PDF do DAS lido "
+                f"competencia={pdf_summary.get('competencia') or ''} "
                 f"data_vencimento={pdf_summary.get('data_vencimento') or ''} "
-                f"pagar_ate={pdf_summary.get('pagar_ate') or ''}."
+                f"pagar_ate={pdf_summary.get('pagar_ate') or ''} "
+                f"valor_total={pdf_summary.get('valor_total') or ''}."
             )
-        result.files.append({"kind": "das", "path": str(saved), "filename": saved.name})
+        result.files.append(
+            {
+                "kind": "das",
+                "path": str(saved),
+                "filename": saved.name,
+                "checksum": checksum,
+                "parsed_at": parsed_at,
+                "parser_version": SIMPLES_GUIDE_PARSER_VERSION,
+                "competencia_iso": _normalize_guide_competence(pdf_summary.get("competencia") or competencia),
+                "data_vencimento_iso": _portal_date_to_iso(summary.get("data_vencimento") or ""),
+                "amount_cents": amount_cents,
+            }
+        )
         result.status = "success"
     else:
         result.status = "partial"
@@ -5647,9 +5855,13 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
             company,
             {
                 "competencia": competencia,
+                "competencia_iso": _normalize_guide_competence(competencia),
                 "data_vencimento": summary.get("data_vencimento") or "",
+                "data_vencimento_iso": _portal_date_to_iso(summary.get("data_vencimento") or ""),
                 "validade_calculo": summary.get("validade_calculo") or "",
                 "saldo_devedor": summary.get("saldo_devedor") or "",
+                "valor_total": result.flags.get("valor_total_pdf") or summary.get("saldo_devedor") or "",
+                "amount_cents": result.flags.get("amount_cents_pdf") if result.flags.get("amount_cents_pdf") is not None else _parse_currency_to_cents(summary.get("saldo_devedor")),
                 "pagar_ate": result.flags.get("pagar_ate") or "",
                 "portal_message": "",
             },

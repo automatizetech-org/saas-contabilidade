@@ -99,6 +99,7 @@ export function DeclarationRunHistoryTable({
                 <TableHead>Nome da empresa</TableHead>
                 <TableHead>Competencia</TableHead>
                 <TableHead>Vencimento</TableHead>
+                <TableHead>Valor</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Acoes</TableHead>
               </TableRow>
@@ -123,6 +124,7 @@ export function DeclarationRunHistoryTable({
                     </TableCell>
                     <TableCell>{entry.referenceLabel}</TableCell>
                     <TableCell>{entry.dueDateLabel}</TableCell>
+                    <TableCell>{entry.amountLabel}</TableCell>
                     <TableCell>
                       <div className="space-y-1">
                         <StatusBadge status={entry.status} />

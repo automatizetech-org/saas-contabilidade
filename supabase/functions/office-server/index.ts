@@ -904,6 +904,157 @@ Deno.serve(async (req) => {
     );
   }
 
+  if (action === "list-simples-guide-documents") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para consultar guias do Simples Nacional." },
+        403,
+      );
+    }
+
+    const body = requestBody as Record<string, unknown>;
+    try {
+      await validateOfficeCompanies(
+        admin,
+        officeId,
+        Array.isArray(body.company_ids) ? body.company_ids : [],
+      );
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Empresas invalidas." },
+        403,
+      );
+    }
+
+    return proxyJson(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/declarations/guides/list",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          company_ids: Array.isArray(body.company_ids) ? body.company_ids : [],
+          year: body.year,
+          page: body.page,
+          page_size: body.page_size,
+          sort_key: body.sort_key,
+          sort_direction: body.sort_direction,
+          auto_scan: body.auto_scan,
+        }),
+      },
+    );
+  }
+
+  if (action === "download-simples-guide-document") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para baixar guias do Simples Nacional." },
+        403,
+      );
+    }
+
+    const body = requestBody as Record<string, unknown>;
+    const documentId = String(body.document_id ?? "").trim();
+    if (!documentId) return json({ error: "document_id is required" }, 400);
+
+    const { data: document, error: documentError } = await admin
+      .from("fiscal_documents")
+      .select("id")
+      .eq("office_id", officeId)
+      .eq("id", documentId)
+      .eq("type", "GUIA_SIMPLES_DAS")
+      .maybeSingle();
+    if (documentError) return json({ error: documentError.message }, 500);
+    if (!document?.id) return json({ error: "Guia nao encontrada." }, 404);
+
+    return proxyBinary(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/declarations/guides/download",
+      {
+        method: "POST",
+        body: JSON.stringify({ document_id: documentId }),
+      },
+    );
+  }
+
+  if (action === "scan-simples-guide-documents") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para reindexar guias do Simples Nacional." },
+        403,
+      );
+    }
+
+    const body = requestBody as Record<string, unknown>;
+    try {
+      await validateOfficeCompanies(
+        admin,
+        officeId,
+        Array.isArray(body.company_ids) ? body.company_ids : [],
+      );
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Empresas invalidas." },
+        403,
+      );
+    }
+
+    return proxyJson(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/declarations/guides/scan",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          company_ids: Array.isArray(body.company_ids) ? body.company_ids : [],
+          year: body.year,
+          force: body.force,
+        }),
+      },
+    );
+  }
+
+  if (action === "scan-single-simples-guide-document") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para reindexar guias do Simples Nacional." },
+        403,
+      );
+    }
+
+    const body = requestBody as Record<string, unknown>;
+    const documentId = String(body.document_id ?? "").trim();
+    if (!documentId) return json({ error: "document_id is required" }, 400);
+
+    const { data: document, error: documentError } = await admin
+      .from("fiscal_documents")
+      .select("id")
+      .eq("office_id", officeId)
+      .eq("id", documentId)
+      .eq("type", "GUIA_SIMPLES_DAS")
+      .maybeSingle();
+    if (documentError) return json({ error: documentError.message }, 500);
+    if (!document?.id) return json({ error: "Guia nao encontrada." }, 404);
+
+    return proxyJson(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/declarations/guides/scan-single",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          document_id: documentId,
+          force: body.force,
+        }),
+      },
+    );
+  }
+
   if (action === "stop-robot-runtime") {
     if (!hasAnyPanelAccess(context, ["fiscal"])) {
       return json(

@@ -40,6 +40,7 @@ import {
 import type {
   DeclarationActionKind,
   DeclarationArtifactListItem,
+  DeclarationGuideConsultModalState,
   DeclarationGuideModalState,
   DeclarationRunHistoryEntry,
   DeclarationRunItem,
@@ -48,6 +49,7 @@ import type {
 } from "@/features/fiscal-declaracoes/types";
 import { DeclarationActionCard } from "@/features/fiscal-declaracoes/components/DeclarationActionCard";
 import { DeclarationArtifactsCard } from "@/features/fiscal-declaracoes/components/DeclarationArtifactsCard";
+import { DeclarationGuideDocumentsModal } from "@/features/fiscal-declaracoes/components/DeclarationGuideDocumentsModal";
 import { DeclarationExecutionModal } from "@/features/fiscal-declaracoes/components/DeclarationExecutionModal";
 import { DeclarationRunHistoryTable } from "@/features/fiscal-declaracoes/components/DeclarationRunHistoryTable";
 import { DeclarationStoredDocumentsModal } from "@/features/fiscal-declaracoes/components/DeclarationStoredDocumentsModal";
@@ -115,6 +117,8 @@ function stabilizeHistoryEntry(
     message: previous.message || incoming.message || "PDF gerado e disponível para download.",
     artifact: previous.artifact,
     dueDateLabel: incoming.dueDateLabel || previous.dueDateLabel,
+    amountLabel: incoming.amountLabel || previous.amountLabel,
+    amountCents: incoming.amountCents ?? previous.amountCents ?? null,
     referenceLabel: incoming.referenceLabel || previous.referenceLabel,
     meta: incoming.meta ?? previous.meta ?? null,
   };
@@ -191,6 +195,12 @@ const initialStoredDocumentsModalState: DeclarationStoredDocumentsModalState = {
   presetYear: null,
 };
 
+const initialGuideConsultModalState: DeclarationGuideConsultModalState = {
+  open: false,
+  presetCompanyId: null,
+  presetYear: null,
+};
+
 const SIMPLES_DOCUMENT_ACTIONS: Array<{
   action: DeclarationActionKind;
   title: string;
@@ -236,6 +246,9 @@ export default function FiscalDeclarationsPage() {
   const { isSuperAdmin, officeId, officeRole } = useProfile();
   const [selectedTab, setSelectedTab] = useState<"simples-nacional" | "mei">("simples-nacional");
   const [guideModalState, setGuideModalState] = useState<DeclarationGuideModalState>(initialGuideModalState);
+  const [guideConsultModalState, setGuideConsultModalState] = useState<DeclarationGuideConsultModalState>(
+    initialGuideConsultModalState,
+  );
   const [storedDocumentsModalState, setStoredDocumentsModalState] = useState<DeclarationStoredDocumentsModalState>(
     initialStoredDocumentsModalState,
   );
@@ -472,6 +485,17 @@ export default function FiscalDeclarationsPage() {
       recalculateDueDate: input.recalculate ? input.recalculateDueDate ?? null : null,
     });
     setGuideModalState((current) => ({ ...current, open: false }));
+  };
+
+  const openGuideConsultModal = (params?: {
+    companyId?: string | null;
+    year?: string | null;
+  }) => {
+    setGuideConsultModalState({
+      open: true,
+      presetCompanyId: params?.companyId ?? availableCompanies[0]?.id ?? null,
+      presetYear: params?.year ?? defaultCompetence.slice(0, 4),
+    });
   };
 
   const handleDownloadRunArtifact = async (run: DeclarationRunState, item: DeclarationRunItem) => {
@@ -794,7 +818,14 @@ export default function FiscalDeclarationsPage() {
                 }
                 busy={dispatching}
                 disabled={!isActionEnabled(item.action)}
+                secondaryCtaLabel={item.action === "simples_emitir_guia" ? "Consultar guia" : undefined}
+                secondaryDisabled={false}
                 disabledReason={resolveActionDisabledReason(item.action)}
+                onSecondaryClick={
+                  item.action === "simples_emitir_guia"
+                    ? () => openGuideConsultModal()
+                    : undefined
+                }
                 onClick={() => {
                   if (item.action === "simples_emitir_guia") {
                     setGuideModalState({
@@ -920,7 +951,21 @@ export default function FiscalDeclarationsPage() {
         defaultCompetence={defaultCompetence}
         busy={dispatching}
         onOpenChange={(open) => setGuideModalState((current) => ({ ...current, open }))}
+        onOpenConsultGuide={() => {
+          setGuideModalState((current) => ({ ...current, open: false }));
+          openGuideConsultModal({
+            companyId: guideModalState.presetCompanyId ?? null,
+            year: String(guideModalState.presetCompetence ?? defaultCompetence).slice(0, 4),
+          });
+        }}
         onSubmit={handleGuideModalSubmit}
+      />
+
+      <DeclarationGuideDocumentsModal
+        open={guideConsultModalState.open}
+        state={guideConsultModalState}
+        companies={availableCompanies}
+        onOpenChange={(open) => setGuideConsultModalState((current) => ({ ...current, open }))}
       />
 
       <DeclarationStoredDocumentsModal

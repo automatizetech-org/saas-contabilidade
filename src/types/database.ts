@@ -313,6 +313,12 @@ export type Database = {
         status: string;
         document_date: string | null;
         file_path: string | null;
+        checksum: string | null;
+        parsed_at: string | null;
+        parser_version: string | null;
+        meta: Json;
+        amount_cents: number | null;
+        data_vencimento: string | null;
         last_downloaded_at: string | null;
         created_at: string;
         updated_at: string;

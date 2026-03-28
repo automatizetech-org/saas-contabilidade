@@ -21,6 +21,7 @@ import rateLimit from "express-rate-limit";
 import fs from "fs";
 import os from "os";
 import archiver from "archiver";
+import { spawnSync } from "child_process";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { createClient } from "@supabase/supabase-js";
 
@@ -1776,6 +1777,538 @@ async function resolveDeclarationArtifactDownload({
   };
 })();
 
+const simplesGuideDocumentsModule = (() => {
+  const DOCUMENT_TYPE = "GUIA_SIMPLES_DAS";
+  const PARSER_VERSION = "das_pdf_v1";
+
+  function collapseWhitespace(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function parseGuideDateToIso(value) {
+    const match = String(value ?? "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return match ? `${match[3]}-${match[2]}-${match[1]}` : null;
+  }
+
+  function parseGuideCurrencyToCents(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    const normalized = raw.replace(/\./g, "").replace(",", ".");
+    const amount = Number(normalized);
+    return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+  }
+
+  function normalizeGuideCompetence(value) {
+    const raw = String(value ?? "").trim();
+    let match = raw.match(/^(\d{2})\/(\d{4})$/);
+    if (match) return `${match[2]}-${match[1]}`;
+    match = raw.match(/^(\d{4})-(\d{2})$/);
+    if (match) return raw;
+    match = raw.match(/^(\d{2})-(\d{4})$/);
+    if (match) return `${match[2]}-${match[1]}`;
+    return null;
+  }
+
+  function extractGuideCompetence(text, fileName) {
+    const normalizedText = collapseWhitespace(text);
+    const candidates = [
+      normalizedText.match(/(?:per[ií]odo\s+de\s+apura[cç][aã]o|compet[eê]ncia)[^0-9]*(\d{2}\/\d{4})/i),
+      String(fileName ?? "").match(/\b(0[1-9]|1[0-2])[-/](20\d{2})\b/),
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const raw = candidate.length >= 3 ? `${candidate[1]}/${candidate[2]}` : candidate[1];
+      const normalized = normalizeGuideCompetence(raw);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  function extractGuideDueDate(text) {
+    const normalizedText = collapseWhitespace(text);
+    const match = normalizedText.match(/(?:data\s+de\s+vencimento|vencimento)[^0-9]{0,20}(\d{2}\/\d{2}\/\d{4})/i);
+    return parseGuideDateToIso(match?.[1] ?? "");
+  }
+
+  function extractGuideAmountCents(text) {
+    const normalizedText = collapseWhitespace(text);
+    const match = normalizedText.match(
+      /(?:valor\s+total\s+do\s+documento|valor\s+total|total\s+do\s+documento)[^0-9]{0,20}(\d{1,3}(?:\.\d{3})*,\d{2})/i,
+    );
+    return parseGuideCurrencyToCents(match?.[1] ?? "");
+  }
+
+  function buildGuideChecksum(filePath) {
+    const hash = createHash("sha256");
+    hash.update(fs.readFileSync(filePath));
+    return hash.digest("hex");
+  }
+
+  function resolvePythonCommand() {
+    const candidates = [
+      ["python"],
+      ["py", "-3"],
+      ["py"],
+    ];
+    for (const candidate of candidates) {
+      const probe = spawnSync(candidate[0], [...candidate.slice(1), "--version"], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 5000,
+      });
+      if (probe.status === 0) return candidate;
+    }
+    return null;
+  }
+
+  function extractGuidePdfText(filePath) {
+    const pythonCommand = resolvePythonCommand();
+    if (!pythonCommand) {
+      throw new Error("Python nao disponivel na VM para leitura do PDF.");
+    }
+    const script = [
+      "import json, sys",
+      "text = ''",
+      "reader_cls = None",
+      "try:",
+      "    from pypdf import PdfReader as Reader",
+      "    reader_cls = Reader",
+      "except Exception:",
+      "    try:",
+      "        from PyPDF2 import PdfReader as Reader",
+      "        reader_cls = Reader",
+      "    except Exception:",
+      "        reader_cls = None",
+      "if reader_cls is None:",
+      "    print(json.dumps({'ok': False, 'error': 'pypdf/PyPDF2 indisponivel'}))",
+      "    raise SystemExit(0)",
+      "try:",
+      "    reader = reader_cls(sys.argv[1])",
+      "    parts = []",
+      "    for page in getattr(reader, 'pages', []):",
+      "        try:",
+      "            page_text = page.extract_text() or ''",
+      "        except Exception:",
+      "            page_text = ''",
+      "        if page_text.strip():",
+      "            parts.append(page_text)",
+      "    text = '\\n'.join(parts)",
+      "    print(json.dumps({'ok': True, 'text': text}, ensure_ascii=False))",
+      "except Exception as exc:",
+      "    print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False))",
+    ].join("\n");
+    const result = spawnSync(
+      pythonCommand[0],
+      [...pythonCommand.slice(1), "-c", script, filePath],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 30000,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+    const stdout = String(result.stdout ?? "").trim();
+    if (!stdout) {
+      throw new Error(String(result.stderr ?? "").trim() || "Python nao retornou conteudo do PDF.");
+    }
+    const payload = JSON.parse(stdout);
+    if (!payload?.ok) {
+      throw new Error(String(payload?.error || "Falha ao extrair texto do PDF."));
+    }
+    return String(payload.text ?? "");
+  }
+
+  function isSimplesGuideFile(filePath) {
+    const baseName = path.basename(String(filePath ?? "")).toLowerCase();
+    return baseName.endsWith(".pdf") && baseName.startsWith("das");
+  }
+
+  function normalizeRelativeFilePath(basePath, filePath) {
+    const relative = path.relative(basePath, filePath).replace(/\\/g, "/");
+    if (!relative || relative.startsWith("..")) {
+      throw new Error("Arquivo fora do diretório base.");
+    }
+    return relative;
+  }
+
+  function buildGuideDocumentPayload({
+    officeId,
+    companyId,
+    relativePath,
+    fileName,
+    checksum,
+    stats,
+    parsed,
+    existingRow,
+  }) {
+    const parsedAt = new Date().toISOString();
+    const dueDate = parsed.data_vencimento ?? null;
+    const competence = parsed.competencia ?? existingRow?.periodo ?? null;
+    const fallbackPeriod = competence || String(dueDate ?? "").slice(0, 7) || new Date(stats.mtimeMs).toISOString().slice(0, 7);
+    const parseSucceeded = Boolean(parsed.competencia && parsed.data_vencimento && Number.isInteger(parsed.amount_cents));
+    const meta = {
+      ...(existingRow?.meta && typeof existingRow.meta === "object" && !Array.isArray(existingRow.meta) ? existingRow.meta : {}),
+      parser_version: PARSER_VERSION,
+      parse_source: parsed.parse_source ?? "pdf_text",
+      parsed_competencia: parsed.competencia ?? null,
+      parsed_data_vencimento: parsed.data_vencimento ?? null,
+      parsed_amount_cents: parsed.amount_cents ?? null,
+      file_name: fileName,
+      file_size_bytes: stats.size,
+      file_mtime_ms: stats.mtimeMs,
+      parse_error: parsed.parse_error ?? null,
+      text_excerpt: parsed.text_excerpt ?? null,
+    };
+    return {
+      office_id: officeId,
+      company_id: companyId,
+      type: DOCUMENT_TYPE,
+      chave: path.basename(fileName, path.extname(fileName)),
+      periodo: fallbackPeriod,
+      status: parseSucceeded ? "concluido" : "erro",
+      document_date: dueDate,
+      data_vencimento: dueDate,
+      file_path: relativePath,
+      checksum,
+      parsed_at: parsedAt,
+      parser_version: PARSER_VERSION,
+      amount_cents: Number.isInteger(parsed.amount_cents) ? parsed.amount_cents : null,
+      meta,
+    };
+  }
+
+  async function parseGuidePdfDocument(filePath, fileName) {
+    try {
+      const text = extractGuidePdfText(filePath);
+      const collapsed = collapseWhitespace(text);
+      return {
+        parse_source: "pdf_text",
+        competencia: extractGuideCompetence(collapsed, fileName),
+        data_vencimento: extractGuideDueDate(collapsed),
+        amount_cents: extractGuideAmountCents(collapsed),
+        parse_error: null,
+        text_excerpt: collapsed.slice(0, 400) || null,
+      };
+    } catch (error) {
+      return {
+        parse_source: "pdf_text",
+        competencia: extractGuideCompetence("", fileName),
+        data_vencimento: null,
+        amount_cents: null,
+        parse_error: error instanceof Error ? error.message : String(error),
+        text_excerpt: null,
+      };
+    }
+  }
+
+  async function fetchGuideDocumentsIndex(supabase, officeId, companyIds = []) {
+    let query = supabase
+      .from("fiscal_documents")
+      .select("id, office_id, company_id, type, periodo, file_path, checksum, parsed_at, amount_cents, data_vencimento, meta, status")
+      .eq("office_id", officeId)
+      .eq("type", DOCUMENT_TYPE);
+    if (companyIds.length > 0) {
+      query = query.in("company_id", companyIds);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function scanSimplesGuideDocuments({
+    supabase,
+    officeId,
+    basePath,
+    companyIds = [],
+    year = null,
+    force = false,
+  }) {
+    const normalizedCompanyIds = Array.from(new Set((Array.isArray(companyIds) ? companyIds : []).map((value) => String(value ?? "").trim()).filter(Boolean)));
+    const { data: companies, error: companiesError } = await supabase
+      .from("companies")
+      .select("id, name, document")
+      .eq("office_id", officeId);
+    if (companiesError) throw companiesError;
+
+    const filteredCompanies = (companies ?? []).filter((company) =>
+      normalizedCompanyIds.length === 0 || normalizedCompanyIds.includes(String(company.id ?? "").trim()),
+    );
+    const companyByNormalizedName = new Map(
+      filteredCompanies.map((company) => [normalizeCompanyName(company.name), company]),
+    );
+    const existingRows = await fetchGuideDocumentsIndex(supabase, officeId, normalizedCompanyIds);
+    const existingByKey = new Map(
+      existingRows.map((row) => [`${row.company_id}:${String(row.file_path ?? "").toLowerCase()}`, row]),
+    );
+    const summary = {
+      scanned: 0,
+      parsed: 0,
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      errors: [],
+    };
+
+    if (!fs.existsSync(basePath) || !fs.statSync(basePath).isDirectory()) {
+      return summary;
+    }
+
+    const companyDirs = fs.readdirSync(basePath, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    for (const companyDir of companyDirs) {
+      const company = companyByNormalizedName.get(normalizeCompanyName(companyDir.name));
+      if (!company) continue;
+      const guideRoot = path.join(companyDir.name, "Fiscal", "Simples Nacional").replace(/\\/g, "/");
+      const files = walkDir(guideRoot, basePath).filter(isSimplesGuideFile);
+      for (const relativeCandidate of files) {
+        summary.scanned += 1;
+        const absolutePath = path.join(basePath, relativeCandidate);
+        const stats = fs.statSync(absolutePath);
+        const relativePath = normalizeRelativeFilePath(basePath, absolutePath);
+        const existingKey = `${company.id}:${relativePath.toLowerCase()}`;
+        const existingRow = existingByKey.get(existingKey) ?? null;
+        const existingMeta = existingRow?.meta && typeof existingRow.meta === "object" && !Array.isArray(existingRow.meta)
+          ? existingRow.meta
+          : {};
+        const fileSizeBytes = Number(existingMeta.file_size_bytes ?? 0);
+        const fileMtimeMs = Number(existingMeta.file_mtime_ms ?? 0);
+        if (
+          !force &&
+          existingRow?.parsed_at &&
+          existingRow?.checksum &&
+          fileSizeBytes === stats.size &&
+          Math.trunc(fileMtimeMs) === Math.trunc(stats.mtimeMs)
+        ) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const checksum = buildGuideChecksum(absolutePath);
+        if (!force && existingRow?.checksum && existingRow.checksum === checksum && existingRow?.parsed_at) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const parsed = await parseGuidePdfDocument(absolutePath, path.basename(absolutePath));
+        if (year && parsed.competencia && !String(parsed.competencia).startsWith(String(year))) {
+          summary.skipped += 1;
+          continue;
+        }
+        const payload = buildGuideDocumentPayload({
+          officeId,
+          companyId: company.id,
+          relativePath,
+          fileName: path.basename(absolutePath),
+          checksum,
+          stats,
+          parsed,
+          existingRow,
+        });
+        const { data: upserted, error: upsertError } = await supabase
+          .from("fiscal_documents")
+          .upsert(payload, { onConflict: "office_id,company_id,type,file_path" })
+          .select("id")
+          .maybeSingle();
+        if (upsertError) {
+          summary.errors.push({ file: relativePath, error: upsertError.message });
+          continue;
+        }
+        summary.parsed += 1;
+        if (existingRow?.id) summary.updated += 1;
+        else if (upserted?.id) summary.inserted += 1;
+      }
+    }
+
+    return summary;
+  }
+
+  async function scanSingleSimplesGuideDocument({
+    supabase,
+    officeId,
+    basePath,
+    documentId,
+    force = true,
+  }) {
+    const { data: row, error } = await supabase
+      .from("fiscal_documents")
+      .select("id, company_id, file_path, meta")
+      .eq("office_id", officeId)
+      .eq("id", documentId)
+      .eq("type", DOCUMENT_TYPE)
+      .maybeSingle();
+    if (error) throw error;
+    if (!row?.file_path) {
+      const notFound = new Error("Documento de guia nao encontrado para reindexacao.");
+      notFound.statusCode = 404;
+      throw notFound;
+    }
+    const fullPath = resolveWithin(basePath, splitLogicalSegments(row.file_path));
+    const safeFile = ensureSafeFile(basePath, fullPath);
+    if (!safeFile) {
+      const missing = new Error("Arquivo da guia nao encontrado no servidor.");
+      missing.statusCode = 404;
+      throw missing;
+    }
+    const stats = fs.statSync(safeFile.realPath);
+    const checksum = buildGuideChecksum(safeFile.realPath);
+    const parsed = await parseGuidePdfDocument(safeFile.realPath, path.basename(safeFile.realPath));
+    const payload = buildGuideDocumentPayload({
+      officeId,
+      companyId: row.company_id,
+      relativePath: row.file_path,
+      fileName: path.basename(safeFile.realPath),
+      checksum,
+      stats,
+      parsed,
+      existingRow: row,
+    });
+    const { error: updateError } = await supabase
+      .from("fiscal_documents")
+      .upsert(payload, { onConflict: "office_id,company_id,type,file_path" });
+    if (updateError) throw updateError;
+    return {
+      ok: true,
+      force,
+      file_path: row.file_path,
+    };
+  }
+
+  async function listSimplesGuideDocuments({
+    supabase,
+    officeId,
+    basePath,
+    companyIds = [],
+    year = null,
+    page = 1,
+    pageSize = 12,
+    sortKey = "competencia",
+    sortDirection = "desc",
+    autoScan = true,
+  }) {
+    const normalizedCompanyIds = Array.from(new Set((Array.isArray(companyIds) ? companyIds : []).map((value) => String(value ?? "").trim()).filter(Boolean)));
+    const normalizedYear = /^\d{4}$/.test(String(year ?? "").trim()) ? String(year).trim() : null;
+    if (autoScan) {
+      await scanSimplesGuideDocuments({
+        supabase,
+        officeId,
+        basePath,
+        companyIds: normalizedCompanyIds,
+        year: normalizedYear,
+        force: false,
+      });
+    }
+
+    let docsQuery = supabase
+      .from("fiscal_documents")
+      .select("id, company_id, periodo, data_vencimento, amount_cents, file_path, checksum, parsed_at, parser_version, meta, status, updated_at")
+      .eq("office_id", officeId)
+      .eq("type", DOCUMENT_TYPE);
+    if (normalizedCompanyIds.length > 0) docsQuery = docsQuery.in("company_id", normalizedCompanyIds);
+    if (normalizedYear) docsQuery = docsQuery.like("periodo", `${normalizedYear}-%`);
+    const { data: docs, error: docsError } = await docsQuery;
+    if (docsError) throw docsError;
+
+    const companyIdSet = Array.from(new Set((docs ?? []).map((row) => String(row.company_id ?? "").trim()).filter(Boolean)));
+    let companyMap = new Map();
+    if (companyIdSet.length > 0) {
+      const { data: companies, error: companiesError } = await supabase
+        .from("companies")
+        .select("id, name, document")
+        .eq("office_id", officeId)
+        .in("id", companyIdSet);
+      if (companiesError) throw companiesError;
+      companyMap = new Map((companies ?? []).map((company) => [String(company.id), company]));
+    }
+
+    const items = (docs ?? []).map((row) => {
+      const company = companyMap.get(String(row.company_id ?? "")) ?? {};
+      const fileName = path.basename(String(row.file_path ?? "") || "DAS.pdf");
+      return {
+        document_id: String(row.id),
+        company_id: String(row.company_id ?? ""),
+        company_name: String(company.name ?? ""),
+        company_document: company.document == null ? null : String(company.document ?? ""),
+        competencia: String(row.periodo ?? "").trim() || null,
+        data_vencimento: row.data_vencimento ? String(row.data_vencimento) : null,
+        amount_cents: Number.isFinite(Number(row.amount_cents)) ? Number(row.amount_cents) : null,
+        file_name: fileName,
+        file_path: String(row.file_path ?? ""),
+        checksum: row.checksum ? String(row.checksum) : null,
+        parsed_at: row.parsed_at ? String(row.parsed_at) : null,
+        parser_version: row.parser_version ? String(row.parser_version) : null,
+        status: String(row.status ?? "").trim() || "novo",
+        meta: row.meta && typeof row.meta === "object" && !Array.isArray(row.meta) ? row.meta : {},
+        updated_at: row.updated_at ? String(row.updated_at) : null,
+      };
+    });
+
+    const direction = String(sortDirection ?? "").toLowerCase() === "asc" ? 1 : -1;
+    items.sort((left, right) => {
+      const byCompetence = String(left.competencia ?? "").localeCompare(String(right.competencia ?? ""));
+      const byDueDate = String(left.data_vencimento ?? "").localeCompare(String(right.data_vencimento ?? ""));
+      const byAmount = Number(left.amount_cents ?? -1) - Number(right.amount_cents ?? -1);
+      const byCompany = String(left.company_name ?? "").localeCompare(String(right.company_name ?? ""), "pt-BR");
+      let compare = 0;
+      if (sortKey === "vencimento") compare = byDueDate;
+      else if (sortKey === "valor") compare = byAmount;
+      else compare = byCompetence;
+      if (compare === 0) compare = byDueDate || byCompany;
+      return compare * direction;
+    });
+
+    const safePage = Math.max(1, Number(page) || 1);
+    const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 12));
+    const start = (safePage - 1) * safePageSize;
+    const pagedItems = items.slice(start, start + safePageSize);
+    return {
+      items: pagedItems,
+      total: items.length,
+      page: safePage,
+      page_size: safePageSize,
+    };
+  }
+
+  async function downloadSimplesGuideDocument({
+    supabase,
+    officeId,
+    basePath,
+    documentId,
+  }) {
+    const { data: row, error } = await supabase
+      .from("fiscal_documents")
+      .select("id, file_path, type")
+      .eq("office_id", officeId)
+      .eq("id", documentId)
+      .eq("type", DOCUMENT_TYPE)
+      .maybeSingle();
+    if (error) throw error;
+    if (!row?.file_path) {
+      const notFound = new Error("Guia nao encontrada para download.");
+      notFound.statusCode = 404;
+      throw notFound;
+    }
+    const fullPath = resolveWithin(basePath, splitLogicalSegments(row.file_path));
+    const safeFile = ensureSafeFile(basePath, fullPath);
+    if (!safeFile) {
+      const missing = new Error("Arquivo da guia nao encontrado no servidor.");
+      missing.statusCode = 404;
+      throw missing;
+    }
+    return {
+      fileName: path.basename(safeFile.realPath),
+      fullPath: safeFile.realPath,
+    };
+  }
+
+  return {
+    DOCUMENT_TYPE,
+    PARSER_VERSION,
+    listSimplesGuideDocuments,
+    downloadSimplesGuideDocument,
+    scanSimplesGuideDocuments,
+    scanSingleSimplesGuideDocument,
+  };
+})();
+
 const scheduleRulesWorkerModule = (() => {
   const { listRobotRuntimeRows } = robotJsonRuntimeModule;
   const { filterEligibleCompaniesForRobot, getRequestedCityNameFromJob } = robotEligibility;
@@ -2863,6 +3396,153 @@ app.post(
       );
       res.setHeader("Content-Type", contentType);
       fs.createReadStream(result.fullPath).pipe(res);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
+
+app.post(
+  "/api/declarations/guides/list",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    if (!OFFICE_ID || !OFFICE_SERVER_ID) {
+      return res.status(503).json({
+        error:
+          "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+      });
+    }
+
+    const supabase = createSupabaseServiceClient();
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase nao configurado" });
+    }
+
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const response = await simplesGuideDocumentsModule.listSimplesGuideDocuments({
+        supabase,
+        officeId: OFFICE_ID,
+        basePath: BASE_PATH,
+        companyIds: Array.isArray(body.company_ids) ? body.company_ids : [],
+        year: body.year,
+        page: body.page,
+        pageSize: body.page_size,
+        sortKey: body.sort_key,
+        sortDirection: body.sort_direction,
+        autoScan: body.auto_scan !== false,
+      });
+      return res.json(response);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
+
+app.post(
+  "/api/declarations/guides/download",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    if (!OFFICE_ID || !OFFICE_SERVER_ID) {
+      return res.status(503).json({
+        error:
+          "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+      });
+    }
+
+    const supabase = createSupabaseServiceClient();
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase nao configurado" });
+    }
+
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const result = await simplesGuideDocumentsModule.downloadSimplesGuideDocument({
+        supabase,
+        officeId: OFFICE_ID,
+        basePath: BASE_PATH,
+        documentId: String(body.document_id ?? "").trim(),
+      });
+      res.setHeader("Content-Disposition", `attachment; filename="${result.fileName}"`);
+      res.setHeader("Content-Type", "application/pdf");
+      fs.createReadStream(result.fullPath).pipe(res);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
+
+app.post(
+  "/api/declarations/guides/scan",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    if (!OFFICE_ID || !OFFICE_SERVER_ID) {
+      return res.status(503).json({
+        error:
+          "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+      });
+    }
+
+    const supabase = createSupabaseServiceClient();
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase nao configurado" });
+    }
+
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const response = await simplesGuideDocumentsModule.scanSimplesGuideDocuments({
+        supabase,
+        officeId: OFFICE_ID,
+        basePath: BASE_PATH,
+        companyIds: Array.isArray(body.company_ids) ? body.company_ids : [],
+        year: body.year,
+        force: Boolean(body.force),
+      });
+      return res.json(response);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
+
+app.post(
+  "/api/declarations/guides/scan-single",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    if (!OFFICE_ID || !OFFICE_SERVER_ID) {
+      return res.status(503).json({
+        error:
+          "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+      });
+    }
+
+    const supabase = createSupabaseServiceClient();
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase nao configurado" });
+    }
+
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const response = await simplesGuideDocumentsModule.scanSingleSimplesGuideDocument({
+        supabase,
+        officeId: OFFICE_ID,
+        basePath: BASE_PATH,
+        documentId: String(body.document_id ?? "").trim(),
+        force: Boolean(body.force ?? true),
+      });
+      return res.json(response);
     } catch (err) {
       return res.status(err.statusCode || 500).json({ error: err.message });
     }

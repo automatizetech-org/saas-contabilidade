@@ -31,6 +31,7 @@ type DeclarationExecutionModalProps = {
   busy?: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (input: DeclarationGuideSubmitInput) => void | Promise<void>;
+  onOpenConsultGuide?: () => void;
 };
 
 function getModalCopy(action: DeclarationActionKind, recalculateByDefault: boolean) {
@@ -108,6 +109,7 @@ export function DeclarationExecutionModal({
   busy = false,
   onOpenChange,
   onSubmit,
+  onOpenConsultGuide,
 }: DeclarationExecutionModalProps) {
   const modalCopy = getModalCopy(state.action, state.recalculateByDefault);
   const [search, setSearch] = useState("");
@@ -177,8 +179,17 @@ export function DeclarationExecutionModal({
     <Dialog open={open} onOpenChange={(next) => (!busy ? onOpenChange(next) : undefined)}>
       <DialogContent className="max-w-3xl gap-0 overflow-hidden border-border bg-card p-0">
         <DialogHeader className="space-y-2 border-b border-border px-6 py-5">
-          <DialogTitle className="text-xl font-display tracking-tight">{modalCopy.title}</DialogTitle>
-          <DialogDescription className="text-sm">{modalCopy.description}</DialogDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-2">
+              <DialogTitle className="text-xl font-display tracking-tight">{modalCopy.title}</DialogTitle>
+              <DialogDescription className="text-sm">{modalCopy.description}</DialogDescription>
+            </div>
+            {state.action === "simples_emitir_guia" && onOpenConsultGuide ? (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onOpenConsultGuide}>
+                Consultar guia
+              </Button>
+            ) : null}
+          </div>
         </DialogHeader>
 
         <div className="grid gap-0 lg:grid-cols-[1.25fr_0.9fr]">

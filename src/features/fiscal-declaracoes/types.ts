@@ -125,6 +125,8 @@ export type DeclarationRunHistoryEntry = {
   terminal: boolean;
   referenceLabel: string;
   dueDateLabel: string;
+  amountLabel: string;
+  amountCents: number | null;
   companyId: string;
   companyName: string;
   companyDocument: string | null;
@@ -156,6 +158,39 @@ export type DeclarationStoredDocumentsModalState = {
   action: Extract<DeclarationActionKind, "simples_extrato" | "simples_defis">;
   presetCompanyId?: string | null;
   presetYear?: string | null;
+};
+
+export type DeclarationGuideConsultModalState = {
+  open: boolean;
+  presetCompanyId?: string | null;
+  presetYear?: string | null;
+};
+
+export type DeclarationGuideDocumentSortKey = "competencia" | "vencimento" | "valor";
+
+export type DeclarationGuideDocumentListItem = {
+  documentId: string;
+  companyId: string;
+  companyName: string;
+  companyDocument: string | null;
+  competence: string | null;
+  dueDate: string | null;
+  amountCents: number | null;
+  fileName: string;
+  filePath: string;
+  checksum: string | null;
+  parsedAt: string | null;
+  parserVersion: string | null;
+  status: string;
+  meta: Json;
+  updatedAt: string | null;
+};
+
+export type DeclarationGuideDocumentListResponse = {
+  items: DeclarationGuideDocumentListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 
 export type DeclarationGuideSubmitInput = {
