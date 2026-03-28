@@ -393,6 +393,29 @@ def _wait_for_cdp_ready(proc: subprocess.Popen[Any], port: int, timeout_seconds:
     raise TimeoutError(f"Timeout ao aguardar CDP do Chrome portátil na porta {port}. {last_error}".strip())
 
 
+def _is_internal_chrome_url(url: str) -> bool:
+    lowered = str(url or "").strip().lower()
+    return lowered.startswith(("chrome://", "devtools://", "edge://"))
+
+
+def _resolve_automation_page(context: Any):
+    pages = list(getattr(context, "pages", []) or [])
+    for page in pages:
+        try:
+            if not _is_internal_chrome_url(page.url):
+                page.bring_to_front()
+                return page
+        except Exception:
+            continue
+
+    page = context.new_page()
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+    return page
+
+
 def _rebuild_chrome_profile_from_backup(
     runtime_env: RuntimeEnvironment,
     *,
@@ -472,7 +495,7 @@ def launch_browser(runtime_env: RuntimeEnvironment, *, headless: bool = False) -
             context.set_default_navigation_timeout(120000)
         except Exception:
             pass
-        page = context.pages[0] if context.pages else context.new_page()
+        page = _resolve_automation_page(context)
         session = BrowserSession(
             playwright=playwright,
             context=context,
@@ -490,6 +513,8 @@ def launch_browser(runtime_env: RuntimeEnvironment, *, headless: bool = False) -
                 pass
         _terminate_external_chrome_process(chrome_proc)
         try:
+            _terminate_runtime_portable_chrome_processes(runtime_env)
+            time.sleep(0.35)
             _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
         except Exception:
             pass
@@ -527,6 +552,8 @@ def close_browser(session: Optional[BrowserSession], runtime_env: Optional[Runti
         _terminate_external_chrome_process(chrome_proc)
         if runtime_env is not None:
             try:
+                _terminate_runtime_portable_chrome_processes(runtime_env)
+                time.sleep(0.35)
                 _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
             except Exception as exc:
                 runtime_env.logger.warning(f"Falha ao restaurar chrome_profile a partir do backup: {exc}")
@@ -562,6 +589,8 @@ def cleanup_runtime_artifacts(runtime_env: RuntimeEnvironment) -> None:
             stop_path.unlink()
     finally:
         try:
+            _terminate_runtime_portable_chrome_processes(runtime_env)
+            time.sleep(0.35)
             _rebuild_chrome_profile_from_backup(runtime_env, require_backup=False)
         except Exception as exc:
             runtime_env.logger.warning(f"Falha ao restaurar chrome_profile a partir do backup: {exc}")
@@ -1402,12 +1431,25 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                     time.sleep(0.25)
         raise RuntimeError(str(last_error or "Falha ao abrir a pagina inicial do e-CAC."))
 
+    def _on_gov_br_identity_page(self) -> bool:
+        current_url = str(self.page.url or "").lower()
+        if "acesso.gov.br" in current_url:
+            return True
+        markers = (
+            "Seu certificado digital",
+            "Certificado digital",
+            "Identifique-se no gov.br",
+            "Numero do CPF",
+            "Número do CPF",
+        )
+        return any(self._page_contains(marker) for marker in markers)
+
     def _click_access_gov_br(self, timeout_ms: int = 12000) -> None:
         deadline = time.time() + max(timeout_ms, 1000) / 1000
         pattern = re.compile(r"^\s*Acesso Gov BR\s*$", re.IGNORECASE)
         while time.time() < deadline:
             current_url = str(self.page.url or "").lower()
-            if "acesso.gov.br" in current_url or self._page_contains("Seu certificado digital"):
+            if "acesso.gov.br" in current_url or self._on_gov_br_identity_page():
                 return
             self._bring_browser_to_front()
             candidates = [
@@ -2933,7 +2975,13 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
 
     def _advance_to_gov_br_with_retry_budget(self) -> None:
         last_error: Optional[Exception] = None
+        if self._on_gov_br_identity_page() and not self.captcha_visible():
+            self.runtime.logger.info("Tela do GOV.BR ja estava aberta; pulando clique em 'Acesso Gov BR'.")
+            return
         for attempt in range(1, LOGIN_HCAPTCHA_RELOAD_LIMIT + 2):
+            if self._on_gov_br_identity_page() and not self.captcha_visible():
+                self.runtime.logger.info("Tela do GOV.BR detectada durante a tentativa; seguindo para o certificado.")
+                return
             self._click_access_gov_br()
             self._wait_until(
                 lambda: "acesso.gov.br" in str(self.page.url or "").lower()
