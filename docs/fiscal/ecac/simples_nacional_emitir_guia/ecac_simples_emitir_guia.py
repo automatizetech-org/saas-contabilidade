@@ -1152,7 +1152,7 @@ class DashboardClient:
 
 
 SIMPLES_GUIDE_DOCUMENT_TYPE = "GUIA_SIMPLES_DAS"
-SIMPLES_GUIDE_PARSER_VERSION = "das_pdf_v1"
+SIMPLES_GUIDE_PARSER_VERSION = "das_pdf_v2"
 
 
 def _portal_date_to_iso(value: Any) -> str:
@@ -1245,8 +1245,11 @@ def _build_simples_guide_document_payload(
         amount_cents = _parse_currency_to_cents(record.get("valor_total") or record.get("saldo_devedor"))
 
     due_date_iso = (
-        str(guide_file.get("data_vencimento_iso") or "").strip()
+        str(guide_file.get("pagar_ate_iso") or "").strip()
+        or str(guide_file.get("data_vencimento_iso") or "").strip()
+        or _portal_date_to_iso(record.get("pagar_ate"))
         or _portal_date_to_iso(record.get("data_vencimento"))
+        or _portal_date_to_iso(result.flags.get("pagar_ate"))
         or _portal_date_to_iso(result.flags.get("data_vencimento_pdf"))
         or _portal_date_to_iso(result.flags.get("data_vencimento"))
     )
@@ -1268,6 +1271,7 @@ def _build_simples_guide_document_payload(
         "file_size_bytes": file_path.stat().st_size,
         "file_mtime_ms": int(file_path.stat().st_mtime * 1000),
         "pagar_ate": str(record.get("pagar_ate") or result.flags.get("pagar_ate") or "").strip() or None,
+        "data_vencimento_original": str(record.get("data_vencimento") or result.flags.get("data_vencimento_pdf") or result.flags.get("data_vencimento") or "").strip() or None,
         "raw_record": record,
     }
     return {
@@ -5872,8 +5876,11 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
         checksum = _compute_file_sha256(saved)
         parsed_at = utc_now_iso()
         if pdf_summary.get("data_vencimento"):
-            summary["data_vencimento"] = pdf_summary["data_vencimento"]
-            result.flags["data_vencimento_pdf"] = pdf_summary["data_vencimento"]
+            result.flags["data_vencimento_original_pdf"] = pdf_summary["data_vencimento"]
+        preferred_due_date = pdf_summary.get("pagar_ate") or pdf_summary.get("data_vencimento") or ""
+        if preferred_due_date:
+            summary["data_vencimento"] = preferred_due_date
+            result.flags["data_vencimento_pdf"] = preferred_due_date
         if pdf_summary.get("competencia"):
             result.flags["competencia_pdf"] = pdf_summary["competencia"]
         amount_cents = _parse_currency_to_cents(pdf_summary.get("valor_total"))
@@ -5903,6 +5910,7 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
                 "parser_version": SIMPLES_GUIDE_PARSER_VERSION,
                 "competencia_iso": _normalize_guide_competence(pdf_summary.get("competencia") or competencia),
                 "data_vencimento_iso": _portal_date_to_iso(summary.get("data_vencimento") or ""),
+                "pagar_ate_iso": _portal_date_to_iso(pdf_summary.get("pagar_ate") or ""),
                 "amount_cents": amount_cents,
             }
         )
@@ -5919,6 +5927,7 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
                 "competencia_iso": _normalize_guide_competence(competencia),
                 "data_vencimento": summary.get("data_vencimento") or "",
                 "data_vencimento_iso": _portal_date_to_iso(summary.get("data_vencimento") or ""),
+                "data_vencimento_original": result.flags.get("data_vencimento_original_pdf") or "",
                 "validade_calculo": summary.get("validade_calculo") or "",
                 "saldo_devedor": summary.get("saldo_devedor") or "",
                 "valor_total": result.flags.get("valor_total_pdf") or summary.get("saldo_devedor") or "",

@@ -1779,7 +1779,7 @@ async function resolveDeclarationArtifactDownload({
 
 const simplesGuideDocumentsModule = (() => {
   const DOCUMENT_TYPE = "GUIA_SIMPLES_DAS";
-  const PARSER_VERSION = "das_pdf_v1";
+  const PARSER_VERSION = "das_pdf_v2";
 
   function collapseWhitespace(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -1824,17 +1824,24 @@ const simplesGuideDocumentsModule = (() => {
     return null;
   }
 
-  function extractGuideDueDate(text) {
+  function extractGuidePayUntilDate(text) {
+    const normalizedText = collapseWhitespace(text);
+    const match = normalizedText.match(
+      /pagar(?:\s+este\s+documento)?\s+at\S*[^0-9]*(\d{2}\/\d{2}\/\d{4})/i,
+    );
+    return parseGuideDateToIso(match?.[1] ?? "");
+  }
+
+  function extractGuideOriginalDueDate(text) {
     const normalizedText = collapseWhitespace(text);
     const patterns = [
       /cnpj\s+raz\S*o\s+social\s+(?:[a-z]{3,20}\/\d{4}|\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+c\S*digo\s+principal/i,
-      /pagar(?:\s+este\s+documento)?\s+at\S*[^0-9]*(\d{2}\/\d{2}\/\d{4}).*?cnpj\s+raz\S*o\s+social\s+(?:[a-z]{3,20}\/\d{4}|\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})/i,
       /(?:data\s+de\s+vencimento|vencimento)[^0-9]{0,20}(\d{2}\/\d{2}\/\d{4})/i,
     ];
     for (const pattern of patterns) {
       const match = normalizedText.match(pattern);
       if (!match) continue;
-      const rawDate = match[2] ?? match[1] ?? "";
+      const rawDate = match[1] ?? "";
       const parsed = parseGuideDateToIso(rawDate);
       if (parsed) return parsed;
     }
@@ -2000,6 +2007,8 @@ const simplesGuideDocumentsModule = (() => {
       parse_source: parsed.parse_source ?? "pdf_text",
       parsed_competencia: parsed.competencia ?? null,
       parsed_data_vencimento: parsed.data_vencimento ?? null,
+      parsed_pagar_ate: parsed.pagar_ate ?? null,
+      parsed_data_vencimento_original: parsed.data_vencimento_original ?? null,
       parsed_amount_cents: parsed.amount_cents ?? null,
       file_name: fileName,
       file_size_bytes: stats.size,
@@ -2029,10 +2038,14 @@ const simplesGuideDocumentsModule = (() => {
     try {
       const text = extractGuidePdfText(filePath);
       const collapsed = collapseWhitespace(text);
+      const payUntilDate = extractGuidePayUntilDate(collapsed);
+      const originalDueDate = extractGuideOriginalDueDate(collapsed);
       return {
         parse_source: "pdf_text",
         competencia: extractGuideCompetence(collapsed, fileName),
-        data_vencimento: extractGuideDueDate(collapsed),
+        data_vencimento: payUntilDate ?? originalDueDate,
+        pagar_ate: payUntilDate,
+        data_vencimento_original: originalDueDate,
         amount_cents: extractGuideAmountCents(collapsed),
         parse_error: null,
         text_excerpt: collapsed.slice(0, 400) || null,
@@ -2042,6 +2055,8 @@ const simplesGuideDocumentsModule = (() => {
         parse_source: "pdf_text",
         competencia: extractGuideCompetence("", fileName),
         data_vencimento: null,
+        pagar_ate: null,
+        data_vencimento_original: null,
         amount_cents: null,
         parse_error: error instanceof Error ? error.message : String(error),
         text_excerpt: null,
@@ -2163,10 +2178,12 @@ const simplesGuideDocumentsModule = (() => {
           : {};
         const fileSizeBytes = Number(existingMeta.file_size_bytes ?? 0);
         const fileMtimeMs = Number(existingMeta.file_mtime_ms ?? 0);
+        const existingParserVersion = String(existingRow?.parser_version ?? existingMeta.parser_version ?? "").trim();
         if (
           !force &&
           existingRow?.parsed_at &&
           existingRow?.checksum &&
+          existingParserVersion === PARSER_VERSION &&
           fileSizeBytes === stats.size &&
           Math.trunc(fileMtimeMs) === Math.trunc(stats.mtimeMs)
         ) {
@@ -2175,7 +2192,13 @@ const simplesGuideDocumentsModule = (() => {
         }
 
         const checksum = buildGuideChecksum(absolutePath);
-        if (!force && existingRow?.checksum && existingRow.checksum === checksum && existingRow?.parsed_at) {
+        if (
+          !force &&
+          existingRow?.checksum &&
+          existingRow.checksum === checksum &&
+          existingRow?.parsed_at &&
+          existingParserVersion === PARSER_VERSION
+        ) {
           summary.skipped += 1;
           continue;
         }

@@ -928,6 +928,9 @@ function extractDueDateFromSummary(
   if (action !== "simples_emitir_guia") return "-";
 
   const directCandidates = [
+    summary.pagar_ate,
+    summary.pagar_ate_pdf,
+    summary.guia_pagar_ate,
     summary.data_vencimento_guia,
     summary.guia_data_vencimento,
     summary.data_vencimento_pdf,
@@ -940,6 +943,9 @@ function extractDueDateFromSummary(
 
   const record = asObject(asArray(summary.records)[0] ?? null);
   const recordCandidates = [
+    record.pagar_ate,
+    record.pagar_ate_pdf,
+    record.guia_pagar_ate,
     record.data_vencimento_guia,
     record.guia_data_vencimento,
     record.data_vencimento_pdf,
@@ -1035,12 +1041,19 @@ function mergeGuideMetadataIntoSummary(
   summary: Record<string, Json>,
   document: DeclarationGuideDocumentListItem,
 ): Record<string, Json> {
+  const documentMeta =
+    document.meta && typeof document.meta === "object" && !Array.isArray(document.meta)
+      ? (document.meta as Record<string, Json>)
+      : {};
   return {
     ...summary,
     document_id: summary.document_id ?? document.documentId,
     document_type: summary.document_type ?? SIMPLES_GUIDE_DOCUMENT_TYPE,
     competencia: summary.competencia ?? document.competence,
     competence: summary.competence ?? document.competence,
+    pagar_ate: summary.pagar_ate ?? documentMeta.pagar_ate ?? document.dueDate,
+    data_vencimento_original:
+      summary.data_vencimento_original ?? documentMeta.data_vencimento_original ?? null,
     data_vencimento: summary.data_vencimento ?? document.dueDate,
     data_vencimento_pdf: summary.data_vencimento_pdf ?? document.dueDate,
     amount_cents: summary.amount_cents ?? document.amountCents,
