@@ -4420,6 +4420,31 @@ def write_result_and_heartbeat(
     )
 
 
+_HEARTBEAT_SNAPSHOT_LOCK = threading.Lock()
+
+
+def write_processing_heartbeat_snapshot(
+    runtime_env: RuntimeEnvironment,
+    job: Optional[JobPayload],
+    dashboard: DashboardClient,
+    robot_id: str,
+    state: dict[str, Any],
+) -> None:
+    with _HEARTBEAT_SNAPSHOT_LOCK:
+        progress = dict(state)
+        company_results = progress.get("company_results")
+        if isinstance(company_results, list):
+            progress["company_results"] = [dict(item) for item in company_results if isinstance(item, dict)]
+        runtime_env.json_runtime.write_heartbeat(
+            status="processing",
+            current_job_id=job.job_id if job else None,
+            current_execution_request_id=job.execution_request_id if job else None,
+            message="heartbeat",
+            progress=progress,
+        )
+        dashboard.update_robot_presence(status="processing", robot_id=robot_id)
+
+
 def start_heartbeat_loop(
     runtime_env: RuntimeEnvironment,
     job: Optional[JobPayload],
@@ -4430,15 +4455,8 @@ def start_heartbeat_loop(
 ) -> threading.Thread:
     def _loop() -> None:
         while not stop_event.is_set():
-            runtime_env.json_runtime.write_heartbeat(
-                status="processing",
-                current_job_id=job.job_id if job else None,
-                current_execution_request_id=job.execution_request_id if job else None,
-                message="heartbeat",
-                progress=dict(state),
-            )
-            dashboard.update_robot_presence(status="processing", robot_id=robot_id)
-            stop_event.wait(30)
+            write_processing_heartbeat_snapshot(runtime_env, job, dashboard, robot_id, state)
+            stop_event.wait(5)
 
     thread = threading.Thread(target=_loop, name=f"{dashboard.technical_id}-heartbeat", daemon=True)
     thread.start()
@@ -4625,7 +4643,14 @@ class RobotRunner:
         run_id = self.runtime.generate_run_id()
         started_at = utc_now_iso()
         stop_event = threading.Event()
-        heartbeat_state = {"current": 0, "total": 0, "company_name": ""}
+        heartbeat_state = {
+            "current": 0,
+            "total": 0,
+            "company_name": "",
+            "company_id": "",
+            "completed": 0,
+            "company_results": [],
+        }
         heartbeat_thread: Optional[threading.Thread] = None
 
         try:
@@ -4654,6 +4679,17 @@ class RobotRunner:
             processed_contexts = 0
             pfx_path = str(getattr(self.args, "pfx_path", "") or "")
             pfx_password = str(getattr(self.args, "pfx_password", "") or "")
+
+            def _sync_progress_snapshot() -> None:
+                heartbeat_state["completed"] = len(results)
+                heartbeat_state["company_results"] = [item.to_dict() for item in results]
+                write_processing_heartbeat_snapshot(
+                    self.runtime,
+                    job,
+                    self.dashboard,
+                    robot_id,
+                    heartbeat_state,
+                )
 
             def _open_authenticated_automation(certificate: CertificateMetadata, company_label: str) -> tuple[BrowserSession, SimplesEcacAutomation]:
                 last_error: Optional[Exception] = None
@@ -4821,6 +4857,7 @@ class RobotRunner:
                                 switch_profile=should_switch_profile,
                             )
                         )
+                        _sync_progress_snapshot()
                 finally:
                     self._release_active_session(session)
                     close_browser(session, self.runtime)
@@ -4833,6 +4870,7 @@ class RobotRunner:
                     heartbeat_state.update({"current": processed_contexts, "company_name": company.name, "company_id": company.company_id})
                     if not company.eligible:
                         results.append(_blocked_result(company))
+                        _sync_progress_snapshot()
                         continue
                     session: Optional[BrowserSession] = None
                     try:
@@ -4844,13 +4882,16 @@ class RobotRunner:
                         )
                         session, automation = _open_authenticated_automation(company_certificate, company.name)
                         results.append(_process_company_with_automation(automation, company, switch_profile=False))
+                        _sync_progress_snapshot()
                     except Exception as exc:
                         if self.stop_requested:
                             self.runtime.logger.info(f"company_interrupted {company.name}: execucao interrompida pelo usuario.")
                             results.append(_interrupted_result(company))
+                            _sync_progress_snapshot()
                             break
                         self.runtime.logger.warning(f"company_failed {company.name}: {exc}")
                         results.append(_error_result(company, _stack_tail(exc)))
+                        _sync_progress_snapshot()
                     finally:
                         self._release_active_session(session)
                         close_browser(session, self.runtime)

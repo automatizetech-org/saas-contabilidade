@@ -854,7 +854,7 @@ function resolveCompanyMessage(summary: Record<string, Json>, fallback: string) 
 
 function mapCompanyResultStatus(value: string): DeclarationRunItem["status"] {
   const normalized = normalizeToken(value);
-  if (["error", "erro", "failed", "falha", "blocked", "bloqueado"].includes(normalized)) {
+  if (["error", "erro", "failed", "falha", "blocked", "bloqueado", "interrupted", "interrompido", "cancelled", "cancelado"].includes(normalized)) {
     return "erro";
   }
   return "sucesso";
@@ -1028,6 +1028,7 @@ type ExecutionRuntimeProgress = {
   companyId: string | null;
   companyName: string | null;
   status: string;
+  companyResults: Record<string, Json>[];
 };
 
 async function getRuntimeProgressByRequestIds(
@@ -1054,6 +1055,7 @@ async function getRuntimeProgressByRequestIds(
     const companyId = String(progress.company_id ?? "").trim() || null;
     const companyName = String(progress.company_name ?? "").trim() || null;
     const status = String(row.status ?? heartbeat.status ?? "").trim().toLowerCase() || "inactive";
+    const companyResults = asRecordArray(progress.company_results ?? heartbeat.company_results ?? null);
     const updatedAt = Date.parse(String(row.updated_at ?? ""));
     const existing = progressByRequestId.get(requestId);
     const existingUpdatedAt = existing ? Date.parse(String((existing as { updatedAt?: string }).updatedAt ?? "")) : Number.NaN;
@@ -1066,6 +1068,7 @@ async function getRuntimeProgressByRequestIds(
           companyId,
           companyName,
           status,
+          companyResults,
           updatedAt: String(row.updated_at ?? ""),
         } as ExecutionRuntimeProgress & { updatedAt: string },
       );
@@ -1080,6 +1083,7 @@ async function getRuntimeProgressByRequestIds(
         companyId: progress.companyId,
         companyName: progress.companyName,
         status: progress.status,
+        companyResults: progress.companyResults,
       },
     ]),
   );
@@ -1547,6 +1551,10 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
   if (requestsError) throw requestsError;
   if (eventsError) throw eventsError;
 
+  const runtimeProgressByRequestId = await getRuntimeProgressByRequestIds(current.requestIds).catch(
+    () => new Map<string, ExecutionRuntimeProgress>(),
+  );
+
   const requestById = new Map(
     (requests ?? []).map((row) => [row.id, row]),
   );
@@ -1587,11 +1595,17 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     }
 
     const resultEvent = resultByExecutionId.get(item.executionRequestId);
+    const runtimeProgress = runtimeProgressByRequestId.get(item.executionRequestId);
     const requestSummary = asObject((request as { result_summary?: Json | null }).result_summary);
     const requestJobPayload = asObject((request as { job_payload?: Json | null }).job_payload);
     const eventSummary = asObject((resultEvent as { summary?: Json | null } | undefined)?.summary);
     const eventCompanyResults = asRecordArray(
       (resultEvent as { company_results?: Json | null } | undefined)?.company_results,
+    );
+    const runtimeCompanyResults = runtimeProgress?.companyResults ?? [];
+    const runtimeCompanyResult = asObject(
+      runtimeCompanyResults.find((row) => String(row.company_id ?? "").trim() === item.companyId)
+      ?? null,
     );
     const companyResult = asObject(
       eventCompanyResults.find((row) => String(row.company_id ?? "").trim() === item.companyId)
@@ -1602,8 +1616,26 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       ...requestJobPayload,
       ...requestSummary,
       ...eventSummary,
+      ...runtimeCompanyResult,
       ...companyResult,
     };
+
+    const runtimeCompanyStatus = String(runtimeCompanyResult.status ?? "").trim();
+    if (runtimeCompanyStatus && request.status !== "completed" && request.status !== "failed") {
+      const status = mapCompanyResultStatus(runtimeCompanyStatus);
+      return {
+        ...item,
+        status,
+        message: resolveCompanyMessage(
+          mergedSummary,
+          status === "erro"
+            ? "Falha ao processar a rotina."
+            : "PDF gerado e disponível para download.",
+        ),
+        artifact: extractArtifact(mergedSummary),
+        meta: mergedSummary,
+      };
+    }
 
     if (request.status === "completed") {
       return {
