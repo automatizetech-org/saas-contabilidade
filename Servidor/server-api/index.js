@@ -1826,8 +1826,19 @@ const simplesGuideDocumentsModule = (() => {
 
   function extractGuideDueDate(text) {
     const normalizedText = collapseWhitespace(text);
-    const match = normalizedText.match(/(?:data\s+de\s+vencimento|vencimento)[^0-9]{0,20}(\d{2}\/\d{2}\/\d{4})/i);
-    return parseGuideDateToIso(match?.[1] ?? "");
+    const patterns = [
+      /cnpj\s+raz\S*o\s+social\s+(?:[a-z]{3,20}\/\d{4}|\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+c\S*digo\s+principal/i,
+      /pagar(?:\s+este\s+documento)?\s+at\S*[^0-9]*(\d{2}\/\d{2}\/\d{4}).*?cnpj\s+raz\S*o\s+social\s+(?:[a-z]{3,20}\/\d{4}|\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})/i,
+      /(?:data\s+de\s+vencimento|vencimento)[^0-9]{0,20}(\d{2}\/\d{2}\/\d{4})/i,
+    ];
+    for (const pattern of patterns) {
+      const match = normalizedText.match(pattern);
+      if (!match) continue;
+      const rawDate = match[2] ?? match[1] ?? "";
+      const parsed = parseGuideDateToIso(rawDate);
+      if (parsed) return parsed;
+    }
+    return null;
   }
 
   function extractGuideAmountCents(text) {
@@ -1931,6 +1942,43 @@ const simplesGuideDocumentsModule = (() => {
     return relative;
   }
 
+  function resolveGuidePathWithinBase(basePath, relativePath) {
+    const root = path.resolve(basePath);
+    const parts = String(relativePath ?? "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((segment) => String(segment ?? "").trim())
+      .filter(Boolean);
+    if (parts.some((segment) => segment === "." || segment === "..")) {
+      const error = new Error("Caminho lógico inválido para guia.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const target = path.resolve(root, ...parts);
+    if (!target.startsWith(root)) {
+      const error = new Error("Arquivo da guia fora do diretório base.");
+      error.statusCode = 403;
+      throw error;
+    }
+    return target;
+  }
+
+  function ensureSafeGuideFile(basePath, fullPath) {
+    if (!fs.existsSync(fullPath)) return null;
+    const stats = fs.lstatSync(fullPath);
+    if (stats.isSymbolicLink() || !stats.isFile()) return null;
+    const realPath = fs.realpathSync(fullPath);
+    if (!realPath.startsWith(path.resolve(basePath))) {
+      const error = new Error("Arquivo da guia fora do escopo permitido.");
+      error.statusCode = 403;
+      throw error;
+    }
+    return {
+      realPath,
+      stats: fs.statSync(realPath),
+    };
+  }
+
   function buildGuideDocumentPayload({
     officeId,
     companyId,
@@ -2013,6 +2061,50 @@ const simplesGuideDocumentsModule = (() => {
     const { data, error } = await query;
     if (error) throw error;
     return Array.isArray(data) ? data : [];
+  }
+
+  async function upsertGuideDocumentRow(supabase, payload) {
+    const attempt = await supabase
+      .from("fiscal_documents")
+      .upsert(payload, { onConflict: "office_id,company_id,type,file_path" })
+      .select("id")
+      .maybeSingle();
+    if (!attempt.error) {
+      return { data: attempt.data, error: null };
+    }
+
+    if (String(attempt.error.code ?? "") !== "42P10") {
+      return { data: null, error: attempt.error };
+    }
+
+    const { data: existing, error: selectError } = await supabase
+      .from("fiscal_documents")
+      .select("id")
+      .eq("office_id", payload.office_id)
+      .eq("company_id", payload.company_id)
+      .eq("type", payload.type)
+      .eq("file_path", payload.file_path)
+      .maybeSingle();
+    if (selectError) {
+      return { data: null, error: selectError };
+    }
+
+    if (existing?.id) {
+      const { data: updated, error: updateError } = await supabase
+        .from("fiscal_documents")
+        .update(payload)
+        .eq("id", existing.id)
+        .select("id")
+        .maybeSingle();
+      return { data: updated ?? existing, error: updateError ?? null };
+    }
+
+    const { data: inserted, error: insertError } = await supabase
+      .from("fiscal_documents")
+      .insert(payload)
+      .select("id")
+      .maybeSingle();
+    return { data: inserted, error: insertError ?? null };
   }
 
   async function scanSimplesGuideDocuments({
@@ -2103,11 +2195,7 @@ const simplesGuideDocumentsModule = (() => {
           parsed,
           existingRow,
         });
-        const { data: upserted, error: upsertError } = await supabase
-          .from("fiscal_documents")
-          .upsert(payload, { onConflict: "office_id,company_id,type,file_path" })
-          .select("id")
-          .maybeSingle();
+        const { data: upserted, error: upsertError } = await upsertGuideDocumentRow(supabase, payload);
         if (upsertError) {
           summary.errors.push({ file: relativePath, error: upsertError.message });
           continue;
@@ -2141,8 +2229,8 @@ const simplesGuideDocumentsModule = (() => {
       notFound.statusCode = 404;
       throw notFound;
     }
-    const fullPath = resolveWithin(basePath, splitLogicalSegments(row.file_path));
-    const safeFile = ensureSafeFile(basePath, fullPath);
+    const fullPath = resolveGuidePathWithinBase(basePath, row.file_path);
+    const safeFile = ensureSafeGuideFile(basePath, fullPath);
     if (!safeFile) {
       const missing = new Error("Arquivo da guia nao encontrado no servidor.");
       missing.statusCode = 404;
@@ -2161,9 +2249,7 @@ const simplesGuideDocumentsModule = (() => {
       parsed,
       existingRow: row,
     });
-    const { error: updateError } = await supabase
-      .from("fiscal_documents")
-      .upsert(payload, { onConflict: "office_id,company_id,type,file_path" });
+    const { error: updateError } = await upsertGuideDocumentRow(supabase, payload);
     if (updateError) throw updateError;
     return {
       ok: true,
@@ -2286,8 +2372,8 @@ const simplesGuideDocumentsModule = (() => {
       notFound.statusCode = 404;
       throw notFound;
     }
-    const fullPath = resolveWithin(basePath, splitLogicalSegments(row.file_path));
-    const safeFile = ensureSafeFile(basePath, fullPath);
+    const fullPath = resolveGuidePathWithinBase(basePath, row.file_path);
+    const safeFile = ensureSafeGuideFile(basePath, fullPath);
     if (!safeFile) {
       const missing = new Error("Arquivo da guia nao encontrado no servidor.");
       missing.statusCode = 404;

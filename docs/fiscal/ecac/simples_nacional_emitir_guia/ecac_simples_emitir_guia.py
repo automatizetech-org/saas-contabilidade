@@ -1105,11 +1105,40 @@ class DashboardClient:
             return
         try:
             client = self._supabase()
-            (
-                client.table("fiscal_documents")
-                .upsert(payload, on_conflict="office_id,company_id,type,file_path")
-                .execute()
-            )
+            try:
+                (
+                    client.table("fiscal_documents")
+                    .upsert(payload, on_conflict="office_id,company_id,type,file_path")
+                    .execute()
+                )
+            except Exception as upsert_exc:
+                if "42P10" not in str(upsert_exc):
+                    raise
+                existing_response = (
+                    client.table("fiscal_documents")
+                    .select("id")
+                    .eq("office_id", payload.get("office_id"))
+                    .eq("company_id", payload.get("company_id"))
+                    .eq("type", payload.get("type"))
+                    .eq("file_path", payload.get("file_path"))
+                    .limit(1)
+                    .execute()
+                )
+                existing_rows = list(getattr(existing_response, "data", None) or [])
+                existing_id = str(existing_rows[0].get("id") or "").strip() if existing_rows else ""
+                if existing_id:
+                    (
+                        client.table("fiscal_documents")
+                        .update(payload)
+                        .eq("id", existing_id)
+                        .execute()
+                    )
+                else:
+                    (
+                        client.table("fiscal_documents")
+                        .insert(payload)
+                        .execute()
+                    )
             self.runtime.logger.info(
                 "Metadados da guia gravados em fiscal_documents "
                 f"company={company.name} competencia={payload.get('periodo') or ''} "
@@ -5577,6 +5606,38 @@ def collect_das_pdf_summary(pdf_path: Path) -> dict[str, str]:
     )
     if pagar_ate_match:
         summary["pagar_ate"] = str(pagar_ate_match.group(1) or "").strip()
+
+    if not summary["data_vencimento"]:
+        due_date_fallback_patterns = [
+            r"cnpj\s+raz[aãă]o\s+social\s+(?:[a-zç]{3,20}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+c[oó]digo\s+principal",
+            r"pagar(?:\s+este\s+documento)?\s+at[eé][^0-9]*(\d{2}/\d{2}/\d{4}).*?cnpj\s+raz[aãă]o\s+social\s+(?:[a-zç]{3,20}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})",
+        ]
+        for pattern in due_date_fallback_patterns:
+            fallback_match = re.search(pattern, text, flags=re.IGNORECASE)
+            if fallback_match:
+                summary["data_vencimento"] = str(
+                    fallback_match.group(2) or fallback_match.group(1) or ""
+                ).strip()
+                break
+
+    if not summary["data_vencimento"]:
+        due_date_ascii_match = re.search(
+            r"cnpj\s+raz\S*o\s+social\s+(?:[a-z]{3,20}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+c\S*digo\s+principal",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if due_date_ascii_match:
+            summary["data_vencimento"] = str(due_date_ascii_match.group(1) or "").strip()
+    if not summary["data_vencimento"]:
+        due_date_ascii_match = re.search(
+            r"pagar(?:\s+este\s+documento)?\s+at\S*[^0-9]*(\d{2}/\d{2}/\d{4}).*?cnpj\s+raz\S*o\s+social\s+(?:[a-z]{3,20}/\d{4}|\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if due_date_ascii_match:
+            summary["data_vencimento"] = str(
+                due_date_ascii_match.group(2) or due_date_ascii_match.group(1) or ""
+            ).strip()
 
     total_match = re.search(
         r"(?:valor\s+total\s+do\s+documento|valor\s+total|total\s+do\s+documento)[^0-9]*(\d{1,3}(?:\.\d{3})*,\d{2})",

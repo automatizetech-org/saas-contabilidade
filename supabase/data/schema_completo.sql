@@ -1998,7 +1998,7 @@ create index if not exists fiscal_documents_office_type_company_period_idx on pu
 create index if not exists fiscal_documents_office_type_due_date_idx on public.fiscal_documents (office_id, type, data_vencimento desc nulls last);
 create index if not exists fiscal_documents_office_type_amount_idx on public.fiscal_documents (office_id, type, amount_cents desc nulls last);
 create index if not exists fiscal_documents_office_type_checksum_idx on public.fiscal_documents (office_id, type, checksum);
-create unique index if not exists fiscal_documents_office_company_type_file_path_unique on public.fiscal_documents (office_id, company_id, type, file_path) where file_path is not null;
+create unique index if not exists fiscal_documents_office_company_type_file_path_unique on public.fiscal_documents (office_id, company_id, type, file_path);
 
 create table if not exists public.fiscal_pendencias (
   id uuid primary key default gen_random_uuid(),
