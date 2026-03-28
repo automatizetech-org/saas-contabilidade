@@ -57,8 +57,80 @@ function upsertRunHistory(
   current: DeclarationRunState[],
   incoming: DeclarationRunState,
 ): DeclarationRunState[] {
-  const next = [incoming, ...current.filter((run) => run.runId !== incoming.runId)];
+  const existing = current.find((run) => run.runId === incoming.runId);
+  const nextRun = existing ? stabilizeRunState(existing, incoming) : incoming;
+  const next = [nextRun, ...current.filter((run) => run.runId !== incoming.runId)];
   return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+}
+
+function getRunItemKey(item: DeclarationRunItem) {
+  return `${item.companyId}:${item.executionRequestId ?? ""}`;
+}
+
+function getHistoryEntryKey(entry: DeclarationRunHistoryEntry) {
+  return `${entry.runId}:${entry.companyId}:${entry.executionRequestId ?? ""}`;
+}
+
+function stabilizeRunItem(
+  previous: DeclarationRunItem | undefined,
+  incoming: DeclarationRunItem,
+): DeclarationRunItem {
+  if (!previous || previous.status !== "sucesso" || !hasEntryArtifact(previous)) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    status: "sucesso",
+    message: previous.message || incoming.message || "PDF gerado e disponível para download.",
+    artifact: previous.artifact,
+    meta: incoming.meta ?? previous.meta ?? null,
+  };
+}
+
+function stabilizeRunState(
+  previous: DeclarationRunState | undefined,
+  incoming: DeclarationRunState,
+): DeclarationRunState {
+  if (!previous) return incoming;
+
+  const previousItemsByKey = new Map(previous.items.map((item) => [getRunItemKey(item), item] as const));
+  return {
+    ...incoming,
+    items: incoming.items.map((item) => stabilizeRunItem(previousItemsByKey.get(getRunItemKey(item)), item)),
+  };
+}
+
+function stabilizeHistoryEntry(
+  previous: DeclarationRunHistoryEntry | undefined,
+  incoming: DeclarationRunHistoryEntry,
+): DeclarationRunHistoryEntry {
+  if (!previous || previous.status !== "sucesso" || !hasEntryArtifact(previous)) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    status: "sucesso",
+    message: previous.message || incoming.message || "PDF gerado e disponível para download.",
+    artifact: previous.artifact,
+    dueDateLabel: incoming.dueDateLabel || previous.dueDateLabel,
+    referenceLabel: incoming.referenceLabel || previous.referenceLabel,
+    meta: incoming.meta ?? previous.meta ?? null,
+  };
+}
+
+function stabilizeHistoryEntries(
+  currentEntries: DeclarationRunHistoryEntry[],
+  nextEntries: DeclarationRunHistoryEntry[],
+): DeclarationRunHistoryEntry[] {
+  const previousByKey = new Map(
+    currentEntries.map((entry) => [getHistoryEntryKey(entry), entry] as const),
+  );
+
+  return nextEntries.map((entry) =>
+    stabilizeHistoryEntry(previousByKey.get(getHistoryEntryKey(entry)), entry),
+  );
 }
 
 function syncVisibleRunHistoryEntries(
@@ -67,10 +139,8 @@ function syncVisibleRunHistoryEntries(
 ): DeclarationRunHistoryEntry[] {
   const safeRuns = Array.isArray(runs) ? runs : [];
   const safeEntries = Array.isArray(currentEntries) ? currentEntries : [];
-  const entriesById = new Map(
-    buildDeclarationRunHistoryEntries(safeRuns).map((entry) => [entry.entryId, entry] as const),
-  );
-  return safeEntries.map((entry) => entriesById.get(entry.entryId) ?? entry);
+  const nextEntries = buildDeclarationRunHistoryEntries(safeRuns);
+  return stabilizeHistoryEntries(safeEntries, nextEntries);
 }
 
 function normalizeRunHistoryPayload(
@@ -226,8 +296,21 @@ export default function FiscalDeclarationsPage() {
   useEffect(() => {
     if (!runHistoryQuery.data) return;
     const normalizedHistory = normalizeRunHistoryPayload(runHistoryQuery.data);
-    setRunHistory(normalizedHistory.runs);
-    setRunHistoryEntries(normalizedHistory.entries);
+    setRunHistory((current) => {
+      const baseRuns = Array.isArray(current) ? current : [];
+      const nextRuns = normalizedHistory.runs.reduce(
+        (runs, incoming) => upsertRunHistory(runs, incoming),
+        baseRuns,
+      );
+      const nextEntries =
+        normalizedHistory.entries.length > 0
+          ? normalizedHistory.entries
+          : buildDeclarationRunHistoryEntries(nextRuns);
+      setRunHistoryEntries((currentEntries) =>
+        stabilizeHistoryEntries(currentEntries, nextEntries),
+      );
+      return nextRuns;
+    });
     setRunHistoryTotal(normalizedHistory.totalEntries);
   }, [runHistoryQuery.data]);
 
@@ -314,7 +397,9 @@ export default function FiscalDeclarationsPage() {
     setRunHistory((current) => {
       const baseRuns = Array.isArray(current) ? current : [];
       const nextRuns = upsertRunHistory(baseRuns, run);
-      setRunHistoryEntries(buildDeclarationRunHistoryEntries(nextRuns).slice(0, runHistoryPageSize));
+      setRunHistoryEntries((currentEntries) =>
+        syncVisibleRunHistoryEntries(nextRuns, currentEntries).slice(0, runHistoryPageSize),
+      );
       return nextRuns.slice(0, runHistoryPageSize);
     });
     if (options?.incrementTotal) {

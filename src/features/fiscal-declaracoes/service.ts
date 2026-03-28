@@ -389,6 +389,28 @@ function hasArtifact(item: DeclarationRunItem | DeclarationRunHistoryEntry) {
   return Boolean(item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey);
 }
 
+function stabilizeRunItem(previous: DeclarationRunItem | undefined, incoming: DeclarationRunItem): DeclarationRunItem {
+  if (!previous || previous.status !== "sucesso" || !hasArtifact(previous)) {
+    return incoming;
+  }
+  return {
+    ...incoming,
+    status: "sucesso",
+    message: previous.message || incoming.message || "PDF gerado e disponível para download.",
+    artifact: previous.artifact,
+    meta: incoming.meta ?? previous.meta ?? null,
+  };
+}
+
+function stabilizeRunItems(previousItems: DeclarationRunItem[], incomingItems: DeclarationRunItem[]) {
+  const previousByKey = new Map(
+    previousItems.map((item) => [`${item.companyId}:${item.executionRequestId ?? ""}`, item] as const),
+  );
+  return incomingItems.map((item) =>
+    stabilizeRunItem(previousByKey.get(`${item.companyId}:${item.executionRequestId ?? ""}`), item),
+  );
+}
+
 function runNeedsArtifactResolution(run: DeclarationRunState) {
   return run.items.some((item) => item.status === "sucesso" && !hasArtifact(item));
 }
@@ -1652,6 +1674,8 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
       }));
     }
   }
+
+  nextItems = stabilizeRunItems(current.items, nextItems);
 
   return buildRunState({
     action: current.action,
