@@ -70,12 +70,34 @@ function normalizeModalReference(action: DeclarationActionKind, value: string, d
     if (/^\d{4}$/.test(raw)) return raw;
     return defaultCompetence.slice(0, 4);
   }
+  const slashMatch = raw.match(/^(\d{2})\/(\d{4})$/);
+  if (slashMatch) return `${slashMatch[2]}-${slashMatch[1]}`;
   if (/^\d{4}-\d{2}$/.test(raw)) return raw;
   return defaultCompetence;
 }
 
 function formatReferenceLabel(action: DeclarationActionKind, value: string) {
   return action === "simples_defis" ? formatYearLabel(value) : formatCompetenceLabel(value);
+}
+
+function formatCompetenceInputValue(action: DeclarationActionKind, value: string) {
+  const normalized = normalizeModalReference(action, value, value);
+  if (action === "simples_defis") return normalized;
+  return /^\d{4}-\d{2}$/.test(normalized) ? formatCompetenceLabel(normalized) : value;
+}
+
+function parseCompetenceInput(action: DeclarationActionKind, value: string) {
+  const raw = String(value || "").replace(/\s+/g, "");
+  if (action === "simples_defis") {
+    return raw.replace(/\D/g, "").slice(0, 4);
+  }
+  const digits = raw.replace(/\D/g, "").slice(0, 6);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+}
+
+function normalizeCompetenceSubmitValue(action: DeclarationActionKind, value: string, fallback: string) {
+  return normalizeModalReference(action, value, fallback);
 }
 
 export function DeclarationExecutionModal({
@@ -90,7 +112,7 @@ export function DeclarationExecutionModal({
   const modalCopy = getModalCopy(state.action, state.recalculateByDefault);
   const [search, setSearch] = useState("");
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
-  const [competence, setCompetence] = useState(defaultCompetence);
+  const [competence, setCompetence] = useState(formatCompetenceInputValue(state.action, defaultCompetence));
   const [recalculate, setRecalculate] = useState(false);
   const [recalculateDueDate, setRecalculateDueDate] = useState("");
   const dueDateRef = useRef<HTMLInputElement | null>(null);
@@ -98,18 +120,21 @@ export function DeclarationExecutionModal({
 
   useEffect(() => {
     if (!open) return;
-    const firstCompanyId = companies[0]?.id ?? "";
     const presetCompanyId =
       state.presetCompanyId && companies.some((company) => company.id === state.presetCompanyId)
         ? state.presetCompanyId
-        : firstCompanyId;
+        : "";
     setSearch("");
     setSelectedCompanyIds(presetCompanyId ? [presetCompanyId] : []);
+    const normalizedReference = normalizeModalReference(
+      state.action,
+      state.presetCompetence || defaultCompetence,
+      defaultCompetence,
+    );
     setCompetence(
-      normalizeModalReference(
+      formatCompetenceInputValue(
         state.action,
-        state.presetCompetence || defaultCompetence,
-        defaultCompetence,
+        normalizedReference,
       ),
     );
     setRecalculate(state.action === "simples_emitir_guia" ? state.recalculateByDefault : false);
@@ -137,11 +162,12 @@ export function DeclarationExecutionModal({
       : selectedCompanyIds.length === 1
         ? "1 empresa selecionada"
         : `${selectedCompanyIds.length} empresas selecionadas`;
+  const normalizedCompetence = normalizeCompetenceSubmitValue(state.action, competence, defaultCompetence);
 
   const submit = () => {
     onSubmit({
       companyIds: selectedCompanyIds,
-      competence,
+      competence: normalizedCompetence,
       recalculate: modalCopy.showRecalculate ? recalculate : false,
       recalculateDueDate: modalCopy.showRecalculate && recalculate ? recalculateDueDate : null,
     });
@@ -264,16 +290,18 @@ export function DeclarationExecutionModal({
                 ) : (
                   <Input
                     id="declaration-competence"
-                    type="month"
+                    type="text"
                     value={competence}
+                    placeholder="MM/AAAA"
+                    inputMode="numeric"
                     disabled={busy}
-                    onChange={(event) => setCompetence(event.target.value)}
+                    onChange={(event) => setCompetence(parseCompetenceInput(state.action, event.target.value))}
                   />
                 )}
                 <p className="text-xs text-muted-foreground">
                   {state.action === "simples_defis"
                     ? `Ano sugerido: ${defaultCompetence.slice(0, 4)}.`
-                    : `Competencia sugerida: ${formatCompetenceLabel(defaultCompetence)}.`}
+                    : `Competencia sugerida: ${formatCompetenceLabel(defaultCompetence)}. Informe no formato MM/AAAA.`}
                 </p>
               </div>
 
@@ -331,7 +359,7 @@ export function DeclarationExecutionModal({
                     <span className="text-muted-foreground">{modalCopy.referenceLabel}</span>
                     <strong className="inline-flex items-center gap-1">
                       <CalendarDays className="h-4 w-4 text-primary-icon" />
-                      {formatReferenceLabel(state.action, competence)}
+                      {formatReferenceLabel(state.action, normalizedCompetence)}
                     </strong>
                   </div>
                   <div className="flex items-center justify-between gap-4">

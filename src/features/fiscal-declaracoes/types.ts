@@ -128,6 +128,13 @@ export type DeclarationGuideModalState = {
   recalculateByDefault: boolean;
 };
 
+export type DeclarationStoredDocumentsModalState = {
+  open: boolean;
+  action: Extract<DeclarationActionKind, "simples_extrato" | "simples_defis">;
+  presetCompanyId?: string | null;
+  presetYear?: string | null;
+};
+
 export type DeclarationGuideSubmitInput = {
   companyIds: string[];
   competence?: string | null;

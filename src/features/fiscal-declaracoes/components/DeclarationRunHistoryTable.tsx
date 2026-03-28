@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, FileText, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, FileArchive, FileText, Trash2, XCircle } from "lucide-react";
 import { GlassCard } from "@/components/dashboard/GlassCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DataPagination } from "@/components/common/DataPagination";
@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { DeclarationRunState } from "../types";
-import { asObject, formatCompetenceLabel } from "../helpers";
+import { asArray, asObject, formatCompetenceLabel } from "../helpers";
 
 function formatDateTime(value: string | null | undefined) {
   const raw = String(value ?? "").trim();
@@ -37,7 +37,17 @@ function summarizeRun(run: DeclarationRunState) {
 
 function getRunReferenceLabel(run: DeclarationRunState) {
   const firstMeta = asObject(run.items[0]?.meta ?? null);
-  const rawReference = String(firstMeta.competencia ?? firstMeta.competence ?? "").trim();
+  const firstRecord = asObject(asArray(firstMeta.records)[0] ?? null);
+  const settings = asObject(firstMeta.settings ?? null);
+  const rawReference = String(
+    firstMeta.competencia
+      ?? firstMeta.competence
+      ?? firstRecord.competencia
+      ?? firstRecord.competence
+      ?? settings.competencia
+      ?? settings.competence
+      ?? "",
+  ).trim();
   if (!rawReference) return "-";
   if (run.action === "simples_defis") {
     const yearMatch = rawReference.match(/^(\d{4})/);
@@ -55,6 +65,8 @@ type DeclarationRunHistoryTableProps = {
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   onDownloadPrimaryArtifact?: (run: DeclarationRunState) => void;
+  onDownloadAllZip?: () => void;
+  zipBusy?: boolean;
   onClearAll?: () => void;
 };
 
@@ -67,6 +79,8 @@ export function DeclarationRunHistoryTable({
   onPageChange,
   onPageSizeChange,
   onDownloadPrimaryArtifact,
+  onDownloadAllZip,
+  zipBusy = false,
   onClearAll,
 }: DeclarationRunHistoryTableProps) {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -78,9 +92,9 @@ export function DeclarationRunHistoryTable({
       <div className="border-b border-border/70 px-6 py-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-lg font-semibold font-display tracking-tight">Solicitacoes do processamento</h3>
+            <h3 className="text-lg font-semibold font-display tracking-tight">Solicitações do processamento</h3>
             <p className="text-sm text-muted-foreground">
-              Historico compartilhado do escritorio com paginacao padrao do SaaS.
+              Histórico compartilhado do escritório com paginação padrão do SaaS.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -90,10 +104,22 @@ export function DeclarationRunHistoryTable({
                 Atualizando...
               </span>
             ) : null}
+            {runs.length > 0 && onDownloadAllZip ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={onDownloadAllZip}
+                disabled={zipBusy}
+                className="min-h-[44px] rounded-xl px-4 py-3 text-sm"
+              >
+                <FileArchive className="mr-2 h-4 w-4" />
+                {zipBusy ? "Gerando ZIP..." : "Baixar ZIP da lista"}
+              </Button>
+            ) : null}
             {runs.length > 0 && onClearAll ? (
               <Button type="button" variant="outline" size="sm" onClick={onClearAll}>
                 <Trash2 className="mr-2 h-4 w-4" />
-                Limpar historico
+                Limpar histórico
               </Button>
             ) : null}
           </div>
@@ -106,14 +132,14 @@ export function DeclarationRunHistoryTable({
             <TableHeader>
               <TableRow>
                 <TableHead>Rotina</TableHead>
-                <TableHead>Competencia</TableHead>
+                <TableHead>Competência</TableHead>
                 <TableHead>Iniciado em</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-center">Empresas</TableHead>
                 <TableHead className="text-center">Sucesso</TableHead>
                 <TableHead className="text-center">Erro</TableHead>
                 <TableHead className="text-center">Em andamento</TableHead>
-                <TableHead className="text-right">Acoes</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -183,7 +209,7 @@ export function DeclarationRunHistoryTable({
         </>
       ) : (
         <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-          Nenhuma solicitacao persistida para este escritorio ate o momento.
+          Nenhuma solicitação persistida para este escritório até o momento.
         </div>
       )}
     </GlassCard>

@@ -1,4 +1,5 @@
-﻿import { getRobotEligibilityReport, indexCompanyRobotConfigs } from "@/lib/robotEligibility";
+﻿import JSZip from "jszip";
+import { getRobotEligibilityReport, indexCompanyRobotConfigs } from "@/lib/robotEligibility";
 import {
   getCompanyRobotConfigsForSelection,
 } from "@/services/companiesService";
@@ -7,6 +8,8 @@ import { createExecutionRequest } from "@/services/executionRequestsService";
 import { getRobots, type Robot } from "@/services/robotsService";
 import {
   downloadOfficeServerAction,
+  fetchOfficeServerActionBlob,
+  fetchServerFileByPath,
   openOfficeServerAction,
   postOfficeServerJson,
   probeServerFileByPath,
@@ -40,10 +43,10 @@ import type {
 type DeclarationRunHistoryRow = Database["public"]["Tables"]["declaration_run_history"]["Row"];
 
 const ACTION_TITLES: Record<DeclarationActionKind, string> = {
-  simples_emitir_guia: "EmissÃ£o de guia do Simples Nacional",
-  simples_extrato: "SolicitaÃ§Ã£o de extrato do Simples Nacional",
-  simples_defis: "SolicitaÃ§Ã£o de DEFIS",
-  mei_declaracao_anual: "DeclaraÃ§Ã£o anual do MEI",
+  simples_emitir_guia: "Emissão de guia do Simples Nacional",
+  simples_extrato: "Solicitação de extrato do Simples Nacional",
+  simples_defis: "Solicitação de DEFIS",
+  mei_declaracao_anual: "Declaração anual do MEI",
   mei_guias_mensais: "Guias mensais do MEI",
 };
 
@@ -267,7 +270,15 @@ function matchesDeclarationArtifactReference(
   }
 
   if (action === "simples_emitir_guia") {
-    return normalizeToken(fileName).includes(normalizeToken(rawReference.replace("-", "/")));
+    const aliases = new Set<string>([rawReference]);
+    const competenceMatch = rawReference.match(/^(\d{4})-(\d{2})$/);
+    if (competenceMatch) {
+      aliases.add(`${competenceMatch[2]}-${competenceMatch[1]}`);
+      aliases.add(`${competenceMatch[2]}/${competenceMatch[1]}`);
+      aliases.add(`${competenceMatch[1]}/${competenceMatch[2]}`);
+    }
+    const normalizedFileName = normalizeToken(fileName);
+    return Array.from(aliases).some((alias) => normalizedFileName.includes(normalizeToken(alias)));
   }
 
   return true;
@@ -328,6 +339,26 @@ function basenameFromPath(value: string | null | undefined) {
   if (!raw) return "";
   const parts = raw.split(/[\\/]/);
   return parts[parts.length - 1] ?? "";
+}
+
+function toRelativeOfficePath(filePath: string | null | undefined, summary?: Record<string, Json>) {
+  const rawPath = String(filePath ?? "").trim();
+  if (!rawPath) return "";
+  if (!/^[a-z]:[\\/]/i.test(rawPath) && !rawPath.startsWith("\\\\")) {
+    return rawPath.replace(/^[/\\]+/, "");
+  }
+
+  const connector = asObject(summary?.connector ?? null);
+  const basePath = String(connector.base_path ?? "").trim();
+  if (!basePath) return rawPath;
+
+  const normalizedBase = basePath.replace(/[\\/]+/g, "\\").replace(/[\\]+$/, "").toLowerCase();
+  const normalizedRaw = rawPath.replace(/[\\/]+/g, "\\");
+  if (!normalizedRaw.toLowerCase().startsWith(`${normalizedBase}\\`)) {
+    return rawPath;
+  }
+
+  return normalizedRaw.slice(normalizedBase.length).replace(/^[/\\]+/, "");
 }
 
 function asRecordArray(value: Json | null | undefined): Record<string, Json>[] {
@@ -455,12 +486,12 @@ function buildActionAvailability(params: {
   eligibleCount: number;
 }): DeclarationActionAvailability {
   if (!params.robot) {
-    return buildActionUnavailable("Rotina ainda nÃ£o configurada para este escritÃ³rio.");
+    return buildActionUnavailable("Rotina ainda não configurada para este escritório.");
   }
   if (params.eligibleCount <= 0) {
     return {
       enabled: false,
-      reason: "Nenhuma empresa visÃ­vel atende os requisitos operacionais desta rotina.",
+      reason: "Nenhuma empresa visível atende os requisitos operacionais desta rotina.",
       robotTechnicalId: params.robot.technical_id,
     };
   }
@@ -479,8 +510,8 @@ function buildActionAvailability(params: {
 }
 
 async function getOverdueGuides(companyIds: string[]): Promise<OverdueGuide[]> {
-  // A base atual ainda nÃ£o expÃµe uma fonte dedicada para DAS vencidas.
-  // A UI jÃ¡ fica preparada para consumir a lista assim que o backend for disponibilizado.
+  // A base atual ainda não expõe uma fonte dedicada para DAS vencidas.
+  // A UI já fica preparada para consumir a lista assim que o backend for disponibilizado.
   const normalizedCompanyIds = uniqueCompanyIds(companyIds);
   if (normalizedCompanyIds.length === 0) return [];
 
@@ -629,7 +660,7 @@ export function validateDeclarationGuideSubmitInput(params: {
   );
 
   if (companyIds.length === 0) {
-    throw new Error("Selecione ao menos uma empresa disponÃ­vel no escopo atual.");
+    throw new Error("Selecione ao menos uma empresa disponível no escopo atual.");
   }
   const rawCompetence = String(params.input.competence ?? "").trim();
   const requiresYear = params.action === "simples_defis";
@@ -638,14 +669,14 @@ export function validateDeclarationGuideSubmitInput(params: {
     || params.action === "simples_extrato"
     || params.action === "mei_guias_mensais";
   if (requiresCompetence && !isValidCompetence(rawCompetence)) {
-    throw new Error("Informe uma competÃªncia vÃ¡lida no formato MM/AAAA.");
+    throw new Error("Informe uma competência válida no formato MM/AAAA.");
   }
   if (requiresYear && !isValidYear(rawCompetence)) {
     throw new Error("Informe um ano valido para a DEFIS.");
   }
   if (params.action === "simples_emitir_guia" && params.input.recalculate) {
     if (!params.input.recalculateDueDate || !isValidIsoDate(params.input.recalculateDueDate)) {
-      throw new Error("Informe uma nova data de vencimento vÃ¡lida para o recÃ¡lculo.");
+      throw new Error("Informe uma nova data de vencimento válida para o recálculo.");
     }
   }
 
@@ -673,7 +704,7 @@ function createQueuedItems(companies: DeclarationCompany[]): DeclarationRunItem[
     companyName: company.name,
     companyDocument: company.document,
     status: "pendente",
-    message: "Aguardando envio da solicitaÃ§Ã£o.",
+    message: "Aguardando envio da solicitação.",
     executionRequestId: null,
     artifact: null,
   }));
@@ -744,15 +775,14 @@ function extractReferenceFromSummary(action: DeclarationActionKind, summary: Rec
 }
 
 function extractArtifact(summary: Record<string, Json>) {
-  const filePath = String(summary.file_path ?? summary.document_path ?? "").trim();
+  const filePath = toRelativeOfficePath(String(summary.file_path ?? summary.document_path ?? "").trim(), summary);
   const url = String(summary.download_url ?? summary.file_url ?? summary.document_url ?? "").trim();
   const label =
     String(summary.document_name ?? summary.file_name ?? summary.filename ?? "").trim() || "Baixar documento";
   if (filePath || url) {
-    const filePathLooksRelative = filePath && !/^[a-z]:[\\/]/i.test(filePath) && !filePath.startsWith("\\\\");
     return {
       label,
-      filePath: filePathLooksRelative ? filePath : null,
+      filePath: filePath || null,
       url: url || null,
     };
   }
@@ -761,15 +791,17 @@ function extractArtifact(summary: Record<string, Json>) {
   const firstFile = files[0];
   if (!firstFile) return null;
 
-  const firstPath = String(firstFile.file_path ?? firstFile.relative_path ?? firstFile.path ?? "").trim();
+  const firstPath = toRelativeOfficePath(
+    String(firstFile.file_path ?? firstFile.relative_path ?? firstFile.path ?? "").trim(),
+    summary,
+  );
   const firstUrl = String(firstFile.url ?? firstFile.download_url ?? "").trim();
   const firstLabel = String(firstFile.label ?? firstFile.filename ?? firstFile.file_name ?? "").trim() || "Baixar documento";
-  const firstPathLooksRelative = firstPath && !/^[a-z]:[\\/]/i.test(firstPath) && !firstPath.startsWith("\\\\");
-  if (!firstPathLooksRelative && !firstUrl) return null;
+  if (!firstPath && !firstUrl) return null;
 
   return {
     label: firstLabel,
-    filePath: firstPathLooksRelative ? firstPath : null,
+    filePath: firstPath || null,
     url: firstUrl || null,
   };
 }
@@ -828,6 +860,44 @@ async function resolveArtifactsFromStorage(params: {
   }
 
   return byCompanyId;
+}
+
+export async function hydrateDeclarationRunArtifacts(run: DeclarationRunState): Promise<DeclarationRunState> {
+  if (!run.items.some((item) => item.status === "sucesso" && !item.artifact)) {
+    return run;
+  }
+
+  const extractedItems = run.items.map((item) => ({
+    ...item,
+    artifact: item.artifact ?? extractArtifact(asObject(item.meta ?? null)),
+  }));
+
+  if (!extractedItems.some((item) => item.status === "sucesso" && !item.artifact)) {
+    return {
+      ...run,
+      items: extractedItems,
+    };
+  }
+
+  const artifactMap = await resolveArtifactsFromStorage({
+    action: run.action,
+    items: extractedItems,
+  }).catch(() => new Map<string, DeclarationRunItem["artifact"]>());
+
+  if (artifactMap.size === 0) {
+    return {
+      ...run,
+      items: extractedItems,
+    };
+  }
+
+  return {
+    ...run,
+    items: extractedItems.map((item) => ({
+      ...item,
+      artifact: item.artifact ?? artifactMap.get(item.companyId) ?? null,
+    })),
+  };
 }
 
 async function resolveStoredArtifactsBeforeDispatch(params: {
@@ -972,7 +1042,7 @@ export async function startDeclarationRun(
         companyName: company.name,
         companyDocument: company.document,
         status: "erro",
-        message: "Esta rotina ainda nÃ£o foi configurada para o seu escritÃ³rio.",
+        message: "Esta rotina ainda não foi configurada para o seu escritório.",
         executionRequestId: null,
         artifact: null,
       })),
@@ -998,6 +1068,7 @@ export async function startDeclarationRun(
   const skippedByCompanyId = new Map(
     eligibility.skipped.map((item) => [item.companyId, item.reason]),
   );
+  const emitGuideDispatchCompanies: DeclarationCompany[] = [];
 
   for (const company of selectedCompanies) {
     const skipReason = skippedByCompanyId.get(company.id);
@@ -1043,6 +1114,11 @@ export async function startDeclarationRun(
       continue;
     }
 
+    if (params.action === "simples_emitir_guia") {
+      emitGuideDispatchCompanies.push(company);
+      continue;
+    }
+
     const shouldUsePeriod = Boolean(validatedInput.competence && isValidCompetence(validatedInput.competence));
     const { periodStart, periodEnd } = shouldUsePeriod
       ? toPeriodRange(validatedInput.competence!)
@@ -1070,16 +1146,77 @@ export async function startDeclarationRun(
       updateCompanyItem(company.id, {
         status: "processando",
         executionRequestId: request.id,
-        message: "SolicitaÃ§Ã£o enviada para processamento.",
+        message: "Solicitação enviada para processamento.",
+        meta: {
+          competence: validatedInput.competence ?? null,
+          competencia: validatedInput.competence ?? null,
+          recalculate: validatedInput.recalculate,
+          recalculate_due_date: validatedInput.recalculateDueDate ?? null,
+          robot_technical_id: robot.technical_id,
+        },
       });
     } catch (error) {
       updateCompanyItem(company.id, {
         status: "erro",
         message: sanitizeDeclarationError(
           error,
-          "NÃ£o foi possÃ­vel iniciar o processamento desta empresa.",
+          "Não foi possível iniciar o processamento desta empresa.",
         ),
       });
+    }
+  }
+
+  if (params.action === "simples_emitir_guia" && emitGuideDispatchCompanies.length > 0) {
+    const shouldUsePeriod = Boolean(validatedInput.competence && isValidCompetence(validatedInput.competence));
+    const { periodStart, periodEnd } = shouldUsePeriod
+      ? toPeriodRange(validatedInput.competence!)
+      : { periodStart: null, periodEnd: null };
+    try {
+      const request = await createExecutionRequest({
+        companyIds: emitGuideDispatchCompanies.map((company) => company.id),
+        robotTechnicalIds: [robot.technical_id],
+        periodStart,
+        periodEnd,
+        executionMode: "sequential",
+        source: "fiscal_declaracoes",
+        jobPayload: {
+          action: params.action,
+          mode: params.mode,
+          ui_origin: "fiscal_declaracoes",
+          competence: validatedInput.competence,
+          recalculate: validatedInput.recalculate,
+          recalculate_due_date: validatedInput.recalculateDueDate,
+          company_ids: emitGuideDispatchCompanies.map((company) => company.id),
+          company_documents: emitGuideDispatchCompanies.map((company) => company.document),
+          company_names: emitGuideDispatchCompanies.map((company) => company.name),
+        },
+      });
+      requestIds.push(request.id);
+      for (const company of emitGuideDispatchCompanies) {
+        updateCompanyItem(company.id, {
+          status: "processando",
+          executionRequestId: request.id,
+          message: "Solicitação enviada para processamento.",
+          meta: {
+            competence: validatedInput.competence ?? null,
+            competencia: validatedInput.competence ?? null,
+            recalculate: validatedInput.recalculate,
+            recalculate_due_date: validatedInput.recalculateDueDate ?? null,
+            robot_technical_id: robot.technical_id,
+          },
+        });
+      }
+    } catch (error) {
+      const message = sanitizeDeclarationError(
+        error,
+        "Não foi possível iniciar o processamento desta solicitação.",
+      );
+      for (const company of emitGuideDispatchCompanies) {
+        updateCompanyItem(company.id, {
+          status: "erro",
+          message,
+        });
+      }
     }
   }
 
@@ -1167,7 +1304,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
         status: mapCompanyResultStatus(String(companyResult.status ?? request.status ?? "")),
         message: resolveCompanyMessage(
           mergedSummary,
-          "Processamento concluÃ­do com sucesso.",
+          "Processamento concluído com sucesso.",
         ),
         artifact: extractArtifact(mergedSummary),
         meta: mergedSummary,
@@ -1206,7 +1343,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
         mergedSummary,
         request.status === "running"
           ? "Processamento em andamento."
-          : "SolicitaÃ§Ã£o aguardando execuÃ§Ã£o.",
+          : "Solicitação aguardando execução.",
       ),
       meta: mergedSummary,
     };
@@ -1280,23 +1417,35 @@ export async function persistDeclarationRunState(run: DeclarationRunState): Prom
 export async function listDeclarationRunHistory(params: {
   page: number;
   pageSize: number;
+  actions?: DeclarationActionKind[];
 }): Promise<DeclarationRunHistoryPage> {
   const page = Math.max(1, Number(params.page) || 1);
   const pageSize = Math.min(50, Math.max(1, Number(params.pageSize) || 10));
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  const { data, error, count } = await supabase
+  let query = supabase
     .from("declaration_run_history")
     .select("*", { count: "exact" })
     .order("started_at", { ascending: false })
     .order("created_at", { ascending: false })
     .range(from, to);
 
+  const actions = Array.from(new Set((params.actions ?? []).map((value) => String(value).trim()).filter(Boolean)));
+  if (actions.length > 0) {
+    query = query.in("action", actions);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw error;
 
+  const hydratedItems = await Promise.all(
+    (data ?? []).map((row) => hydrateDeclarationRunArtifacts(mapHistoryRowToRun(row as DeclarationRunHistoryRow))),
+  );
+
   return {
-    items: (data ?? []).map((row) => mapHistoryRowToRun(row as DeclarationRunHistoryRow)),
+    items: hydratedItems,
     total: Number(count ?? 0),
   };
 }
@@ -1308,12 +1457,40 @@ export async function deleteDeclarationRunHistory(runId: string): Promise<void> 
   if (error) throw error;
 }
 
-export async function deleteAllDeclarationRunHistory(): Promise<void> {
-  const { error } = await supabase
+export async function deleteAllDeclarationRunHistory(params?: {
+  actions?: DeclarationActionKind[];
+}): Promise<void> {
+  let query = supabase
     .from("declaration_run_history")
     .delete()
     .not("run_id", "is", null);
+
+  const actions = Array.from(new Set((params?.actions ?? []).map((value) => String(value).trim()).filter(Boolean)));
+  if (actions.length > 0) {
+    query = query.in("action", actions);
+  }
+
+  const { error } = await query;
   if (error) throw error;
+}
+
+export async function stopDeclarationRobotRuntime(params: {
+  robotTechnicalIds: string[];
+  reason?: string | null;
+}): Promise<void> {
+  const robotTechnicalIds = Array.from(
+    new Set(
+      (params.robotTechnicalIds ?? [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (robotTechnicalIds.length === 0) return;
+
+  await postOfficeServerJson("stop-robot-runtime", {
+    robot_technical_ids: robotTechnicalIds,
+    reason: String(params.reason ?? "").trim() || null,
+  });
 }
 
 export async function listDeclarationArtifacts(params: {
@@ -1353,6 +1530,25 @@ export async function downloadDeclarationArtifact(params: {
   );
 }
 
+export async function fetchDeclarationArtifactBlob(params: {
+  action: DeclarationActionKind;
+  companyId: string;
+  competence?: string | null;
+  artifactKey: string;
+  suggestedName?: string;
+}): Promise<{ blob: Blob; filename: string }> {
+  return fetchOfficeServerActionBlob(
+    "download-declaration-artifact",
+    {
+      action: params.action,
+      company_id: params.companyId,
+      competence: params.competence,
+      artifact_key: params.artifactKey,
+    },
+    params.suggestedName,
+  );
+}
+
 export async function openDeclarationArtifact(params: {
   action: DeclarationActionKind;
   companyId: string;
@@ -1370,6 +1566,91 @@ export async function openDeclarationArtifact(params: {
     },
     params.suggestedName,
   );
+}
+
+function sanitizeZipSegment(value: string): string {
+  return (
+    String(value ?? "")
+      .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "Empresa"
+  );
+}
+
+function triggerZipDownload(blob: Blob, filename: string) {
+  const anchor = document.createElement("a");
+  const blobUrl = URL.createObjectURL(blob);
+  anchor.href = blobUrl;
+  anchor.download = String(filename ?? "").trim() || "guias-simples-nacional.zip";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+}
+
+export async function downloadDeclarationRunHistoryZip(params: {
+  runs: DeclarationRunState[];
+  suggestedName?: string;
+}): Promise<number> {
+  const hydratedRuns = await Promise.all(params.runs.map((run) => hydrateDeclarationRunArtifacts(run)));
+  const zip = new JSZip();
+  const usedZipPaths = new Set<string>();
+  let addedFiles = 0;
+
+  const makeUniqueZipPath = (zipPath: string) => {
+    let candidate = zipPath;
+    let index = 0;
+    while (usedZipPaths.has(candidate)) {
+      index += 1;
+      const dotIndex = zipPath.lastIndexOf(".");
+      const base = dotIndex >= 0 ? zipPath.slice(0, dotIndex) : zipPath;
+      const ext = dotIndex >= 0 ? zipPath.slice(dotIndex) : "";
+      candidate = `${base} (${index})${ext}`;
+    }
+    usedZipPaths.add(candidate);
+    return candidate;
+  };
+
+  for (const run of hydratedRuns) {
+    for (const item of run.items) {
+      if (item.status !== "sucesso" || !item.artifact) continue;
+
+      const companyFolder = sanitizeZipSegment(item.companyName);
+
+      if (item.artifact.filePath) {
+        const { blob, filename } = await fetchServerFileByPath(item.artifact.filePath);
+        zip.file(makeUniqueZipPath(`${companyFolder}/${filename}`), blob);
+        addedFiles += 1;
+        continue;
+      }
+
+      if (item.artifact.artifactKey) {
+        const meta = asObject(item.meta ?? null);
+        const rawReference = String(meta.competencia ?? meta.competence ?? "").trim();
+        const { blob, filename } = await fetchDeclarationArtifactBlob({
+          action: run.action,
+          companyId: item.companyId,
+          competence: isValidCompetence(rawReference) ? rawReference : null,
+          artifactKey: item.artifact.artifactKey,
+          suggestedName: item.artifact.label,
+        });
+        zip.file(makeUniqueZipPath(`${companyFolder}/${filename}`), blob);
+        addedFiles += 1;
+      }
+    }
+  }
+
+  if (addedFiles === 0) {
+    throw new Error("Nenhum PDF disponivel para gerar o ZIP.");
+  }
+
+  const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+  triggerZipDownload(
+    zipBlob,
+    `${String(params.suggestedName ?? "guias-simples-nacional").trim() || "guias-simples-nacional"}.zip`,
+  );
+  return addedFiles;
 }
 
 

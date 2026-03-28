@@ -900,6 +900,39 @@ Deno.serve(async (req) => {
     );
   }
 
+  if (action === "stop-robot-runtime") {
+    if (!hasAnyPanelAccess(context, ["fiscal"])) {
+      return json(
+        { error: "Sem permissao para controlar a execucao dos robos fiscais." },
+        403,
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const robotTechnicalIds = Array.isArray(body.robot_technical_ids)
+      ? body.robot_technical_ids
+          .map((value) => String(value ?? "").trim())
+          .filter(Boolean)
+      : [];
+    if (robotTechnicalIds.length === 0) {
+      return json({ error: "robot_technical_ids is required" }, 400);
+    }
+
+    return proxyJson(
+      server,
+      connectorSecretHash,
+      userToken,
+      "/api/robots/runtime/stop",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          robot_technical_ids: robotTechnicalIds,
+          reason: body.reason,
+        }),
+      },
+    );
+  }
+
   const MAX_DOCS_PER_ZIP = 50000;
 
   if (action === "download-fiscal-documents-zip") {

@@ -314,16 +314,29 @@ function sanitizeCompanySettings(configRow) {
 }
 
 function buildRuntimePaths(robotsRootPath, robotRow) {
-  const runtimeFolder = String(robotRow.runtime_folder || robotRow.technical_id || "").trim();
-  if (!runtimeFolder) return null;
+  const technicalId = String(robotRow.technical_id || "").trim();
+  const configuredRuntimeFolder = String(robotRow.runtime_folder || "").trim();
+  const folderCandidates = [technicalId, configuredRuntimeFolder].filter(Boolean);
+  if (!folderCandidates.length) return null;
 
-  const runtimeRoot = resolveWithin(robotsRootPath, runtimeFolder);
+  let runtimeRoot = null;
+  for (const folder of folderCandidates) {
+    const candidateRoot = resolveWithin(robotsRootPath, folder);
+    if (fs.existsSync(candidateRoot)) {
+      runtimeRoot = candidateRoot;
+      break;
+    }
+  }
+  if (!runtimeRoot) {
+    runtimeRoot = resolveWithin(robotsRootPath, folderCandidates[0]);
+  }
   return {
     runtimeRoot,
     entrypointPath: resolveWithin(runtimeRoot, normalizeRuntimeRelPath(robotRow.entrypoint_relpath, "bot.py")),
     jobFilePath: resolveWithin(runtimeRoot, normalizeRuntimeRelPath(robotRow.job_file_relpath, path.join("data", "json", "job.json"))),
     resultFilePath: resolveWithin(runtimeRoot, normalizeRuntimeRelPath(robotRow.result_file_relpath, path.join("data", "json", "result.json"))),
     heartbeatFilePath: resolveWithin(runtimeRoot, normalizeRuntimeRelPath(robotRow.heartbeat_file_relpath, path.join("data", "json", "heartbeat.json"))),
+    stopFilePath: resolveWithin(runtimeRoot, path.join("data", "json", "stop.json")),
   };
 }
 
@@ -1112,7 +1125,7 @@ async function readHeartbeatAndSync(supabase, { officeId, officeServerId, robotR
 }
 
 async function dispatchPendingJob(supabase, context, robotRow, runtimePaths) {
-  if (!fs.existsSync(runtimePaths.runtimeRoot) || !fs.existsSync(runtimePaths.entrypointPath)) {
+  if (!fs.existsSync(runtimePaths.runtimeRoot)) {
     return false;
   }
 
@@ -1251,12 +1264,21 @@ function startRobotJsonRuntimeWorker({
 
   return {
     listRobotRuntimeRows,
+    buildRuntimePaths,
+    writeJsonAtomic,
+    removeFileIfExists,
     startRobotJsonRuntimeWorker,
   };
 })();
 
+const {
+  listRobotRuntimeRows,
+  buildRuntimePaths,
+  writeJsonAtomic,
+  removeFileIfExists,
+} = robotJsonRuntimeModule;
+
 const declarationArtifactsModule = (() => {
-  const { listRobotRuntimeRows } = robotJsonRuntimeModule;
 const ACTION_TITLES = {
   simples_emitir_guia: "Guias do Simples Nacional",
   simples_extrato: "Extratos do Simples Nacional",
@@ -2795,6 +2817,94 @@ app.post(
       );
       res.setHeader("Content-Type", contentType);
       fs.createReadStream(result.fullPath).pipe(res);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+  },
+);
+
+app.post(
+  "/api/robots/runtime/stop",
+  requireConnectorSecret,
+  requireForwardedUserJwt,
+  validateSupabaseJwt,
+  heavyLimiter,
+  async (req, res) => {
+    if (!OFFICE_ID || !OFFICE_SERVER_ID) {
+      return res.status(503).json({
+        error:
+          "Conector da VM sem office_id vinculado. Revise CONNECTOR_SECRET e office_server_credentials.",
+      });
+    }
+
+    const supabase = createSupabaseServiceClient();
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase nao configurado" });
+    }
+
+    try {
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const requestedTechnicalIds = [
+        ...new Set(
+          (Array.isArray(body.robot_technical_ids) ? body.robot_technical_ids : [])
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (requestedTechnicalIds.length === 0) {
+        return res.status(400).json({ error: "robot_technical_ids e obrigatorio." });
+      }
+
+      const reason =
+        String(body.reason ?? "").trim() ||
+        "Solicitacao cancelada ao limpar o historico no SaaS.";
+
+      const runtimeRows = await listRobotRuntimeRows(supabase, OFFICE_ID, OFFICE_SERVER_ID);
+      const runtimeByTechnicalId = new Map(
+        runtimeRows.map((row) => [String(row.technical_id || "").trim(), row]),
+      );
+
+      const results = [];
+      for (const technicalId of requestedTechnicalIds) {
+        const robotRow = runtimeByTechnicalId.get(technicalId);
+        if (!robotRow) {
+          results.push({
+            robot_technical_id: technicalId,
+            stopped: false,
+            reason: "Robo nao encontrado para este escritorio.",
+          });
+          continue;
+        }
+
+        const runtimePaths = buildRuntimePaths(ROBOTS_ROOT_PATH, robotRow);
+        if (!runtimePaths || !fs.existsSync(runtimePaths.runtimeRoot)) {
+          results.push({
+            robot_technical_id: technicalId,
+            stopped: false,
+            reason: "Pasta de runtime nao encontrada na VM.",
+          });
+          continue;
+        }
+
+        writeJsonAtomic(runtimePaths.stopFilePath, {
+          robot_technical_id: technicalId,
+          requested_at: new Date().toISOString(),
+          reason,
+          source: "saas_clear_history",
+        });
+        removeFileIfExists(runtimePaths.jobFilePath);
+
+        results.push({
+          robot_technical_id: technicalId,
+          stopped: true,
+          runtime_root: runtimePaths.runtimeRoot,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        results,
+      });
     } catch (err) {
       return res.status(err.statusCode || 500).json({ error: err.message });
     }

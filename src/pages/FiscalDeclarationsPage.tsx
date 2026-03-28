@@ -14,23 +14,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCompanies } from "@/hooks/useCompanies";
 import { useProfile } from "@/hooks/useProfile";
 import { useSelectedCompanyIds } from "@/hooks/useSelectedCompanies";
+import { cancelExecutionRequest } from "@/services/executionRequestsService";
 import { downloadServerFileByPath } from "@/services/serverFileService";
 import { cn } from "@/utils";
 import {
-  createRunId,
   getDefaultDeclarationCompetence,
   isValidCompetence,
   sanitizeDeclarationError,
 } from "@/features/fiscal-declaracoes/helpers";
 import {
+  downloadDeclarationRunHistoryZip,
   downloadDeclarationArtifact,
   deleteAllDeclarationRunHistory,
+  hydrateDeclarationRunArtifacts,
   getDeclarationRunState,
   getFiscalDeclarationsBootstrap,
   listDeclarationArtifacts,
   listDeclarationRunHistory,
   persistDeclarationRunState,
   startDeclarationRun,
+  stopDeclarationRobotRuntime,
 } from "@/features/fiscal-declaracoes/service";
 import type {
   DeclarationActionKind,
@@ -38,11 +41,13 @@ import type {
   DeclarationGuideModalState,
   DeclarationRunItem,
   DeclarationRunState,
+  DeclarationStoredDocumentsModalState,
 } from "@/features/fiscal-declaracoes/types";
 import { DeclarationActionCard } from "@/features/fiscal-declaracoes/components/DeclarationActionCard";
 import { DeclarationArtifactsCard } from "@/features/fiscal-declaracoes/components/DeclarationArtifactsCard";
 import { DeclarationExecutionModal } from "@/features/fiscal-declaracoes/components/DeclarationExecutionModal";
 import { DeclarationRunHistoryTable } from "@/features/fiscal-declaracoes/components/DeclarationRunHistoryTable";
+import { DeclarationStoredDocumentsModal } from "@/features/fiscal-declaracoes/components/DeclarationStoredDocumentsModal";
 import { OverdueGuidesCard } from "@/features/fiscal-declaracoes/components/OverdueGuidesCard";
 
 function upsertRunHistory(
@@ -63,6 +68,13 @@ const initialGuideModalState: DeclarationGuideModalState = {
   recalculateByDefault: false,
 };
 
+const initialStoredDocumentsModalState: DeclarationStoredDocumentsModalState = {
+  open: false,
+  action: "simples_extrato",
+  presetCompanyId: null,
+  presetYear: null,
+};
+
 const SIMPLES_DOCUMENT_ACTIONS: Array<{
   action: DeclarationActionKind;
   title: string;
@@ -76,12 +88,12 @@ const SIMPLES_DOCUMENT_ACTIONS: Array<{
   {
     action: "simples_extrato",
     title: "Extrato do Simples Nacional",
-    description: "Solicita o extrato do Simples Nacional para a competencia informada no modal.",
+    description: "Abre o modal com os extratos salvos por ano e por competencia, no mesmo padrao visual do e-CAC.",
   },
   {
     action: "simples_defis",
     title: "DEFIS",
-    description: "Solicita a DEFIS anual conforme o ano informado no modal.",
+    description: "Abre o modal com recibos e declaracoes anuais ja salvos para a empresa selecionada.",
   },
 ];
 
@@ -108,12 +120,16 @@ export default function FiscalDeclarationsPage() {
   const { isSuperAdmin, officeId, officeRole } = useProfile();
   const [selectedTab, setSelectedTab] = useState<"simples-nacional" | "mei">("simples-nacional");
   const [guideModalState, setGuideModalState] = useState<DeclarationGuideModalState>(initialGuideModalState);
+  const [storedDocumentsModalState, setStoredDocumentsModalState] = useState<DeclarationStoredDocumentsModalState>(
+    initialStoredDocumentsModalState,
+  );
   const defaultCompetence = useMemo(() => getDefaultDeclarationCompetence(), []);
   const [runHistory, setRunHistory] = useState<DeclarationRunState[]>([]);
   const [runHistoryTotal, setRunHistoryTotal] = useState(0);
   const [runHistoryPage, setRunHistoryPage] = useState(1);
   const [runHistoryPageSize, setRunHistoryPageSize] = useState(10);
   const [dispatching, setDispatching] = useState(false);
+  const [zipDownloading, setZipDownloading] = useState(false);
   const [downloadingArtifactKey, setDownloadingArtifactKey] = useState<string | null>(null);
 
   const canOperate = isSuperAdmin || officeRole === "owner" || officeRole === "admin" || officeRole === "operator";
@@ -147,7 +163,12 @@ export default function FiscalDeclarationsPage() {
 
   const runHistoryQuery = useQuery({
     queryKey: ["fiscal-declaracoes-run-history", officeId, runHistoryPage, runHistoryPageSize],
-    queryFn: () => listDeclarationRunHistory({ page: runHistoryPage, pageSize: runHistoryPageSize }),
+    queryFn: () =>
+      listDeclarationRunHistory({
+        page: runHistoryPage,
+        pageSize: runHistoryPageSize,
+        actions: ["simples_emitir_guia"],
+      }),
     enabled: Boolean(officeId),
     placeholderData: keepPreviousData,
     refetchInterval: 5_000,
@@ -197,7 +218,7 @@ export default function FiscalDeclarationsPage() {
   const actionAvailability = bootstrapQuery.data?.actionAvailability;
   const documentCompanyIds = availableCompanies.map((company) => company.id);
   const documentQueries = useQueries({
-    queries: [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map(({ action }) => ({
+    queries: MEI_DOCUMENT_ACTIONS.map(({ action }) => ({
       queryKey: ["fiscal-declaracoes-documents", action, documentCompanyIds.join(",")],
       queryFn: () =>
         listDeclarationArtifacts({
@@ -213,7 +234,7 @@ export default function FiscalDeclarationsPage() {
   const documentResponseByAction = useMemo(
     () =>
       new Map(
-        [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map((item, index) => [
+        MEI_DOCUMENT_ACTIONS.map((item, index) => [
           item.action,
           documentQueries[index]?.data,
         ]),
@@ -223,7 +244,7 @@ export default function FiscalDeclarationsPage() {
   const documentLoadingByAction = useMemo(
     () =>
       new Map(
-        [...SIMPLES_DOCUMENT_ACTIONS, ...MEI_DOCUMENT_ACTIONS].map((item, index) => [
+        MEI_DOCUMENT_ACTIONS.map((item, index) => [
           item.action,
           Boolean(documentQueries[index]?.isLoading || documentQueries[index]?.isFetching),
         ]),
@@ -231,87 +252,7 @@ export default function FiscalDeclarationsPage() {
     [documentQueries],
   );
 
-  const findPreloadedArtifact = (
-    action: DeclarationActionKind,
-    companyId: string,
-    reference: string | null | undefined,
-  ): DeclarationArtifactListItem | null => {
-    const response = documentResponseByAction.get(action);
-    const items = (response?.items ?? []).filter((item) => item.company_id === companyId);
-    if (items.length === 0) return null;
-
-    const rawReference = String(reference ?? "").trim();
-    if (!rawReference) return items[0] ?? null;
-
-    if (action === "simples_extrato") {
-      return items.find((item) => item.file_name === `Extrato do Simples - ${rawReference}.pdf`) ?? null;
-    }
-
-    if (action === "simples_defis") {
-      const declaration =
-        items.find((item) => item.file_name === `DEFIS - ${rawReference} - Declaracao.pdf`) ?? null;
-      const receipt =
-        items.find((item) => item.file_name === `DEFIS - ${rawReference} - Recibo.pdf`) ?? null;
-      return declaration ?? receipt;
-    }
-
-    return items[0] ?? null;
-  };
-
-  const buildLocalStoredRun = (params: {
-    action: DeclarationActionKind;
-    companyIds: string[];
-    reference: string | null;
-  }): DeclarationRunState | null => {
-    if (!["simples_extrato", "simples_defis"].includes(params.action)) return null;
-
-    const items: DeclarationRunItem[] = [];
-    for (const companyId of params.companyIds) {
-      const company = availableCompanies.find((entry) => entry.id === companyId);
-      if (!company) return null;
-      const artifact = findPreloadedArtifact(params.action, companyId, params.reference);
-      if (!artifact) return null;
-      items.push({
-        companyId: company.id,
-        companyName: company.name,
-        companyDocument: company.document,
-        status: "sucesso",
-        message:
-          params.action === "simples_defis"
-            ? "Documentos da DEFIS localizados na pasta da empresa."
-            : "Documento localizado na pasta da empresa.",
-        executionRequestId: null,
-        artifact: {
-          label: artifact.file_name,
-          artifactKey: artifact.artifact_key,
-          filePath: null,
-          url: null,
-        },
-        meta: {
-          competence: params.reference,
-          competencia: params.reference,
-          source: "preloaded_artifact",
-        },
-      });
-    }
-
-    return {
-      runId: createRunId(),
-      action: params.action,
-      mode: "emitir",
-      title:
-        params.action === "simples_defis"
-          ? "Solicitacao de DEFIS"
-          : "Solicitacao de extrato do Simples Nacional",
-      requestIds: [],
-      items,
-      startedAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(),
-      terminal: true,
-    };
-  };
-
-  const applyRunUpdate = (run: DeclarationRunState, options?: { incrementTotal?: boolean; select?: boolean }) => {
+  const applyRunUpdate = (run: DeclarationRunState, options?: { incrementTotal?: boolean }) => {
     setRunHistory((current) => upsertRunHistory(current, run).slice(0, runHistoryPageSize));
     if (options?.incrementTotal) {
       setRunHistoryTotal((current) => current + 1);
@@ -320,7 +261,7 @@ export default function FiscalDeclarationsPage() {
   };
 
   const resolveActionDisabledReason = (action: DeclarationActionKind) => {
-    if (!canOperate) return "Seu perfil tem acesso somente para consulta nesta área.";
+    if (!canOperate) return "Seu perfil tem acesso somente para consulta nesta area.";
     return actionAvailability?.[action]?.reason ?? null;
   };
 
@@ -335,7 +276,7 @@ export default function FiscalDeclarationsPage() {
     recalculateDueDate?: string | null;
   }) => {
     if (!canOperate) {
-      toast.error("Seu perfil não pode executar rotinas fiscais nesta área.");
+      toast.error("Seu perfil nao pode executar rotinas fiscais nesta area.");
       return;
     }
 
@@ -352,13 +293,13 @@ export default function FiscalDeclarationsPage() {
           recalculate: params.mode === "recalcular",
           recalculateDueDate: params.mode === "recalcular" ? params.recalculateDueDate ?? null : null,
         },
-        onProgress: (run) => applyRunUpdate(run),
+        onProgress: (nextRun) => applyRunUpdate(nextRun),
       });
       applyRunUpdate(run, { incrementTotal: true });
       if (run.requestIds.length > 0) {
-        toast.success("Solicitações enviadas. O painel abaixo acompanhará o andamento por empresa.");
+        toast.success("Solicitacoes enviadas. O painel abaixo acompanhara o andamento da emissao.");
       } else {
-        toast.error("Nenhuma solicitação pôde ser enviada. Revise os motivos exibidos no acompanhamento.");
+        toast.error("Nenhuma solicitacao pode ser enviada. Revise os motivos exibidos no acompanhamento.");
       }
     } catch (error) {
       toast.error(
@@ -369,36 +310,23 @@ export default function FiscalDeclarationsPage() {
     }
   };
 
-  const handleSimpleModalSubmit = async (input: {
+  const handleGuideModalSubmit = async (input: {
     companyIds: string[];
     competence: string;
     recalculate: boolean;
     recalculateDueDate?: string | null;
   }) => {
-    const preloadedRun = buildLocalStoredRun({
-      action: guideModalState.action,
-      companyIds: input.companyIds,
-      reference: input.competence,
-    });
-    if (preloadedRun) {
-      setRunHistoryPage(1);
-      applyRunUpdate(preloadedRun, { incrementTotal: true });
-      setGuideModalState((current) => ({ ...current, open: false }));
-      toast.success("Documento localizado na pasta da empresa.");
-      return;
-    }
-
     await executeBatch({
-      action: guideModalState.action,
-      mode: guideModalState.action === "simples_emitir_guia" && input.recalculate ? "recalcular" : "emitir",
+      action: "simples_emitir_guia",
+      mode: input.recalculate ? "recalcular" : "emitir",
       companyIds: input.companyIds,
       competence: input.competence,
-      recalculateDueDate: guideModalState.action === "simples_emitir_guia" ? input.recalculateDueDate ?? null : null,
+      recalculateDueDate: input.recalculate ? input.recalculateDueDate ?? null : null,
     });
     setGuideModalState((current) => ({ ...current, open: false }));
   };
 
-  const handleDownloadArtifact = async (run: DeclarationRunState, item: DeclarationRunItem) => {
+  const handleDownloadRunArtifact = async (run: DeclarationRunState, item: DeclarationRunItem) => {
     if (item.artifact?.filePath) {
       try {
         await downloadServerFileByPath(item.artifact.filePath, item.artifact.label);
@@ -428,7 +356,7 @@ export default function FiscalDeclarationsPage() {
         toast.success("Download iniciado.");
       } catch (error) {
         toast.error(
-          sanitizeDeclarationError(error, "NÃ£o foi possÃ­vel baixar o documento gerado."),
+          sanitizeDeclarationError(error, "Não foi possível baixar o documento gerado."),
         );
       }
       return;
@@ -439,7 +367,58 @@ export default function FiscalDeclarationsPage() {
       return;
     }
 
-    toast.error("Nenhum artefato disponível para esta empresa.");
+    toast.error("Nenhum artefato disponivel para esta solicitacao.");
+  };
+
+  const handleDownloadPrimaryRunArtifact = async (run: DeclarationRunState) => {
+    const hydratedRun = await hydrateDeclarationRunArtifacts(run).catch(() => run);
+    if (hydratedRun !== run) {
+      setRunHistory((current) => current.map((entry) => (entry.runId === hydratedRun.runId ? hydratedRun : entry)));
+      void persistDeclarationRunState(hydratedRun).catch(() => null);
+    }
+
+    const primaryItem =
+      hydratedRun.items.find((item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey) ?? null;
+    if (!primaryItem) {
+      toast.error("Nenhum PDF disponível para esta solicitação.");
+      return;
+    }
+    await handleDownloadRunArtifact(hydratedRun, primaryItem);
+  };
+
+  const handleDownloadAllRunHistoryZip = async () => {
+    setZipDownloading(true);
+    try {
+      const pageSize = 50;
+      const firstPage = await listDeclarationRunHistory({
+        page: 1,
+        pageSize,
+        actions: ["simples_emitir_guia"],
+      });
+
+      const allRuns = [...firstPage.items];
+      const totalPages = Math.max(1, Math.ceil(firstPage.total / pageSize));
+      for (let page = 2; page <= totalPages; page += 1) {
+        const nextPage = await listDeclarationRunHistory({
+          page,
+          pageSize,
+          actions: ["simples_emitir_guia"],
+        });
+        allRuns.push(...nextPage.items);
+      }
+
+      const addedFiles = await downloadDeclarationRunHistoryZip({
+        runs: allRuns,
+        suggestedName: "guias-simples-nacional",
+      });
+      toast.success(`${addedFiles} PDF(s) adicionados ao ZIP.`);
+    } catch (error) {
+      toast.error(
+        sanitizeDeclarationError(error, "Não foi possível gerar o ZIP com os PDFs da lista."),
+      );
+    } finally {
+      setZipDownloading(false);
+    }
   };
 
   const handleDownloadDeclarationDocument = async (
@@ -457,34 +436,63 @@ export default function FiscalDeclarationsPage() {
       toast.success("Download iniciado.");
     } catch (error) {
       toast.error(
-        sanitizeDeclarationError(error, "Nao foi possivel baixar o documento localizado no servidor."),
+        sanitizeDeclarationError(error, "Não foi possível baixar o documento localizado no servidor."),
       );
     } finally {
       setDownloadingArtifactKey(null);
     }
   };
 
-  const handleDownloadPrimaryRunArtifact = async (run: DeclarationRunState) => {
-    const primaryItem =
-      run.items.find((item) => item.artifact?.filePath || item.artifact?.url || item.artifact?.artifactKey) ?? null;
-    if (!primaryItem) {
-      toast.error("Nenhum PDF disponivel para esta solicitacao.");
-      return;
-    }
-    await handleDownloadArtifact(run, primaryItem);
-  };
-
   const handleClearAllRunHistory = async () => {
-    setRunHistory([]);
-    setRunHistoryTotal(0);
-    setRunHistoryPage(1);
+    setDispatching(true);
     try {
-      await deleteAllDeclarationRunHistory();
+      const allRuns = await listDeclarationRunHistory({
+        page: 1,
+        pageSize: 200,
+        actions: ["simples_emitir_guia"],
+      });
+      const requestIds = Array.from(
+        new Set(
+          allRuns.items
+            .filter((run) => !run.terminal)
+            .flatMap((run) =>
+            (run.requestIds ?? []).map((value) => String(value ?? "").trim()).filter(Boolean),
+            ),
+        ),
+      );
+
+      await stopDeclarationRobotRuntime({
+        robotTechnicalIds: ["ecac_simples_emitir_guia"],
+        reason: "Solicitacao cancelada ao limpar o historico de emissao no SaaS.",
+      });
+
+      if (requestIds.length > 0) {
+        const cancellationResults = await Promise.allSettled(
+          requestIds.map((requestId) =>
+            cancelExecutionRequest(
+              requestId,
+              "Cancelado ao limpar o historico de emissao no SaaS.",
+            ),
+          ),
+        );
+        const failedCancellation = cancellationResults.find((result) => result.status === "rejected");
+        if (failedCancellation?.status === "rejected") {
+          throw failedCancellation.reason;
+        }
+      }
+
+      await deleteAllDeclarationRunHistory({ actions: ["simples_emitir_guia"] });
+      setRunHistory([]);
+      setRunHistoryTotal(0);
+      setRunHistoryPage(1);
       await runHistoryQuery.refetch();
+      toast.success("Histórico limpo e robô de emissão sinalizado para parar.");
     } catch (error) {
       toast.error(
-        sanitizeDeclarationError(error, "Nao foi possivel limpar o historico do escritorio."),
+        sanitizeDeclarationError(error, "Não foi possível limpar o histórico do escritório."),
       );
+    } finally {
+      setDispatching(false);
     }
   };
 
@@ -496,12 +504,12 @@ export default function FiscalDeclarationsPage() {
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary-icon">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Fiscal • Declarações
+              Fiscal • Declaracoes
             </div>
             <div>
-              <h1 className="text-3xl font-bold font-display tracking-tight">Declarações</h1>
+              <h1 className="text-3xl font-bold font-display tracking-tight">Declaracoes</h1>
               <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                Área operacional para Simples Nacional e MEI com foco em usabilidade, controle por empresa e acompanhamento seguro do processamento.
+                Area operacional para Simples Nacional e MEI com foco em controle por empresa, consulta de documentos e emissao segura de guias.
               </p>
             </div>
           </div>
@@ -520,7 +528,7 @@ export default function FiscalDeclarationsPage() {
           <BadgeAlert className="h-4 w-4" />
           <AlertTitle>Modo de consulta</AlertTitle>
           <AlertDescription>
-            Seu perfil pode visualizar esta área, mas não pode disparar emissões ou reprocessamentos.
+            Seu perfil pode visualizar esta area, mas nao pode disparar emissoes ou reprocessamentos.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -549,9 +557,9 @@ export default function FiscalDeclarationsPage() {
           <GlassCard className="border border-border/70 p-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="space-y-2">
-                <h2 className="text-xl font-semibold font-display tracking-tight">Operações do Simples Nacional</h2>
+                <h2 className="text-xl font-semibold font-display tracking-tight">Operacoes do Simples Nacional</h2>
                 <p className="text-sm text-muted-foreground">
-                  A emissão usa os dados informados no modal do SaaS, enquanto extratos e DEFIS fazem a coleta completa do que estiver disponível no portal.
+                  A emissao usa o modal operacional do SaaS. Extratos e DEFIS abrem um modal proprio com os PDFs salvos no servidor, no formato parecido com o e-CAC.
                 </p>
               </div>
               <div className="rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm">
@@ -601,23 +609,33 @@ export default function FiscalDeclarationsPage() {
                 }
                 ctaLabel={
                   item.action === "simples_emitir_guia"
-                    ? "Abrir emissão"
+                    ? "Abrir emissao"
                     : item.action === "simples_extrato"
-                      ? "Solicitar extrato"
-                      : "Solicitar DEFIS"
+                      ? "Abrir extratos"
+                      : "Abrir DEFIS"
                 }
                 busy={dispatching}
                 disabled={!isActionEnabled(item.action)}
                 disabledReason={resolveActionDisabledReason(item.action)}
                 onClick={() => {
-                  setGuideModalState({
+                  if (item.action === "simples_emitir_guia") {
+                    setGuideModalState({
+                      open: true,
+                      action: "simples_emitir_guia",
+                      source: "card",
+                      presetCompanyId: null,
+                      presetCompetence: defaultCompetence,
+                      presetDueDate: null,
+                      recalculateByDefault: false,
+                    });
+                    return;
+                  }
+
+                  setStoredDocumentsModalState({
                     open: true,
                     action: item.action,
-                    source: "card",
                     presetCompanyId: availableCompanies[0]?.id ?? null,
-                    presetCompetence: item.action === "simples_defis" ? defaultCompetence.slice(0, 4) : defaultCompetence,
-                    presetDueDate: null,
-                    recalculateByDefault: false,
+                    presetYear: defaultCompetence.slice(0, 4),
                   });
                 }}
                 toneClassName={
@@ -630,14 +648,31 @@ export default function FiscalDeclarationsPage() {
               />
             ))}
           </div>
+
+          <DeclarationRunHistoryTable
+            runs={runHistory}
+            loading={runHistoryQuery.isLoading || runHistoryQuery.isFetching}
+            totalItems={runHistoryTotal}
+            currentPage={runHistoryPage}
+            pageSize={runHistoryPageSize}
+            onPageChange={setRunHistoryPage}
+            onPageSizeChange={(pageSize) => {
+              setRunHistoryPageSize(pageSize);
+              setRunHistoryPage(1);
+            }}
+            onDownloadPrimaryArtifact={(run) => void handleDownloadPrimaryRunArtifact(run)}
+            onDownloadAllZip={() => void handleDownloadAllRunHistoryZip()}
+            zipBusy={zipDownloading}
+            onClearAll={() => void handleClearAllRunHistory()}
+          />
         </TabsContent>
 
         <TabsContent value="mei" className="space-y-6">
           <GlassCard className="border border-border/70 p-6">
             <div className="space-y-2">
-              <h2 className="text-xl font-semibold font-display tracking-tight">Operações do MEI</h2>
+              <h2 className="text-xl font-semibold font-display tracking-tight">Operacoes do MEI</h2>
               <p className="text-sm text-muted-foreground">
-                A aba do MEI mantém o mesmo padrão de cards, feedback operacional e bloqueios de concorrência usados no Simples Nacional.
+                A aba do MEI mantem o mesmo padrao de cards, feedback operacional e bloqueios de concorrencia usados no restante do SaaS.
               </p>
             </div>
           </GlassCard>
@@ -645,10 +680,10 @@ export default function FiscalDeclarationsPage() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <DeclarationActionCard
               eyebrow="Anual"
-              title="Declaração Anual do MEI"
-              description="Enfileira a declaração anual das empresas MEI dentro do escopo atual, com acompanhamento de status por empresa."
+              title="Declaracao Anual do MEI"
+              description="Enfileira a declaracao anual das empresas MEI dentro do escopo atual, com acompanhamento de status por empresa."
               icon={<FileArchive className="h-5 w-5" />}
-              ctaLabel="Executar declaração"
+              ctaLabel="Executar declaracao"
               busy={dispatching}
               disabled={!isActionEnabled("mei_declaracao_anual")}
               disabledReason={resolveActionDisabledReason("mei_declaracao_anual")}
@@ -665,7 +700,7 @@ export default function FiscalDeclarationsPage() {
             <DeclarationActionCard
               eyebrow="Mensal"
               title="Guias Mensais do MEI"
-              description="Dispara a emissão mensal das guias MEI com o mesmo padrão visual, mensagens seguras e acompanhamento consolidado."
+              description="Dispara a emissao mensal das guias MEI com o mesmo padrao visual, mensagens seguras e acompanhamento consolidado."
               icon={<ReceiptText className="h-5 w-5" />}
               ctaLabel="Emitir guias"
               busy={dispatching}
@@ -693,27 +728,12 @@ export default function FiscalDeclarationsPage() {
                 loading={documentLoadingByAction.get(item.action) ?? false}
                 response={documentResponseByAction.get(item.action)}
                 busyArtifactKey={downloadingArtifactKey}
-                onDownload={(artifact) => handleDownloadDeclarationDocument(item.action, artifact)}
+                onDownload={(artifact) => void handleDownloadDeclarationDocument(item.action, artifact)}
               />
             ))}
           </div>
         </TabsContent>
       </Tabs>
-
-      <DeclarationRunHistoryTable
-        runs={runHistory}
-        loading={runHistoryQuery.isLoading || runHistoryQuery.isFetching}
-        totalItems={runHistoryTotal}
-        currentPage={runHistoryPage}
-        pageSize={runHistoryPageSize}
-        onPageChange={setRunHistoryPage}
-        onPageSizeChange={(pageSize) => {
-          setRunHistoryPageSize(pageSize);
-          setRunHistoryPage(1);
-        }}
-        onDownloadPrimaryArtifact={(run) => void handleDownloadPrimaryRunArtifact(run)}
-        onClearAll={() => void handleClearAllRunHistory()}
-      />
 
       <DeclarationExecutionModal
         open={guideModalState.open}
@@ -722,14 +742,21 @@ export default function FiscalDeclarationsPage() {
         defaultCompetence={defaultCompetence}
         busy={dispatching}
         onOpenChange={(open) => setGuideModalState((current) => ({ ...current, open }))}
-        onSubmit={handleSimpleModalSubmit}
+        onSubmit={handleGuideModalSubmit}
+      />
+
+      <DeclarationStoredDocumentsModal
+        open={storedDocumentsModalState.open}
+        state={storedDocumentsModalState}
+        companies={availableCompanies}
+        onOpenChange={(open) => setStoredDocumentsModalState((current) => ({ ...current, open }))}
       />
 
       {bootstrapQuery.isLoading ? (
         <div className={cn("fixed bottom-4 right-4 rounded-full border border-border bg-card/95 px-4 py-2 shadow-lg")}>
           <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Carregando declarações...
+            Carregando declaracoes...
           </span>
         </div>
       ) : null}

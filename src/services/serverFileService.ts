@@ -357,7 +357,7 @@ export async function invokeOfficeServerWhatsApp(
   })
 }
 
-async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; filename: string }> {
+export async function fetchServerFileByPath(filePath: string): Promise<{ blob: Blob; filename: string }> {
   const normalizedPath = String(filePath || "").trim()
   if (!normalizedPath) throw new Error("Caminho do arquivo não informado.")
 
@@ -444,11 +444,11 @@ export async function openServerFileByPath(filePath: string, suggestedName?: str
   openBlobInNewTab(blob, suggestedName || filename)
 }
 
-export async function downloadOfficeServerAction(
+export async function fetchOfficeServerActionBlob(
   action: string,
   payload: Record<string, unknown>,
-  suggestedName?: string
-): Promise<void> {
+  suggestedName?: string,
+): Promise<{ blob: Blob; filename: string }> {
   const res = await fetchOfficeServerWithAuthRetry(action, (headers) => ({
     method: "POST",
     headers,
@@ -461,6 +461,15 @@ export async function downloadOfficeServerAction(
     disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
     suggestedName ||
     "arquivo"
+  return { blob, filename }
+}
+
+export async function downloadOfficeServerAction(
+  action: string,
+  payload: Record<string, unknown>,
+  suggestedName?: string
+): Promise<void> {
+  const { blob, filename } = await fetchOfficeServerActionBlob(action, payload, suggestedName)
   triggerBlobDownload(blob, filename)
 }
 
@@ -469,18 +478,7 @@ export async function openOfficeServerAction(
   payload: Record<string, unknown>,
   suggestedName?: string,
 ): Promise<void> {
-  const res = await fetchOfficeServerWithAuthRetry(action, (headers) => ({
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  }))
-  if (!res.ok) throw new Error(await readError(res))
-  const blob = await res.blob()
-  const disposition = res.headers.get("Content-Disposition")
-  const filename =
-    disposition?.match(/filename="?([^";]+)"?/)?.[1]?.trim() ||
-    suggestedName ||
-    "arquivo"
+  const { blob, filename } = await fetchOfficeServerActionBlob(action, payload, suggestedName)
   openBlobInNewTab(blob, filename)
 }
 

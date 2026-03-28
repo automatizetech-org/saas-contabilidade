@@ -7,10 +7,15 @@ export function getDefaultDeclarationCompetence(today = new Date()): string {
 
 export function formatCompetenceLabel(value: string | null | undefined): string {
   const raw = String(value ?? "").trim();
-  if (!/^\d{4}-\d{2}$/.test(raw)) return "-";
-  const year = raw.slice(0, 4);
-  const month = raw.slice(5, 7);
-  return `${month}/${year}`;
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    const year = raw.slice(0, 4);
+    const month = raw.slice(5, 7);
+    return `${month}/${year}`;
+  }
+  if (/^\d{2}\/\d{4}$/.test(raw)) {
+    return raw;
+  }
+  return "-";
 }
 
 export function formatYearLabel(value: string | null | undefined): string {
@@ -46,7 +51,7 @@ export function sanitizeDeclarationError(error: unknown, fallback: string): stri
     raw.toLowerCase().includes("permission denied") ||
     raw.toLowerCase().includes("row-level security")
   ) {
-    return "Voce nao tem permissao para executar esta rotina.";
+    return "Você não tem permissão para executar esta rotina.";
   }
   return raw;
 }

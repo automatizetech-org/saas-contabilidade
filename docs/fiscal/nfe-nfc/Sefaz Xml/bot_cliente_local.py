@@ -350,6 +350,11 @@ def _any_real_dotenv_file_exists() -> bool:
 # Sem .env em disco: modo cliente / demonstração — prioriza JSON em data/json.
 SEFAZ_LOCAL_JSON_CLIENT_MODE = not _any_real_dotenv_file_exists()
 
+# Nesta cópia local, o cadastro manual de empresas/logins continua habilitado
+# mesmo quando houver .env configurado. O script principal mantém o fluxo
+# centralizado no site; este arquivo preserva o gerenciamento local.
+SEFAZ_ALLOW_LOCAL_CADASTRO_UI = True
+
 
 def _get_supabase_service_role_key() -> str:
     for env_name in (
@@ -16364,12 +16369,13 @@ class MyCompactUI(QMainWindow):
             substituir_lista: quando True substitui toda a lista atual; quando False apenas
                 acrescenta novos CNPJs que ainda não existem.
         """
-        QMessageBox.information(
-            self,
-            "Cadastro centralizado",
-            "As empresas agora são gerenciadas no site. Use o painel para cadastrar empresa, IE e logins da SEFAZ GO.",
-        )
-        return
+        if not SEFAZ_ALLOW_LOCAL_CADASTRO_UI:
+            QMessageBox.information(
+                self,
+                "Cadastro centralizado",
+                "As empresas agora são gerenciadas no site. Use o painel para cadastrar empresa, IE e logins da SEFAZ GO.",
+            )
+            return
         try:
             from openpyxl import load_workbook
         except ImportError:
@@ -16538,12 +16544,13 @@ class MyCompactUI(QMainWindow):
         )
 
     def adicionar_ie(self):
-        QMessageBox.information(
-            self,
-            "Cadastro centralizado",
-            "As empresas agora são cadastradas no site. Use o painel para incluir empresa, IE e logins da SEFAZ GO.",
-        )
-        return
+        if not SEFAZ_ALLOW_LOCAL_CADASTRO_UI:
+            QMessageBox.information(
+                self,
+                "Cadastro centralizado",
+                "As empresas agora são cadastradas no site. Use o painel para incluir empresa, IE e logins da SEFAZ GO.",
+            )
+            return
         nome, cnpj_digits, ie_digits, login_cpf, ok = self._dialog_empresa_form(
             "Adicionar Empresa",
             nome_init="",
@@ -16599,12 +16606,13 @@ class MyCompactUI(QMainWindow):
         self.update_log(f"✅ [EMPRESAS] Nova empresa adicionada: {display_name} - {ie_formatada(ie)}")
 
     def editar_ie(self):
-        QMessageBox.information(
-            self,
-            "Cadastro centralizado",
-            "A edição das empresas agora é feita no site.",
-        )
-        return
+        if not SEFAZ_ALLOW_LOCAL_CADASTRO_UI:
+            QMessageBox.information(
+                self,
+                "Cadastro centralizado",
+                "A edição das empresas agora é feita no site.",
+            )
+            return
         if not self.produtos:
             self.update_log("ℹ️ [EMPRESAS] Nenhuma empresa para editar.")
             return
@@ -16697,12 +16705,13 @@ class MyCompactUI(QMainWindow):
         )
 
     def excluir_ie(self):
-        QMessageBox.information(
-            self,
-            "Cadastro centralizado",
-            "A exclusão das empresas agora é feita no site.",
-        )
-        return
+        if not SEFAZ_ALLOW_LOCAL_CADASTRO_UI:
+            QMessageBox.information(
+                self,
+                "Cadastro centralizado",
+                "A exclusão das empresas agora é feita no site.",
+            )
+            return
         if not self.produtos:
             self.update_log("ℹ️ [EMPRESAS] Nenhuma empresa para excluir.")
             return
@@ -17144,7 +17153,7 @@ class MyCompactUI(QMainWindow):
 
     def abrir_login_portal(self):
         """Gerenciador de logins do portal (Adicionar / Editar / Excluir)."""
-        if not SEFAZ_LOCAL_JSON_CLIENT_MODE:
+        if not SEFAZ_ALLOW_LOCAL_CADASTRO_UI:
             QMessageBox.information(
                 self,
                 "Cadastro centralizado",
