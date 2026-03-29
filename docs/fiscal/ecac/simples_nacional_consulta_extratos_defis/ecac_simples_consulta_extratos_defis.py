@@ -4071,6 +4071,7 @@ class MainWindow(QMainWindow):
         self._last_job_execution_request_id = self._job_execution_request_id(self.job)
         self.office_context = self.dashboard.resolve_office_context(self.job)
         self.worker: Optional[SimplesWorker] = None
+        self._inactive_reported = False
         self.companies: list[CompanyRecord] = []
         self.filtered_companies: list[CompanyRecord] = []
         self.schedule_timer = QTimer(self)
@@ -4434,6 +4435,16 @@ class MainWindow(QMainWindow):
         self.runtime.json_runtime.write_heartbeat(status=status, message="ui_heartbeat")
         self.dashboard.update_robot_presence(status=status, robot_id=self.robot_dashboard_id or "")
 
+    def _publish_inactive(self, reason: str = "application_exit") -> None:
+        if self._inactive_reported:
+            return
+        self._inactive_reported = True
+        try:
+            self.dashboard.update_robot_presence(status="inactive", robot_id=self.robot_dashboard_id or "")
+        except Exception:
+            pass
+        self.runtime.mark_inactive(reason)
+
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self.worker is not None and self.worker.isRunning():
             self.worker.request_stop()
@@ -4441,8 +4452,7 @@ class MainWindow(QMainWindow):
         self.robot_heartbeat_timer.stop()
         self.job_poll_timer.stop()
         self.schedule_timer.stop()
-        self.dashboard.update_robot_presence(status="inactive", robot_id=self.robot_dashboard_id or "")
-        self.runtime.mark_inactive()
+        self._publish_inactive("window_close")
         cleanup_runtime_artifacts(self.runtime)
         super().closeEvent(event)
 
@@ -4456,7 +4466,30 @@ def main() -> int:
     args = parse_args()
     if args.no_ui: return _run_cli(args)
     if QApplication is None: raise RuntimeError("PySide6 nao esta disponivel para a interface grafica.")
-    app = QApplication(sys.argv); runtime_env = build_runtime(ROBOT_TECHNICAL_ID, ROBOT_DISPLAY_NAME, runtime_dir=None); window = MainWindow(runtime_env); window.show(); return app.exec()
+    import atexit
+    import signal
+
+    app = QApplication(sys.argv); runtime_env = build_runtime(ROBOT_TECHNICAL_ID, ROBOT_DISPLAY_NAME, runtime_dir=None); window = MainWindow(runtime_env)
+
+    def publish_inactive(reason: str = "application_exit") -> None:
+        window._publish_inactive(reason)
+
+    def handle_signal(signum, _frame) -> None:
+        publish_inactive(f"signal_{int(signum)}")
+        app.quit()
+        raise SystemExit(128 + int(signum))
+
+    atexit.register(lambda: publish_inactive("process_exit"))
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        current_signal = getattr(signal, signal_name, None)
+        if current_signal is None:
+            continue
+        try:
+            signal.signal(current_signal, handle_signal)
+        except Exception:
+            pass
+
+    window.show(); return app.exec()
 
 
 if __name__ == "__main__":
