@@ -106,7 +106,7 @@ export function DeclarationRunHistoryTable({
             </TableHeader>
             <TableBody>
               {entries.map((entry) => {
-                const hasArtifact = Boolean(
+                const hasArtifact = entry.status === "sucesso" && Boolean(
                   entry.artifact?.filePath || entry.artifact?.url || entry.artifact?.artifactKey,
                 );
                 return (

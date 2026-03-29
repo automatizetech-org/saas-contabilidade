@@ -1,12 +1,12 @@
 {
-  "job_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
-  "execution_request_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
+  "job_id": "manual_acrilicos_emitir_guia_20260328_codex_01",
+  "execution_request_id": "manual_acrilicos_emitir_guia_20260328_codex_01",
   "office_id": "16b25399-4658-4aa6-a1bc-d1cc6114e1ee",
   "action": "simples_emitir_guia",
   "mode": "emitir",
   "competence": "01/2026",
   "company_ids": [
-    "769ce253-d21b-45cb-a961-55329b244ef1"
+    "6c8c1a6a-0c6f-45ee-9bed-5fdb2523b8eb"
   ],
   "companies": [],
   "source": "codex_manual_test"

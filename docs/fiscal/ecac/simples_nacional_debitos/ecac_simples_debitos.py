@@ -15,7 +15,7 @@ import traceback
 import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -79,6 +79,10 @@ PGDAS_READY_MARKERS = [
     "Consultar declaracoes",
 ]
 HCAPTCHA_ERROR_URL_TOKEN = "/Erro/93003"
+LOGIN_HCAPTCHA_RELOAD_LIMIT = 5
+LOGIN_HCAPTCHA_EXTENSION_WAIT_TIMEOUT_MS = 120000
+CAPTCHA_SOLVER_EXTENSION_ID = "eihghbeaaeedpcojhbghbocnkcponaeo"
+CAPTCHA_SOLVER_EXTENSION_NAME = "Skill Up Agency LTD - Captcha Solver"
 DEFIS_ENTRY_URL = "https://sinac.cav.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATSPO/defis.app/entrada.aspx"
 
 
@@ -91,6 +95,111 @@ def _normalize_portal_text(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", raw)
     without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
     return " ".join(without_accents.split()).lower()
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+
+def _captcha_solver_extension_status(profile_root: Path) -> tuple[bool, str]:
+    root = Path(profile_root)
+    secure_preferences_path = root / "Default" / "Secure Preferences"
+    settings = (
+        (_read_json_dict(secure_preferences_path).get("extensions") or {}).get("settings") or {}
+    )
+    if not isinstance(settings, dict):
+        return False, "Secure Preferences sem registro de extensoes."
+    extension_entry = settings.get(CAPTCHA_SOLVER_EXTENSION_ID)
+    if not isinstance(extension_entry, dict):
+        return False, f"Extensao {CAPTCHA_SOLVER_EXTENSION_NAME} nao registrada no perfil."
+    disable_reasons = extension_entry.get("disable_reasons") or []
+    if isinstance(disable_reasons, list) and disable_reasons:
+        return False, f"Extensao {CAPTCHA_SOLVER_EXTENSION_NAME} desabilitada: {disable_reasons}."
+    extension_root = root / "Default" / "Extensions" / CAPTCHA_SOLVER_EXTENSION_ID
+    if not extension_root.exists():
+        return False, f"Diretorio da extensao {CAPTCHA_SOLVER_EXTENSION_NAME} ausente em {extension_root}."
+    versions = sorted([item.name for item in extension_root.iterdir() if item.is_dir()])
+    version = versions[-1] if versions else "sem_versao"
+    return True, f"{CAPTCHA_SOLVER_EXTENSION_NAME} pronta (id={CAPTCHA_SOLVER_EXTENSION_ID}, versao={version})."
+
+
+def _sync_captcha_solver_extension_from_bundle(runtime_env: RuntimeEnvironment) -> bool:
+    bundled_profile_root = SCRIPT_DIR / "data" / "chrome_profile_backup"
+    target_profile_root = Path(runtime_env.paths.chrome_profile_backup_dir)
+    try:
+        if bundled_profile_root.resolve() == target_profile_root.resolve():
+            return False
+    except Exception:
+        pass
+    source_status, _ = _captcha_solver_extension_status(bundled_profile_root)
+    if not source_status:
+        return False
+
+    copied = False
+    source_extension_root = bundled_profile_root / "Default" / "Extensions" / CAPTCHA_SOLVER_EXTENSION_ID
+    target_extension_root = target_profile_root / "Default" / "Extensions" / CAPTCHA_SOLVER_EXTENSION_ID
+    if source_extension_root.exists():
+        target_extension_root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_extension_root, target_extension_root, dirs_exist_ok=True)
+        copied = True
+
+    for relative_name in ("Extension Rules", "Extension Scripts", "Extension State"):
+        source_dir = bundled_profile_root / "Default" / relative_name
+        target_dir = target_profile_root / "Default" / relative_name
+        if source_dir.exists():
+            shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+            copied = True
+
+    source_secure_preferences_path = bundled_profile_root / "Default" / "Secure Preferences"
+    target_secure_preferences_path = target_profile_root / "Default" / "Secure Preferences"
+    source_secure_preferences = _read_json_dict(source_secure_preferences_path)
+    target_secure_preferences = _read_json_dict(target_secure_preferences_path)
+    source_settings = (
+        (source_secure_preferences.get("extensions") or {}).get("settings") or {}
+    )
+    extension_entry = source_settings.get(CAPTCHA_SOLVER_EXTENSION_ID)
+    if isinstance(extension_entry, dict):
+        target_extensions = target_secure_preferences.setdefault("extensions", {})
+        if not isinstance(target_extensions, dict):
+            target_extensions = {}
+            target_secure_preferences["extensions"] = target_extensions
+        target_settings = target_extensions.setdefault("settings", {})
+        if not isinstance(target_settings, dict):
+            target_settings = {}
+            target_extensions["settings"] = target_settings
+        target_settings[CAPTCHA_SOLVER_EXTENSION_ID] = extension_entry
+        _write_json_dict(target_secure_preferences_path, target_secure_preferences)
+        copied = True
+
+    return copied
+
+
+def _ensure_captcha_solver_extension_ready(runtime_env: RuntimeEnvironment) -> bool:
+    profile_backup_dir = Path(runtime_env.paths.chrome_profile_backup_dir)
+    ready, detail = _captcha_solver_extension_status(profile_backup_dir)
+    if ready:
+        runtime_env.logger.info(detail)
+        return True
+    if _sync_captcha_solver_extension_from_bundle(runtime_env):
+        ready, detail = _captcha_solver_extension_status(profile_backup_dir)
+        if ready:
+            runtime_env.logger.info(f"Extensao solver restaurada no perfil Chrome: {detail}")
+            return True
+    runtime_env.logger.warning(
+        f"Extensao solver indisponivel no perfil Chrome: {detail}"
+    )
+    return False
 
 
 def _extract_document_from_subject(subject: str) -> str:
@@ -682,6 +791,10 @@ class HCaptchaVisibleError(RuntimeError):
     pass
 
 
+class LoginBrowserResetRequiredError(RuntimeError):
+    pass
+
+
 def _ps_quote(value: str) -> str:
     return str(value or "").replace("'", "''")
 
@@ -965,12 +1078,79 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         self.allow_manual_captcha = allow_manual_captcha
         self.manual_captcha_timeout_ms = manual_captcha_timeout_ms
         self.expected_document = _extract_document_from_subject(certificate.subject)
+        self.captcha_solver_available = _ensure_captcha_solver_extension_ready(runtime_env)
 
     def _capture_debug(self, prefix: str) -> None:
         try:
             self._capture_debug_artifacts(prefix)
         except Exception:
             pass
+
+    def _bring_browser_to_front(self) -> None:
+        try:
+            self.page.bring_to_front()
+        except Exception:
+            pass
+        try:
+            self.page.evaluate(
+                """() => {
+                    try {
+                        window.focus();
+                    } catch (error) {
+                    }
+                    try {
+                        document.body?.focus?.();
+                    } catch (error) {
+                    }
+                }"""
+            )
+        except Exception:
+            pass
+
+    def _goto_login_with_retry(self, timeout_ms: int = 20000) -> None:
+        last_error: Optional[Exception] = None
+        for _ in range(3):
+            try:
+                self.page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                return
+            except Exception as exc:
+                last_error = exc
+                try:
+                    self.page.goto(LOGIN_URL, wait_until="load", timeout=timeout_ms)
+                    return
+                except Exception as load_exc:
+                    last_error = load_exc
+        if last_error:
+            raise last_error
+
+    def _on_gov_br_identity_page(self) -> bool:
+        current_url = str(getattr(self.page, "url", "") or "").lower()
+        if "acesso.gov.br" in current_url:
+            return True
+        return any(
+            self._page_contains(marker)
+            for marker in (
+                "Identifique-se no gov.br",
+                "Seu certificado digital",
+                "Certificado digital",
+            )
+        )
+
+    def _click_access_gov_br(self, timeout_ms: int = 12000) -> None:
+        self._bring_browser_to_front()
+        current_url = str(getattr(self.page, "url", "") or "").lower()
+        if "acesso.gov.br" in current_url or self._on_gov_br_identity_page():
+            return
+        if self._click_by_label(["Acesso Gov BR", "Acesso Gov.BR", "Entrar com gov.br"], timeout_ms=timeout_ms):
+            self._wait_until(
+                lambda: "acesso.gov.br" in str(self.page.url or "").lower()
+                or self._page_contains("Seu certificado digital")
+                or self.captcha_visible(),
+                timeout_ms=15000,
+                interval_ms=75,
+            )
+            return
+        raise RuntimeError("Botao 'Acesso Gov BR' nao foi localizado.")
 
     def _profile_switch_success_relaxed(self, company: CompanyRecord) -> bool:
         targets = [target for target in self._profile_switch_targets(company) if target]
@@ -1973,6 +2153,117 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                 return True
         return False
 
+    def _click_hcaptcha_checkbox_if_present(self) -> bool:
+        try:
+            point = (
+                self.page.locator("body").evaluate(
+                    """() => {
+                        const frames = Array.from(document.querySelectorAll("iframe[src*='hcaptcha'], iframe[title*='hCaptcha']"));
+                        for (const frame of frames) {
+                            const rect = frame.getBoundingClientRect();
+                            if (rect.width < 100 || rect.height < 50) continue;
+                            const centerX = Math.floor(rect.left + rect.width / 2);
+                            const centerY = Math.floor(rect.top + rect.height / 2);
+                            return { x: centerX, y: centerY };
+                        }
+                        const checkbox = document.querySelector(".h-captcha, [data-sitekey][data-size]");
+                        if (!checkbox) return null;
+                        const rect = checkbox.getBoundingClientRect();
+                        if (rect.width < 20 || rect.height < 20) return null;
+                        return { x: Math.floor(rect.left + Math.min(30, rect.width / 2)), y: Math.floor(rect.top + Math.min(30, rect.height / 2)) };
+                    }"""
+                )
+            )
+        except Exception:
+            point = None
+        if not isinstance(point, dict):
+            return False
+        try:
+            self.page.mouse.click(int(point["x"]), int(point["y"]))
+            self.runtime.logger.info("Checkbox do hCaptcha acionado.")
+            return True
+        except Exception:
+            return False
+
+    def _reload_after_captcha(self, stage_label: str) -> None:
+        self.runtime.logger.warning(
+            f"hCaptcha detectado na etapa {stage_label}; recarregando a pagina para nova tentativa."
+        )
+        self._bring_browser_to_front()
+        try:
+            self.page.reload(wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            current_url = str(self.page.url or "").strip()
+            if not current_url:
+                raise
+            self.page.goto(current_url, wait_until="domcontentloaded", timeout=30000)
+
+    def _wait_for_solver_extension(self, stage_label: str, timeout_ms: int = LOGIN_HCAPTCHA_EXTENSION_WAIT_TIMEOUT_MS) -> None:
+        if not self.captcha_solver_available:
+            raise LoginBrowserResetRequiredError(
+                f"hCaptcha persistiu na etapa {stage_label} e a extensao {CAPTCHA_SOLVER_EXTENSION_NAME} nao esta disponivel no perfil Chrome."
+            )
+        self.runtime.logger.warning(
+            f"hCaptcha persistiu na etapa {stage_label}; aguardando a extensao resolver por ate {int(timeout_ms / 1000)}s."
+        )
+        deadline = time.time() + max(timeout_ms, 1000) / 1000
+        while time.time() < deadline:
+            if self.stop_requested():
+                raise RuntimeError("Execucao interrompida enquanto aguardava a extensao resolver o hCaptcha.")
+            if not self.captcha_visible():
+                self.runtime.logger.info(f"hCaptcha liberado na etapa {stage_label}; fluxo retomado.")
+                return
+            self._click_hcaptcha_checkbox_if_present()
+            try:
+                self.page.wait_for_timeout(250)
+            except Exception:
+                time.sleep(0.25)
+        raise LoginBrowserResetRequiredError(
+            f"A extensao nao resolveu o hCaptcha na etapa {stage_label} dentro de {int(timeout_ms / 1000)}s."
+        )
+
+    def _advance_to_gov_br_with_retry_budget(self) -> None:
+        last_error: Optional[Exception] = None
+        if self._on_gov_br_identity_page() and not self.captcha_visible():
+            self.runtime.logger.info("Tela do GOV.BR ja estava aberta; pulando clique em 'Acesso Gov BR'.")
+            return
+        for attempt in range(1, LOGIN_HCAPTCHA_RELOAD_LIMIT + 2):
+            if self._on_gov_br_identity_page() and not self.captcha_visible():
+                self.runtime.logger.info("Tela do GOV.BR detectada durante a tentativa; seguindo para o certificado.")
+                return
+            self._click_access_gov_br()
+            self._wait_until(
+                lambda: "acesso.gov.br" in str(self.page.url or "").lower()
+                or self._page_contains("Seu certificado digital")
+                or self.captcha_visible(),
+                timeout_ms=30000,
+                interval_ms=75,
+            )
+            current_url = str(self.page.url or "").lower()
+            if "acesso.gov.br" in current_url or self._page_contains("Seu certificado digital"):
+                if not self.captcha_visible():
+                    return
+                last_error = HCaptchaVisibleError("hCaptcha exibido ao tentar acessar o GOV.BR.")
+            elif self.captcha_visible():
+                last_error = HCaptchaVisibleError("hCaptcha exibido ao tentar acessar o GOV.BR.")
+            else:
+                last_error = RuntimeError("A navegacao para o GOV.BR nao ficou pronta apos o clique.")
+
+            if isinstance(last_error, HCaptchaVisibleError):
+                if attempt <= LOGIN_HCAPTCHA_RELOAD_LIMIT:
+                    self.runtime.logger.warning(
+                        f"hcaptcha_reload stage=gov_br attempt={attempt}/{LOGIN_HCAPTCHA_RELOAD_LIMIT}"
+                    )
+                    self._reload_after_captcha("gov_br")
+                    continue
+                self._wait_for_solver_extension("gov_br")
+                current_url = str(self.page.url or "").lower()
+                if "acesso.gov.br" in current_url or self._page_contains("Seu certificado digital"):
+                    return
+                continue
+            raise last_error
+        raise RuntimeError(str(last_error or "Falha ao avancar para o GOV.BR."))
+
     def handle_captcha_if_present(self) -> str:
         if not self.captcha_visible():
             return "not_present"
@@ -1986,11 +2277,148 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             if self.is_authenticated() and not self.captcha_visible():
                 self.runtime.logger.info("hCaptcha nao esta mais visivel; fluxo retomado.")
                 return "resolved"
+            self._click_hcaptcha_checkbox_if_present()
             try:
-                self.page.wait_for_timeout(750)
+                self.page.wait_for_timeout(250)
             except Exception:
-                time.sleep(0.75)
+                time.sleep(0.25)
         raise HCaptchaVisibleError("O hCaptcha permaneceu visivel apos o timeout configurado.")
+
+    def _click_cert_login_fast(self) -> bool:
+        self._bring_browser_to_front()
+        patterns = [
+            re.compile(r"^\s*Seu certificado digital\s*$", re.IGNORECASE),
+            re.compile(r"^\s*Certificado digital\s*$", re.IGNORECASE),
+        ]
+        for pattern in patterns:
+            candidates = [
+                self.page.get_by_role("button", name=pattern),
+                self.page.get_by_role("link", name=pattern),
+                self.page.get_by_text(pattern),
+            ]
+            for locator in candidates:
+                try:
+                    count = locator.count()
+                except Exception:
+                    continue
+                for index in range(min(count, 6)):
+                    candidate = locator.nth(index)
+                    if self._click_locator_candidate(candidate, timeout_ms=2000):
+                        self.runtime.logger.info("Login por certificado acionado.")
+                        return True
+        try:
+            self._bring_browser_to_front()
+            clicked = bool(
+                self.page.evaluate(
+                    """() => {
+                        const normalize = (value) =>
+                            String(value || '')
+                                .normalize('NFD')
+                                .replace(/[\u0300-\u036f]/g, '')
+                                .replace(/\\s+/g, ' ')
+                                .trim()
+                                .toLowerCase();
+                        const wanted = new Set(['seu certificado digital', 'certificado digital']);
+                        const nodes = Array.from(document.querySelectorAll('button, a, [role="button"], [role="link"], div, span'));
+                        const isVisible = (el) => {
+                            if (!el) return false;
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0;
+                        };
+                        for (const node of nodes) {
+                            if (!isVisible(node)) continue;
+                            const text = normalize(node.innerText || node.textContent || node.getAttribute('aria-label') || '');
+                            if (!wanted.has(text)) continue;
+                            node.click();
+                            return true;
+                        }
+                        return false;
+                    }"""
+                )
+            )
+            if clicked:
+                self.runtime.logger.info("Login por certificado acionado via fallback DOM.")
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _wait_for_cert_login_ready(self, timeout_ms: int = 6000) -> bool:
+        text_ready = self._wait_until(
+            lambda: self._page_contains("Seu certificado digital") or self._page_contains("Certificado digital"),
+            timeout_ms=timeout_ms,
+            interval_ms=75,
+        )
+        if not text_ready:
+            return False
+        if self._click_cert_login_fast():
+            return True
+        return self._wait_until(
+            lambda: self._click_cert_login_fast(),
+            timeout_ms=1500,
+            interval_ms=75,
+        )
+
+    def _refresh_certificate_login_page(self) -> None:
+        self.runtime.logger.warning("Janela de certificado nao apareceu; atualizando a pagina do GOV.BR para tentar novamente.")
+        self._bring_browser_to_front()
+        try:
+            self.page.reload(wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            current_url = str(self.page.url or "").strip()
+            if current_url:
+                self.page.goto(current_url, wait_until="domcontentloaded", timeout=30000)
+            else:
+                raise
+        self._wait_until(
+            lambda: self._page_contains("Seu certificado digital") or self._page_contains("Certificado digital"),
+            timeout_ms=10000,
+            interval_ms=75,
+        )
+
+    def _open_certificate_dialog_with_refresh(self, timeout_ms: int = 25000) -> None:
+        deadline = time.time() + max(timeout_ms, 5000) / 1000
+        captcha_attempts = 0
+        last_error: Optional[Exception] = None
+        while time.time() < deadline:
+            if not self._wait_for_cert_login_ready(timeout_ms=3500):
+                last_error = RuntimeError("A opcao de login por certificado nao ficou disponivel.")
+            else:
+                try:
+                    self._bring_browser_to_front()
+                    try:
+                        self.page.wait_for_timeout(150)
+                    except Exception:
+                        time.sleep(0.15)
+                    if self.captcha_visible():
+                        raise HCaptchaVisibleError("hCaptcha exibido no lugar da janela do certificado.")
+                    select_certificate_dialog_strong(self.certificate, timeout_ms=2500)
+                    return
+                except Exception as exc:
+                    last_error = exc
+                    if self.captcha_visible():
+                        last_error = HCaptchaVisibleError("hCaptcha exibido no lugar da janela do certificado.")
+                    message = str(exc or "")
+                    if (
+                        "Janela de selecao de certificado nao apareceu" not in message
+                        and "hCaptcha exibido no lugar da janela do certificado" not in message
+                    ):
+                        raise
+            if time.time() >= deadline:
+                break
+            if isinstance(last_error, HCaptchaVisibleError):
+                if captcha_attempts < LOGIN_HCAPTCHA_RELOAD_LIMIT:
+                    captcha_attempts += 1
+                    self.runtime.logger.warning(
+                        f"hcaptcha_reload stage=certificado_digital attempt={captcha_attempts}/{LOGIN_HCAPTCHA_RELOAD_LIMIT}"
+                    )
+                    self._refresh_certificate_login_page()
+                    continue
+                self._wait_for_solver_extension("certificado_digital")
+                continue
+            self._refresh_certificate_login_page()
+        raise RuntimeError(str(last_error or "A janela de selecao do certificado nao apareceu apos atualizar a pagina."))
 
     def login(self) -> None:
         if self.is_authenticated() and self.certificate_context_matches():
@@ -2000,19 +2428,13 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         last_error: Optional[Exception] = None
         for attempt in range(1, 4):
             try:
-                self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
+                self._goto_login_with_retry()
                 if self.is_authenticated() and self.certificate_context_matches():
                     self.resolve_required_mailbox_notice()
                     self.close_blocking_modals()
                     return
-                self._click_access_gov_br()
-                self._wait_until(
-                    lambda: "acesso.gov.br" in self.page.url or self._page_contains("Seu certificado digital"),
-                    timeout_ms=30000,
-                )
-                self.page.wait_for_timeout(3500)
-                self._click_cert_login()
-                select_certificate_dialog_strong(self.certificate)
+                self._advance_to_gov_br_with_retry_budget()
+                self._open_certificate_dialog_with_refresh()
                 deadline = time.time() + 120
                 while time.time() < deadline:
                     if self.is_authenticated():
@@ -2024,18 +2446,20 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                         self.close_blocking_modals()
                         return
                     if self.captcha_visible():
-                        self.handle_captcha_if_present()
+                        self._wait_for_solver_extension("certificado_digital")
                     if HCAPTCHA_ERROR_URL_TOKEN.lower() in self.page.url.lower():
-                        self.handle_captcha_if_present()
+                        self._wait_for_solver_extension("certificado_digital")
                     try:
-                        self.page.wait_for_timeout(500)
+                        self.page.wait_for_timeout(250)
                     except Exception:
-                        time.sleep(0.5)
+                        time.sleep(0.25)
                 raise RuntimeError("O e-CAC nao confirmou a sessao autenticada dentro do timeout.")
             except Exception as exc:
                 last_error = exc
                 self.runtime.logger.warning(f"login_failed attempt={attempt}: {exc}")
                 self._capture_debug(f"login_failed_attempt_{attempt}")
+                if isinstance(exc, LoginBrowserResetRequiredError):
+                    raise
                 try:
                     self.page.goto(
                         "https://cav.receita.fazenda.gov.br/autenticacao/Login/Logout",
@@ -2045,8 +2469,14 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                 except Exception:
                     pass
                 if attempt < 3:
-                    time.sleep(1.0 * attempt)
+                    time.sleep(0.35 * attempt)
         raise RuntimeError(str(last_error or "Falha desconhecida no login do e-CAC."))
+
+    def _handle_pgdas_captcha_if_present(self) -> None:
+        if not self.captcha_visible():
+            return
+        self._click_hcaptcha_checkbox_if_present()
+        self._wait_for_solver_extension("simples_nacional")
 
     def ensure_logged_in(self) -> None:
         if self.is_authenticated() and self.certificate_context_matches():
@@ -2055,11 +2485,11 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         self.login()
 
     def _finalize_profile_switch(self, company: CompanyRecord, initial_state: str = "") -> bool:
-        deadline = time.time() + 45.0
+        deadline = time.time() + 15.0
         state = initial_state
         mailbox_processed = False
         while time.time() < deadline:
-            if self._profile_switch_success(company):
+            if self._profile_switch_success(company) or self._profile_switch_success_relaxed(company):
                 return True
             if self.required_mailbox_notice_visible():
                 self._log_step("profile_switch_mailbox_notice")
@@ -2075,20 +2505,16 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                 self._log_step(f"profile_switch_mailbox_read opened={opened}")
                 mailbox_processed = True
                 state = ""
-                try:
-                    self.page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-                except Exception:
-                    pass
                 self.close_blocking_modals()
                 self.return_to_ecac_home()
                 continue
             if mailbox_processed:
                 self.close_blocking_modals()
             try:
-                self.page.wait_for_timeout(500)
+                self.page.wait_for_timeout(120)
             except Exception:
-                time.sleep(0.5)
-        return self._profile_switch_success(company)
+                time.sleep(0.12)
+        return self._profile_switch_success(company) or self._profile_switch_success_relaxed(company)
 
     def switch_company_profile(self, company: CompanyRecord) -> str:
         self.ensure_logged_in()
@@ -2097,21 +2523,25 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             try:
                 self.close_blocking_modals()
                 self._log_step(f"clicked_alterar_acesso attempt={attempt}")
-                if not self._click_by_label(PROFILE_MENU_LABELS, timeout_ms=7000):
+                if not self.click_anywhere(PROFILE_MENU_LABELS, timeout_ms=1800):
                     raise RuntimeError("Fluxo de 'Alterar perfil de acesso' nao foi localizado.")
                 visible = self._wait_until(
                     lambda: self._profile_modal_visible(company) or self._find_company_input(company) is not None,
-                    timeout_ms=15000,
+                    timeout_ms=5000,
+                    interval_ms=75,
                 )
                 if not visible:
                     raise RuntimeError("Modal de alteracao de perfil nao ficou visivel.")
                 self._log_step("modal_visible")
                 if not self._fill_company_search(company):
                     raise RuntimeError("Campo de busca do perfil nao foi localizado ou nao aceitou o CNPJ.")
+                modal_error = self._extract_profile_modal_error()
+                if modal_error:
+                    self._raise_profile_switch_modal_error(modal_error)
                 selected = self._wait_until(
                     lambda: self._select_company_in_profile(company),
-                    timeout_ms=4000,
-                    interval_ms=350,
+                    timeout_ms=900,
+                    interval_ms=75,
                 )
                 if selected:
                     self._log_step("profile_option_selected")
@@ -2129,11 +2559,9 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                         or self._profile_switch_success_relaxed(company)
                         or not self._profile_modal_visible(company)
                     ),
-                    timeout_ms=20000,
-                    interval_ms=350,
+                    timeout_ms=2500,
+                    interval_ms=75,
                 )
-                if not modal_closed:
-                    raise RuntimeError("O modal de alteracao de perfil permaneceu aberto apos a confirmacao.")
                 modal_error = self._extract_profile_modal_error()
                 if modal_error:
                     lowered_error = modal_error.lower()
@@ -2142,7 +2570,11 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                             f"Falha retornada pelo portal ao alterar perfil: {modal_error}"
                         )
                     raise ecac_base.ProfileSwitchError(f"Falha retornada pelo portal ao alterar perfil: {modal_error}")
-                cleanup_state = self._after_profile_switch_cleanup()
+                cleanup_state = "portal"
+                if modal_closed:
+                    cleanup_state = self._after_profile_switch_cleanup()
+                else:
+                    self._log_step("profile_modal_still_processing")
                 changed = self._finalize_profile_switch(company, cleanup_state)
                 context = self._current_profile_context()
                 if not changed and self._profile_switch_success_relaxed(company):
@@ -2167,13 +2599,23 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
                 self.close_blocking_modals()
                 if attempt < 3:
                     try:
-                        self.page.wait_for_timeout(600 * attempt)
+                        self.page.wait_for_timeout(250 * attempt)
                     except Exception:
                         pass
         raise RuntimeError(str(last_error or "Falha desconhecida ao trocar o perfil da empresa."))
 
     def return_to_ecac_home(self) -> None:
         self.ensure_logged_in()
+        current_url = str(getattr(self.page, "url", "") or "").lower()
+        current_context = self._current_profile_context()
+        if (
+            "cav.receita.fazenda.gov.br/ecac/" in current_url
+            and "aplicacao.aspx?id=" not in current_url
+            and current_context
+            and not self.required_mailbox_notice_visible()
+        ):
+            self.close_blocking_modals()
+            return
         try:
             self.page.goto("https://cav.receita.fazenda.gov.br/ecac/", wait_until="domcontentloaded", timeout=120000)
         except Exception:
@@ -2184,15 +2626,15 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
 
     def ensure_company_profile(self, company: CompanyRecord) -> tuple[bool, str]:
         self.ensure_logged_in()
+        current_context = self._current_profile_context()
+        if self._context_matches_company(company, current_context):
+            return False, current_context
         self.return_to_ecac_home()
         self.resolve_required_mailbox_notice()
         current_context = self._current_profile_context()
-        if company.document and only_digits(company.document) and only_digits(company.document) in only_digits(current_context):
-            return False, current_context
-        if company.name and company.name.lower() in current_context.lower():
+        if self._context_matches_company(company, current_context):
             return False, current_context
         switched_context = self.switch_company_profile(company)
-        self.return_to_ecac_home()
         self.resolve_required_mailbox_notice()
         return True, self._current_profile_context() or switched_context
 
@@ -2203,13 +2645,24 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             self.resolve_required_mailbox_notice()
             self.page.goto(PGDAS_ENTRY_URL, wait_until="domcontentloaded", timeout=120000)
         if self.captcha_visible():
-            self.handle_captcha_if_present()
+            self._handle_pgdas_captcha_if_present()
         iframe_ready = self._wait_until(
-            lambda: self.page.locator("#frmApp").count() > 0
-            or self._find_frame_by_url_tokens("pgdasd2018.app", "simplesnacional") is not None,
+            lambda: (
+                self.page.locator("#frmApp").count() > 0
+                or self._find_frame_by_url_tokens("pgdasd2018.app", "simplesnacional") is not None
+                or self.captcha_visible()
+            ),
             timeout_ms=120000,
-            interval_ms=500,
+            interval_ms=200,
         )
+        if self.captcha_visible():
+            self._handle_pgdas_captcha_if_present()
+            iframe_ready = self._wait_until(
+                lambda: self.page.locator("#frmApp").count() > 0
+                or self._find_frame_by_url_tokens("pgdasd2018.app", "simplesnacional") is not None,
+                timeout_ms=120000,
+                interval_ms=200,
+            )
         if not iframe_ready:
             self._capture_debug("pgdas_iframe_unavailable")
             raise RuntimeError("Iframe principal do PGDAS-D / DEFIS nao ficou disponivel.")
@@ -2227,10 +2680,12 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
             frame = self._find_frame_by_url_tokens("pgdasd2018", "simplesnacional")
             if frame is not None:
                 return frame
+            if self.captcha_visible():
+                self._handle_pgdas_captcha_if_present()
             try:
-                self.page.wait_for_timeout(500)
+                self.page.wait_for_timeout(200)
             except Exception:
-                time.sleep(0.5)
+                time.sleep(0.2)
         return None
 
     def wait_for_pgdas_ready(self, timeout_ms: int = 120000) -> Any:
@@ -2240,16 +2695,18 @@ class SimplesEcacAutomation(ecac_base.EcacMailboxAutomation):
         deadline = time.time() + (timeout_ms / 1000)
         while time.time() < deadline:
             try:
-                text = frame.locator("body").inner_text(timeout=2000)
+                text = frame.locator("body").inner_text(timeout=1200)
             except Exception:
                 text = ""
             lowered = text.lower()
             if any(marker.lower() in lowered for marker in PGDAS_READY_MARKERS):
                 return frame
+            if self.captcha_visible():
+                self._handle_pgdas_captcha_if_present()
             try:
-                self.page.wait_for_timeout(500)
+                self.page.wait_for_timeout(200)
             except Exception:
-                time.sleep(0.5)
+                time.sleep(0.2)
         return frame
 
     def wait_for_defis_frame(self, timeout_ms: int = 120000):
@@ -3028,6 +3485,215 @@ def cleanup_runtime_artifacts(runtime_env: RuntimeEnvironment) -> None:
             pass
 
 
+def _bridge_coerce_object(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _bridge_compute_period_for_robot(robot_row: dict[str, Any]) -> tuple[str, str]:
+    date_execution_mode = str(robot_row.get("date_execution_mode") or "").strip().lower()
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if date_execution_mode == "today":
+        return today, today
+    if date_execution_mode == "month":
+        month_start = now.replace(day=1).strftime("%Y-%m-%d")
+        next_month = now.replace(year=now.year + 1, month=1, day=1) if now.month == 12 else now.replace(month=now.month + 1, day=1)
+        month_end = (next_month - timedelta(days=1)).strftime("%Y-%m-%d")
+        return month_start, month_end
+    if date_execution_mode == "interval":
+        initial_start = str(robot_row.get("initial_period_start") or "").strip()
+        initial_end = str(robot_row.get("initial_period_end") or "").strip()
+        last_period_end = str(robot_row.get("last_period_end") or "").strip()
+        if last_period_end:
+            return yesterday, yesterday
+        if initial_start and initial_end:
+            return initial_start, initial_end
+    return yesterday, yesterday
+
+
+def _bridge_get_robot_row(client: Any, technical_id: str) -> dict[str, Any]:
+    select_candidates = [
+        "id,technical_id,display_name,segment_path,notes_mode,date_execution_mode,initial_period_start,initial_period_end,last_period_end,execution_defaults",
+        "id,technical_id,display_name,segment_path,notes_mode,date_execution_mode,initial_period_start,initial_period_end,last_period_end",
+        "id,technical_id,display_name,segment_path,notes_mode",
+    ]
+    last_error: Exception | None = None
+    for select_clause in select_candidates:
+        try:
+            response = client.table("robots").select(select_clause).eq("technical_id", technical_id).limit(1).execute()
+            rows = getattr(response, "data", None) or []
+            if not rows:
+                continue
+            row = rows[0] if isinstance(rows[0], dict) else {}
+            row.setdefault("execution_defaults", {})
+            return row
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise RuntimeError(str(last_error))
+    raise RuntimeError(f"Robo '{technical_id}' nao encontrado no Supabase.")
+
+
+def _bridge_build_job_payload(
+    robot_row: dict[str, Any],
+    company_ids: list[str],
+    trigger_kind: str,
+    *,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    notes_mode: str | None = None,
+    extra_payload: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    resolved_period_start, resolved_period_end = _bridge_compute_period_for_robot(robot_row)
+    final_period_start = str(period_start or resolved_period_start or "").strip()
+    final_period_end = str(period_end or resolved_period_end or final_period_start).strip()
+    return {
+        "execution_defaults": _bridge_coerce_object(robot_row.get("execution_defaults")),
+        "company_ids": company_ids,
+        "period_start": final_period_start,
+        "period_end": final_period_end,
+        "date_execution_mode": robot_row.get("date_execution_mode"),
+        "segment_path": robot_row.get("segment_path"),
+        "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+        "ui_origin": "robot_vm",
+        "trigger_kind": trigger_kind,
+        **_bridge_coerce_object(extra_payload),
+    }
+
+
+def bridge_enqueue_execution_request(
+    client: Any,
+    office_id: str,
+    technical_id: str,
+    company_ids: list[str],
+    source: str = "robot_vm_manual",
+    schedule_rule_id: Optional[str] = None,
+    *,
+    notes_mode: Optional[str] = None,
+    job_payload_extra: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    if not office_id:
+        raise RuntimeError("office_id do escritorio nao foi resolvido.")
+    if not company_ids:
+        raise RuntimeError("Nenhuma empresa elegivel foi selecionada para o robo.")
+    robot_row = _bridge_get_robot_row(client, technical_id)
+    period_start, period_end = _bridge_compute_period_for_robot(robot_row)
+    row = {
+        "office_id": office_id,
+        "company_ids": company_ids,
+        "robot_technical_ids": [technical_id],
+        "period_start": period_start,
+        "period_end": period_end,
+        "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+        "execution_mode": "sequential",
+        "job_payload": _bridge_build_job_payload(
+            robot_row,
+            company_ids,
+            "manual" if source == "robot_vm_manual" else "scheduler",
+            period_start=period_start,
+            period_end=period_end,
+            notes_mode=notes_mode,
+            extra_payload=job_payload_extra,
+        ),
+        "source": source,
+        "status": "pending",
+        "created_by": None,
+    }
+    if schedule_rule_id:
+        row["schedule_rule_id"] = schedule_rule_id
+    response = client.table("execution_requests").insert(row).execute()
+    rows = getattr(response, "data", None) or []
+    if not rows:
+        raise RuntimeError("Nao foi possivel enfileirar a execucao do robo.")
+    return rows[0]
+
+
+def bridge_upsert_schedule_rule(
+    client: Any,
+    office_id: str,
+    technical_id: str,
+    company_ids: list[str],
+    run_at_date: str,
+    run_at_time: str,
+    *,
+    notes_mode: Optional[str] = None,
+) -> dict[str, Any]:
+    if not office_id:
+        raise RuntimeError("office_id do escritorio nao foi resolvido.")
+    robot_row = _bridge_get_robot_row(client, technical_id)
+    settings = {
+        "scope": "robot_operation",
+        "robot_technical_id": technical_id,
+        "selection_mode": "manual_companies",
+        "auto_daily": True,
+        "robot_snapshots": {
+            technical_id: {
+                "execution_defaults": _bridge_coerce_object(robot_row.get("execution_defaults")),
+                "date_execution_mode": robot_row.get("date_execution_mode"),
+                "segment_path": robot_row.get("segment_path"),
+                "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+            }
+        },
+    }
+    payload = {
+        "office_id": office_id,
+        "company_ids": company_ids,
+        "robot_technical_ids": [technical_id],
+        "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+        "period_start": None,
+        "period_end": None,
+        "run_at_date": run_at_date,
+        "run_at_time": run_at_time,
+        "run_daily": True,
+        "execution_mode": "sequential",
+        "status": "active",
+        "settings": settings,
+        "created_by": None,
+    }
+    existing_res = client.table("schedule_rules").select("id").eq("office_id", office_id).contains("robot_technical_ids", [technical_id]).limit(1).execute()
+    existing_rows = getattr(existing_res, "data", None) or []
+    if existing_rows:
+        rule_id = existing_rows[0]["id"]
+        updated = client.table("schedule_rules").update(payload).eq("id", rule_id).execute()
+        rows = getattr(updated, "data", None) or []
+        return rows[0] if rows else {"id": rule_id, **payload}
+    created = client.table("schedule_rules").insert(payload).execute()
+    rows = getattr(created, "data", None) or []
+    if not rows:
+        raise RuntimeError("Nao foi possivel salvar o agendamento do robo.")
+    return rows[0]
+
+
+def bridge_pause_schedule_rule(client: Any, office_id: str, technical_id: str) -> None:
+    if not office_id:
+        return
+    existing_res = client.table("schedule_rules").select("id").eq("office_id", office_id).contains("robot_technical_ids", [technical_id]).limit(1).execute()
+    rows = getattr(existing_res, "data", None) or []
+    if not rows:
+        return
+    rule_id = rows[0]["id"]
+    client.table("schedule_rules").update({"status": "paused", "last_run_at": None}).eq("id", rule_id).execute()
+    client.table("execution_requests").delete().eq("office_id", office_id).eq("status", "pending").eq("schedule_rule_id", rule_id).execute()
+    client.table("execution_requests").update({
+        "status": "failed",
+        "completed_at": utc_now_iso(),
+        "error_message": "Agendamento desativado manualmente no robo",
+        "result_summary": {
+            "cancelled": True,
+            "cancelled_reason": "Agendamento desativado manualmente no robo",
+        },
+    }).eq("office_id", office_id).eq("status", "running").eq("schedule_rule_id", rule_id).execute()
+
+
+def bridge_compute_countdown_label(target_at: datetime) -> str:
+    delta = int(max(0, (target_at - datetime.now()).total_seconds()))
+    hours = delta // 3600
+    minutes = (delta % 3600) // 60
+    seconds = delta % 60
+    return f"Inicio em {hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 def ensure_default_certificate(
     runtime_env: RuntimeEnvironment,
     companies: list[CompanyRecord],
@@ -3522,31 +4188,30 @@ def collect_debito_rows(frame: Any) -> list[dict[str, Any]]:
     try:
         rows = frame.evaluate(
             """() => {
-                const normalize = (value) => String(value || '')
-                    .normalize('NFD')
-                    .replace(/[\\u0300-\\u036f]/g, '')
-                    .replace(/\\s+/g, ' ')
-                    .trim()
-                    .toLowerCase();
+                const periodPattern = /^\\d{2}\\/\\d{4}$/;
+                const datePattern = /^\\d{2}\\/\\d{2}\\/\\d{4}$/;
+                const currencyPattern = /\\d{1,3}(?:\\.\\d{3})*,\\d{2}/;
                 const textOf = (el) => String(el?.innerText || el?.textContent || '').replace(/\\s+/g, ' ').trim();
-                const candidates = Array.from(document.querySelectorAll('table')).filter((table) => {
-                    const text = normalize(table.innerText || '');
-                    return text.includes('discriminacao dos debitos do simples nacional')
-                        || (text.includes('numero parcelamento') && text.includes('periodo de apuracao') && text.includes('saldo devedor'));
-                });
-                const table = candidates[0];
-                if (!table) return [];
-                return Array.from(table.querySelectorAll('tbody tr')).map((row) => {
+                const seen = new Set();
+                return Array.from(document.querySelectorAll('tr')).map((row) => {
                     const cells = Array.from(row.querySelectorAll('td')).map((cell) => textOf(cell));
-                    if (!cells.length) return null;
+                    if (!cells.length || cells.length < 4) return null;
+                    const periodIndex = cells.findIndex((cell) => periodPattern.test(cell));
+                    if (periodIndex < 0) return null;
+                    const dueDate = cells.slice(periodIndex + 1).find((cell) => datePattern.test(cell)) || '';
+                    const amountCells = cells.slice(periodIndex + 1).filter((cell) => currencyPattern.test(cell));
+                    if (!dueDate || amountCells.length < 4) return null;
+                    const key = [cells[periodIndex], dueDate, amountCells.join('|'), cells[cells.length - 1] || ''].join('|');
+                    if (seen.has(key)) return null;
+                    seen.add(key);
                     return {
-                        periodo_apuracao: cells[1] || cells[0] || '',
-                        data_vencimento: cells[2] || '',
-                        debito_declarado: cells[3] || '',
-                        principal: cells[4] || '',
-                        multa: cells[5] || '',
-                        juros: cells[6] || '',
-                        total: cells[7] || '',
+                        periodo_apuracao: cells[periodIndex] || '',
+                        data_vencimento: dueDate,
+                        debito_declarado: amountCells[0] || '',
+                        principal: amountCells[1] || '',
+                        multa: amountCells[2] || '',
+                        juros: amountCells[3] || '',
+                        total: amountCells[4] || amountCells[3] || '',
                         numero_parcelamento: cells[cells.length - 1] || '',
                         raw_text: textOf(row),
                     };
@@ -3563,7 +4228,6 @@ def collect_debito_rows(frame: Any) -> list[dict[str, Any]]:
         if not re.fullmatch(r"\d{2}/\d{4}", periodo):
             continue
         parcelamento_text = str(item.get("numero_parcelamento") or "").strip()
-        parcelamento_digits = only_digits(parcelamento_text)
         normalized.append(
             {
                 "kind": "debito",
@@ -3574,13 +4238,40 @@ def collect_debito_rows(frame: Any) -> list[dict[str, Any]]:
                 "multa": _parse_currency(str(item.get("multa") or "")),
                 "juros": _parse_currency(str(item.get("juros") or "")),
                 "total": _parse_currency(str(item.get("total") or "")),
-                "numero_parcelamento": int(parcelamento_digits or "0"),
+                "numero_parcelamento": parcelamento_text,
                 "numero_parcelamento_raw": parcelamento_text,
+                "exigibilidade_suspensa": parcelamento_text,
                 "raw_text": str(item.get("raw_text") or "").strip(),
             }
         )
     normalized.sort(key=lambda row: row["periodo_apuracao"])
     return normalized
+
+
+def has_debito_rows_visible(frame: Any) -> bool:
+    try:
+        return bool(
+            frame.evaluate(
+                """() => {
+                    const periodPattern = /^\\d{2}\\/\\d{4}$/;
+                    const datePattern = /^\\d{2}\\/\\d{2}\\/\\d{4}$/;
+                    const currencyPattern = /\\d{1,3}(?:\\.\\d{3})*,\\d{2}/;
+                    return Array.from(document.querySelectorAll('tr')).some((row) => {
+                        const cells = Array.from(row.querySelectorAll('td')).map((cell) =>
+                            String(cell?.innerText || cell?.textContent || '').replace(/\\s+/g, ' ').trim(),
+                        );
+                        if (!cells.length || cells.length < 4) return false;
+                        const periodIndex = cells.findIndex((cell) => periodPattern.test(cell));
+                        if (periodIndex < 0) return false;
+                        const hasDueDate = cells.slice(periodIndex + 1).some((cell) => datePattern.test(cell));
+                        const amountCount = cells.slice(periodIndex + 1).filter((cell) => currencyPattern.test(cell)).length;
+                        return hasDueDate && amountCount >= 4;
+                    });
+                }"""
+            )
+        )
+    except Exception:
+        return False
 
 
 def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, company_dir: Path, args: argparse.Namespace) -> CompanyExecutionResult:
@@ -3647,30 +4338,37 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
     if not ready:
         raise RuntimeError("A tela de debitos do Simples Nacional nao foi carregada.")
 
+    result.flags["debitos_rows_visible"] = automation._wait_until(
+        lambda: has_debito_rows_visible(frame),
+        timeout_ms=12000,
+        interval_ms=150,
+    )
+
     all_rows = collect_debito_rows(frame)
     result.flags["debitos_total_count"] = len(all_rows)
-    debitos = [item for item in all_rows if int(item.get("numero_parcelamento") or 0) == 0]
-    for item in debitos:
+    for item in all_rows:
         item["company_id"] = company.company_id
         item["company_name"] = company.name
         item["company_document"] = format_document(company.document)
-    result.records.extend(debitos)
-    result.records.append(default_company_payload(company))
+    result.records.extend(all_rows)
     automation.return_to_ecac_home()
-    result.flags["debitos_count"] = len(debitos)
-    result.flags["debitos_parcelados_ignorados"] = max(0, len(all_rows) - len(debitos))
-    result.status = "success" if debitos else "partial"
-    if not debitos:
-        result.warnings.append("Nenhum debito com numero de parcelamento igual a 0 foi encontrado.")
+    result.flags["debitos_count"] = len(all_rows)
+    result.flags["debitos_parcelados_count"] = sum(
+        1 for item in all_rows if only_digits(str(item.get("numero_parcelamento_raw") or "")) not in {"", "0"}
+    )
+    result.status = "success" if all_rows else "partial"
+    if not all_rows:
+        result.warnings.append("Nenhum debito foi encontrado para a empresa na tela do PGDAS-D.")
     return result
 
 
 try:
-    from PySide6.QtCore import QThread, QTimer, Signal
+    from PySide6.QtCore import QDateTime, QThread, QTimer, Signal
     from PySide6.QtWidgets import (
         QApplication,
         QAbstractItemView,
         QCheckBox,
+        QDateTimeEdit,
         QFormLayout,
         QGroupBox,
         QHBoxLayout,
@@ -3679,7 +4377,6 @@ try:
         QListWidget,
         QListWidgetItem,
         QMainWindow,
-        QMessageBox,
         QPushButton,
         QTextEdit,
         QVBoxLayout,
@@ -3738,9 +4435,13 @@ class MainWindow(QMainWindow):
         self.worker: Optional[SimplesWorker] = None
         self.companies: list[CompanyRecord] = []
         self.filtered_companies: list[CompanyRecord] = []
+        self.schedule_timer = QTimer(self)
+        self.schedule_timer.timeout.connect(self._on_schedule_tick)
+        self._schedule_pending = False
+        self._scheduled_start_dt: Optional[datetime] = None
         self.robot_dashboard_id: Optional[str] = None
         self.robot_heartbeat_timer = QTimer(self)
-        self.robot_heartbeat_timer.setInterval(30000)
+        self.robot_heartbeat_timer.setInterval(5000)
         self.robot_heartbeat_timer.timeout.connect(self._on_robot_heartbeat)
         self.job_poll_timer = QTimer(self)
         self.job_poll_timer.setInterval(5000)
@@ -3770,9 +4471,22 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Pronto"); self.progress_label = QLabel("0 / 0"); self.office_label = QLabel(self.office_context.office_id or "office_id nao resolvido")
         for label, widget in (("Status", self.status_label), ("Progresso", self.progress_label), ("office_id", self.office_label)):
             right.addWidget(QLabel(label)); right.addWidget(widget)
-        controls = QHBoxLayout(); self.start_button = QPushButton("Iniciar"); self.start_button.clicked.connect(self.start_worker); self.stop_button = QPushButton("Parar"); self.stop_button.clicked.connect(self.stop_worker); self.stop_button.setEnabled(False); controls.addWidget(self.start_button); controls.addWidget(self.stop_button); right.addLayout(controls)
+        schedule_row = QHBoxLayout()
+        self.chk_schedule = QCheckBox("Agendar")
+        self.chk_schedule.toggled.connect(self._on_schedule_toggle)
+        self.schedule_datetime_edit = QDateTimeEdit()
+        self.schedule_datetime_edit.setDisplayFormat("dd/MM/yyyy HH:mm")
+        self.schedule_datetime_edit.setCalendarPopup(True)
+        self.schedule_datetime_edit.setEnabled(False)
+        self.lbl_schedule_countdown = QLabel("")
+        schedule_row.addWidget(self.chk_schedule)
+        schedule_row.addWidget(self.schedule_datetime_edit)
+        schedule_row.addWidget(self.lbl_schedule_countdown, 1)
+        right.addLayout(schedule_row)
+        controls = QHBoxLayout(); self.start_button = QPushButton("Iniciar"); self.start_button.clicked.connect(self.start_execution); self.stop_button = QPushButton("Parar"); self.stop_button.clicked.connect(self.stop_execution); self.stop_button.setEnabled(False); controls.addWidget(self.start_button); controls.addWidget(self.stop_button); right.addLayout(controls)
         top.addWidget(right_box, 1)
         self.log_panel = QTextEdit(); self.log_panel.setReadOnly(True); layout.addWidget(self.log_panel)
+        self._init_schedule_defaults()
 
     def append_log(self, message: str) -> None:
         self.log_panel.append(message)
@@ -3792,7 +4506,6 @@ class MainWindow(QMainWindow):
 
     def reload_companies(self) -> None:
         self.job = self.runtime.json_runtime.load_job()
-        self._last_job_execution_request_id = self._job_execution_request_id(self.job)
         self.office_context = self.dashboard.resolve_office_context(self.job, force_refresh=True)
         try:
             if self.job:
@@ -3819,6 +4532,146 @@ class MainWindow(QMainWindow):
         execution_id = f"manual_{uuid.uuid4().hex}"; company_ids = [c.company_id for c in self.companies if str(c.company_id).strip()]; company_rows = [c.to_dict() for c in self.companies]
         return JobPayload(job_id=execution_id, execution_request_id=execution_id, office_id=self.office_context.office_id, company_ids=company_ids, companies=company_rows, raw={"job_id": execution_id, "execution_request_id": execution_id, "office_id": self.office_context.office_id, "company_ids": company_ids, "companies": company_rows, "source": "manual_ui"})
 
+    def _init_schedule_defaults(self) -> None:
+        self.schedule_datetime_edit.setDateTime(QDateTime.currentDateTime().addSecs(120))
+        self.schedule_datetime_edit.setEnabled(False)
+        self.lbl_schedule_countdown.clear()
+
+    def _on_schedule_toggle(self, checked: bool) -> None:
+        self.schedule_datetime_edit.setEnabled(checked)
+        if not checked:
+            self._pause_vm_schedule()
+            self.schedule_timer.stop()
+            self._schedule_pending = False
+            self._scheduled_start_dt = None
+            self.lbl_schedule_countdown.clear()
+            self._reset_idle_controls()
+            return
+        self._init_schedule_defaults()
+        self.schedule_datetime_edit.setEnabled(True)
+
+    def _parse_schedule_dt(self) -> Optional[datetime]:
+        try:
+            selected = self.schedule_datetime_edit.dateTime()
+            return datetime(
+                selected.date().year(),
+                selected.date().month(),
+                selected.date().day(),
+                selected.time().hour(),
+                selected.time().minute(),
+            )
+        except Exception:
+            return None
+
+    def _selected_company_ids_for_vm(self) -> list[str]:
+        return [
+            company.company_id
+            for company in self.companies
+            if str(company.company_id).strip() and company.active and company.eligible
+        ]
+
+    def _supabase_client(self) -> Any:
+        return self.dashboard._supabase()
+
+    def _enqueue_vm_execution(self) -> bool:
+        if not self.office_context.office_id:
+            self.append_log("[FILA] office_id nao resolvido nesta VM.")
+            return False
+        company_ids = self._selected_company_ids_for_vm()
+        if not company_ids:
+            self.append_log("[FILA] Nenhuma empresa elegivel foi carregada para este robo.")
+            return False
+        try:
+            bridge_enqueue_execution_request(
+                self._supabase_client(),
+                self.office_context.office_id,
+                ROBOT_TECHNICAL_ID,
+                company_ids,
+                source="robot_vm_manual",
+                notes_mode=self.office_context.notes_mode or None,
+            )
+            self.append_log(f"[FILA] Robo enviado para a fila global com {len(company_ids)} empresa(s).")
+            return True
+        except Exception as exc:
+            self.append_log(f"[FILA] Falha ao enfileirar execucao manual: {exc}")
+            return False
+
+    def _save_vm_schedule(self, scheduled_at: datetime) -> bool:
+        if not self.office_context.office_id:
+            self.append_log("[AGENDAMENTO] office_id nao resolvido nesta VM.")
+            return False
+        company_ids = self._selected_company_ids_for_vm()
+        if not company_ids:
+            self.append_log("[AGENDAMENTO] Nenhuma empresa elegivel foi carregada para este robo.")
+            return False
+        try:
+            client = self._supabase_client()
+            rule = bridge_upsert_schedule_rule(
+                client,
+                self.office_context.office_id,
+                ROBOT_TECHNICAL_ID,
+                company_ids,
+                scheduled_at.strftime("%Y-%m-%d"),
+                scheduled_at.strftime("%H:%M"),
+                notes_mode=self.office_context.notes_mode or None,
+            )
+            self._schedule_pending = True
+            self._scheduled_start_dt = scheduled_at
+            if scheduled_at <= datetime.now():
+                bridge_enqueue_execution_request(
+                    client,
+                    self.office_context.office_id,
+                    ROBOT_TECHNICAL_ID,
+                    company_ids,
+                    source="scheduler",
+                    schedule_rule_id=(rule or {}).get("id"),
+                    notes_mode=self.office_context.notes_mode or None,
+                )
+                if (rule or {}).get("id"):
+                    now_iso = utc_now_iso()
+                    client.table("schedule_rules").update({
+                        "last_run_at": now_iso,
+                        "updated_at": now_iso,
+                    }).eq("id", rule["id"]).execute()
+                self.schedule_timer.stop()
+                self.lbl_schedule_countdown.setText("Aguardando fila...")
+                self.append_log("[FILA] Horario do agendamento ja alcancado. Execucao enviada para a fila do agendador.")
+            else:
+                self.schedule_timer.start(1000)
+                self._on_schedule_tick()
+            self.start_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+            self.append_log(f"[FILA] Agendamento salvo para {scheduled_at.strftime('%d/%m/%Y %H:%M')}.")
+            return True
+        except Exception as exc:
+            self.append_log(f"[FILA] Falha ao salvar agendamento: {exc}")
+            return False
+
+    def _pause_vm_schedule(self) -> None:
+        if not self.office_context.office_id:
+            return
+        try:
+            bridge_pause_schedule_rule(self._supabase_client(), self.office_context.office_id, ROBOT_TECHNICAL_ID)
+        except Exception as exc:
+            self.append_log(f"[FILA] Falha ao pausar agendamento remoto: {exc}")
+
+    def _reset_idle_controls(self) -> None:
+        self.start_button.setEnabled(bool(self.companies))
+        self.stop_button.setEnabled(False)
+
+    def start_execution(self) -> None:
+        if self.worker and self.worker.isRunning():
+            self.append_log("Ja existe uma execucao em andamento.")
+            return
+        if self.chk_schedule.isChecked():
+            scheduled_at = self._parse_schedule_dt()
+            if not scheduled_at:
+                self.append_log("Preencha a data e hora do agendamento.")
+                return
+            self._save_vm_schedule(scheduled_at)
+            return
+        self._enqueue_vm_execution()
+
     def start_worker(self, auto_triggered: bool = False) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
@@ -3827,8 +4680,6 @@ class MainWindow(QMainWindow):
             self.reload_companies()
         if not self.companies:
             self.append_log("Nenhuma empresa carregada para a execucao automatica." if auto_triggered else "Nenhuma empresa carregada para a execucao.")
-            if not auto_triggered:
-                QMessageBox.warning(self, "Empresas", "Nenhuma empresa foi carregada do dashboard.")
             return
         self.job = execution_job
         self._last_job_execution_request_id = self._job_execution_request_id(execution_job)
@@ -3841,6 +4692,13 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_worker_finished)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.status_label.setText("Executando")
+        self.runtime.json_runtime.write_heartbeat(
+            status="processing",
+            current_job_id=execution_job.job_id or None,
+            current_execution_request_id=self._job_execution_request_id(execution_job) or None,
+            message="ui_worker_started",
+        )
         self.dashboard.update_robot_presence(status="processing", robot_id=self.robot_dashboard_id or "")
         if auto_triggered:
             self.append_log(f"Job detectado automaticamente: {self._last_job_execution_request_id}. Iniciando execucao.")
@@ -3851,6 +4709,31 @@ class MainWindow(QMainWindow):
             self.worker.request_stop()
             self.status_label.setText("Parando")
 
+    def stop_execution(self) -> None:
+        if self._schedule_pending and (not self.worker or not self.worker.isRunning()):
+            self._pause_vm_schedule()
+            self._schedule_pending = False
+            self._scheduled_start_dt = None
+            self.schedule_timer.stop()
+            self.lbl_schedule_countdown.clear()
+            self._reset_idle_controls()
+            self.append_log("Agendamento cancelado.")
+            return
+        self.stop_worker()
+
+    def _on_schedule_tick(self) -> None:
+        if not self._schedule_pending or not self._scheduled_start_dt:
+            self.schedule_timer.stop()
+            self.lbl_schedule_countdown.clear()
+            return
+        if (self._scheduled_start_dt - datetime.now()).total_seconds() <= 0:
+            self.schedule_timer.stop()
+            self._schedule_pending = False
+            self._scheduled_start_dt = None
+            self.lbl_schedule_countdown.setText("Aguardando fila...")
+            return
+        self.lbl_schedule_countdown.setText(bridge_compute_countdown_label(self._scheduled_start_dt))
+
     def _on_progress(self, payload: object) -> None:
         if isinstance(payload, dict): self.progress_label.setText(f"{payload.get('current', 0)} / {payload.get('total', 0)}")
 
@@ -3859,15 +4742,31 @@ class MainWindow(QMainWindow):
 
     def _on_worker_error(self, message: str) -> None:
         self.append_log(f"Erro: {message}")
-        QMessageBox.critical(self, "Execucao", message)
+        self.runtime.json_runtime.write_heartbeat(
+            status="active",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message="ui_worker_error",
+        )
         self.dashboard.update_robot_presence(status="active", robot_id=self.robot_dashboard_id or "")
 
     def _on_worker_finished(self) -> None:
-        self.start_button.setEnabled(bool(self.companies))
-        self.stop_button.setEnabled(False)
+        self._reset_idle_controls()
         self.worker = None
+        self.runtime.json_runtime.write_heartbeat(
+            status="active",
+            current_job_id=None,
+            current_execution_request_id=None,
+            message="ui_worker_finished",
+        )
         self.dashboard.update_robot_presence(status="active", robot_id=self.robot_dashboard_id or "")
         self.reload_companies()
+        pending_execution_request_id = self._job_execution_request_id(self.job)
+        if pending_execution_request_id and pending_execution_request_id != self._last_job_execution_request_id:
+            self.append_log(
+                f"Novo job pendente detectado apos a conclusao: {pending_execution_request_id}. Iniciando automaticamente."
+            )
+            QTimer.singleShot(250, lambda: self.start_worker(auto_triggered=True))
 
     def _on_job_poll(self) -> None:
         if self.worker is not None and self.worker.isRunning():
@@ -3883,7 +4782,14 @@ class MainWindow(QMainWindow):
 
     def _on_robot_heartbeat(self) -> None:
         status = "processing" if self.worker is not None and self.worker.isRunning() else "active"
-        self.runtime.json_runtime.write_heartbeat(status=status, message="ui_heartbeat")
+        current_execution_request_id = self._job_execution_request_id(self.job) if status == "processing" else None
+        current_job_id = self.job.job_id if self.job and status == "processing" else None
+        self.runtime.json_runtime.write_heartbeat(
+            status=status,
+            current_job_id=current_job_id or None,
+            current_execution_request_id=current_execution_request_id or None,
+            message="ui_heartbeat",
+        )
         self.dashboard.update_robot_presence(status=status, robot_id=self.robot_dashboard_id or "")
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
@@ -3892,6 +4798,7 @@ class MainWindow(QMainWindow):
             self.worker.wait(3000)
         self.robot_heartbeat_timer.stop()
         self.job_poll_timer.stop()
+        self.schedule_timer.stop()
         self.dashboard.update_robot_presence(status="inactive", robot_id=self.robot_dashboard_id or "")
         self.runtime.mark_inactive()
         cleanup_runtime_artifacts(self.runtime)

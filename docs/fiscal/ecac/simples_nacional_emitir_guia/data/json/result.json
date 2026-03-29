@@ -1,122 +1,74 @@
 {
-  "event_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
-  "job_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
-  "execution_request_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
+  "event_id": "manual_profile_speed_test_6",
+  "job_id": "manual_profile_speed_test_6",
+  "execution_request_id": "manual_profile_speed_test_6",
   "robot_technical_id": "ecac_simples_emitir_guia",
   "display_name": "e-CAC - Simples Nacional - Emitir Guia DAS",
-  "status": "completed",
-  "started_at": "2026-03-27T04:00:04.751945+00:00",
-  "finished_at": "2026-03-27T04:00:53.197177+00:00",
+  "status": "failed",
+  "started_at": "2026-03-28T23:47:12.033603+00:00",
+  "finished_at": "2026-03-28T23:50:21.922558+00:00",
   "error_message": null,
   "summary": {
-    "run_id": "20260327_010004_eeec26fa",
+    "run_id": "20260328_204712_a2a070dc",
     "technical_id": "ecac_simples_emitir_guia",
     "display_name": "e-CAC - Simples Nacional - Emitir Guia DAS",
-    "started_at": "2026-03-27T04:00:04.751945+00:00",
-    "finished_at": "2026-03-27T04:00:53.197177+00:00",
-    "status": "completed",
+    "started_at": "2026-03-28T23:47:12.033603+00:00",
+    "finished_at": "2026-03-28T23:50:21.922558+00:00",
+    "status": "failed",
     "company_results": [
       {
-        "company_id": "769ce253-d21b-45cb-a961-55329b244ef1",
-        "company_name": "PRIMEON HUB DE NEGOCIOS LTDA",
-        "company_document": "37743132000113",
-        "status": "success",
+        "company_id": "36046145000170",
+        "company_name": "ACRILICOS SF LTDA",
+        "company_document": "36.046.145/0001-70",
+        "status": "error",
         "eligible": true,
         "block_reason": "",
         "profile_switched": false,
-        "company_profile_context": "Titular (Acesso GOV.BR por Certificado): 27.233.655/0001-66 - PRIMEON HUB DE NEGOCIOS LTDA | Responsável Legal: 016.255.281-59 - LUCIVANIA RUBIN ROCHA",
-        "errors": [],
+        "company_profile_context": "",
+        "errors": [
+          "RuntimeError: Falha retornada pelo portal ao alterar perfil: ATENÇÃO: Prezado usuário, o seu acesso foi bloqueado por possuir atributos que o caracteriza como um acesso automatizado. Favor tentar novamente. (191.54.129.71 - 1 - )"
+        ],
         "warnings": [],
-        "files": [
-          {
-            "kind": "das",
-            "path": "C:\\Users\\Victor\\Documents\\EMPRESAS\\PRIMEON HUB DE NEGOCIOS LTDA\\Fiscal\\Simples Nacional\\DAS - 01-2026.pdf",
-            "filename": "DAS - 01-2026.pdf"
-          }
-        ],
-        "records": [
-          {
-            "company_id": "769ce253-d21b-45cb-a961-55329b244ef1",
-            "company_name": "PRIMEON HUB DE NEGOCIOS LTDA",
-            "company_document": "37.743.132/0001-13",
-            "competencia": "01/2026",
-            "data_vencimento": "20/02/2026",
-            "validade_calculo": "",
-            "saldo_devedor": "42,00",
-            "portal_message": ""
-          }
-        ],
-        "flags": {
-          "pgdas_opened": true,
-          "declaracao_mensal_opened": false,
-          "gerar_das_opened": true,
-          "competencia_informada": true,
-          "continuar_clicked": true,
-          "saldo_devedor": "42,00",
-          "data_vencimento": "20/02/2026",
-          "validade_calculo": ""
-        },
-        "started_at": "2026-03-27T04:00:28.282664+00:00",
-        "finished_at": "2026-03-27T04:00:52.679583+00:00"
+        "files": [],
+        "records": [],
+        "flags": {},
+        "started_at": "2026-03-28T23:50:15.578126+00:00",
+        "finished_at": "2026-03-28T23:50:15.578134+00:00"
       }
     ],
     "metadata": {
       "office_id": "16b25399-4658-4aa6-a1bc-d1cc6114e1ee",
-      "job_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
-      "execution_request_id": "manual_prime_emitir_guia_c112709b-bdc2-4257-b1a0-fc33b1815071",
+      "job_id": "manual_profile_speed_test_6",
+      "execution_request_id": "manual_profile_speed_test_6",
       "use_responsible_office": true,
-      "responsible_office_company_id": "769ce253-d21b-45cb-a961-55329b244ef1",
-      "auth_company_id": "769ce253-d21b-45cb-a961-55329b244ef1",
-      "auth_company_name": "PRIMEON HUB DE NEGOCIOS LTDA",
-      "auth_company_document": "37.743.132/0001-13",
+      "responsible_office_company_id": "fc9eefd3-6818-4701-bd19-6e282ffcb860",
+      "auth_company_id": "fc9eefd3-6818-4701-bd19-6e282ffcb860",
+      "auth_company_name": "EG FLEURY ASSESSORIA E SERVICOS LTDA",
+      "auth_company_document": "37.197.978/0001-03",
       "total_companies": 1,
-      "completed": 1,
-      "failed": 0
+      "completed": 0,
+      "failed": 1
     }
   },
   "company_results": [
     {
-      "company_id": "769ce253-d21b-45cb-a961-55329b244ef1",
-      "company_name": "PRIMEON HUB DE NEGOCIOS LTDA",
-      "company_document": "37743132000113",
-      "status": "success",
+      "company_id": "36046145000170",
+      "company_name": "ACRILICOS SF LTDA",
+      "company_document": "36.046.145/0001-70",
+      "status": "error",
       "eligible": true,
       "block_reason": "",
       "profile_switched": false,
-      "company_profile_context": "Titular (Acesso GOV.BR por Certificado): 27.233.655/0001-66 - PRIMEON HUB DE NEGOCIOS LTDA | Responsável Legal: 016.255.281-59 - LUCIVANIA RUBIN ROCHA",
-      "errors": [],
+      "company_profile_context": "",
+      "errors": [
+        "RuntimeError: Falha retornada pelo portal ao alterar perfil: ATENÇÃO: Prezado usuário, o seu acesso foi bloqueado por possuir atributos que o caracteriza como um acesso automatizado. Favor tentar novamente. (191.54.129.71 - 1 - )"
+      ],
       "warnings": [],
-      "files": [
-        {
-          "kind": "das",
-          "path": "C:\\Users\\Victor\\Documents\\EMPRESAS\\PRIMEON HUB DE NEGOCIOS LTDA\\Fiscal\\Simples Nacional\\DAS - 01-2026.pdf",
-          "filename": "DAS - 01-2026.pdf"
-        }
-      ],
-      "records": [
-        {
-          "company_id": "769ce253-d21b-45cb-a961-55329b244ef1",
-          "company_name": "PRIMEON HUB DE NEGOCIOS LTDA",
-          "company_document": "37.743.132/0001-13",
-          "competencia": "01/2026",
-          "data_vencimento": "20/02/2026",
-          "validade_calculo": "",
-          "saldo_devedor": "42,00",
-          "portal_message": ""
-        }
-      ],
-      "flags": {
-        "pgdas_opened": true,
-        "declaracao_mensal_opened": false,
-        "gerar_das_opened": true,
-        "competencia_informada": true,
-        "continuar_clicked": true,
-        "saldo_devedor": "42,00",
-        "data_vencimento": "20/02/2026",
-        "validade_calculo": ""
-      },
-      "started_at": "2026-03-27T04:00:28.282664+00:00",
-      "finished_at": "2026-03-27T04:00:52.679583+00:00"
+      "files": [],
+      "records": [],
+      "flags": {},
+      "started_at": "2026-03-28T23:50:15.578126+00:00",
+      "finished_at": "2026-03-28T23:50:15.578134+00:00"
     }
   ],
   "responsible_office_result": null,

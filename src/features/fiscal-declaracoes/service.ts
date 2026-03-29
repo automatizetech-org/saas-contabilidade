@@ -636,8 +636,6 @@ function buildActionAvailability(params: {
 }
 
 async function getOverdueGuides(companyIds: string[]): Promise<OverdueGuide[]> {
-  // A base atual ainda não expõe uma fonte dedicada para DAS vencidas.
-  // A UI já fica preparada para consumir a lista assim que o backend for disponibilizado.
   const normalizedCompanyIds = uniqueCompanyIds(companyIds);
   if (normalizedCompanyIds.length === 0) return [];
 
@@ -665,6 +663,13 @@ async function getOverdueGuides(companyIds: string[]): Promise<OverdueGuide[]> {
     for (const companyResult of companyResults) {
       const companyId = String(companyResult.company_id ?? "").trim();
       if (!companyId || latestByCompany.has(companyId) || !normalizedCompanyIds.includes(companyId)) continue;
+      const flags = asObject(companyResult.flags ?? null);
+      const records = asRecordArray(companyResult.records);
+      const suspiciousEmptyExtraction =
+        records.length === 0
+        && flags.debitos_consulta_opened === true
+        && flags.debitos_rows_visible === false;
+      if (suspiciousEmptyExtraction) continue;
       latestByCompany.set(companyId, companyResult);
     }
     if (latestByCompany.size >= normalizedCompanyIds.length) break;
@@ -683,20 +688,36 @@ async function getOverdueGuides(companyIds: string[]): Promise<OverdueGuide[]> {
       const competence = parsePortalCompetence(record.periodo_apuracao ?? record.competencia);
       const dueDate = parsePortalDateToIso(record.data_vencimento);
       if (!competence || !dueDate || dueDate > todayIso) continue;
-
-      const parcelamento = Number(record.numero_parcelamento ?? 0);
-      if (Number.isFinite(parcelamento) && parcelamento !== 0) continue;
+      const installmentLabel = String(
+        record.numero_parcelamento_raw ?? record.numero_parcelamento ?? record.exigibilidade_suspensa ?? "",
+      ).trim();
+      const totalAmountCents = parseCurrencyToCents(
+        record.total ?? record.saldo_devedor_total ?? record.saldo_devedor ?? record.debito_declarado,
+      );
 
       guides.push({
-        id: `${companyId}:${competence}`,
+        id: [
+          companyId,
+          competence,
+          dueDate,
+          installmentLabel || "sem-parcelamento",
+          String(guides.length),
+        ].join(":"),
         companyId,
         companyName,
         companyDocument,
         competence,
         dueDate,
         status: "vencido",
-        amountCents: parseCurrencyToCents(record.total ?? record.saldo_devedor ?? record.debito_declarado),
-        referenceLabel: null,
+        amountCents: totalAmountCents,
+        declaredAmountCents: parseCurrencyToCents(record.debito_declarado),
+        principalAmountCents: parseCurrencyToCents(record.principal),
+        penaltyAmountCents: parseCurrencyToCents(record.multa),
+        interestAmountCents: parseCurrencyToCents(record.juros),
+        totalAmountCents,
+        installmentLabel: installmentLabel || null,
+        suspendedExigibilityLabel: installmentLabel || null,
+        referenceLabel: installmentLabel || null,
       });
     }
   }
@@ -1037,6 +1058,38 @@ function buildGuideLookupKey(companyId: string, competence: string) {
   return `${String(companyId ?? "").trim()}:${String(competence ?? "").trim()}`;
 }
 
+function parseIsoTimestampMs(value: string | null | undefined): number | null {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return null;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isGuideDocumentFreshForRun(
+  document: DeclarationGuideDocumentListItem,
+  params: {
+    startedAt?: string | null;
+    finishedAt?: string | null;
+  } = {},
+): boolean {
+  const runStartedAtMs = parseIsoTimestampMs(params.startedAt);
+  if (runStartedAtMs == null) return true;
+
+  const documentTimestampMs =
+    parseIsoTimestampMs(document.updatedAt)
+    ?? parseIsoTimestampMs(document.parsedAt);
+  if (documentTimestampMs == null) return false;
+
+  if (documentTimestampMs < runStartedAtMs) return false;
+
+  const runFinishedAtMs = parseIsoTimestampMs(params.finishedAt);
+  if (runFinishedAtMs != null && documentTimestampMs > runFinishedAtMs + 60_000) {
+    return false;
+  }
+
+  return true;
+}
+
 function mergeGuideMetadataIntoSummary(
   summary: Record<string, Json>,
   document: DeclarationGuideDocumentListItem,
@@ -1071,6 +1124,11 @@ function mergeGuideMetadataIntoSummary(
 async function hydrateGuideMetadataForItems(
   action: DeclarationActionKind,
   items: DeclarationRunItem[],
+  options: {
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    includeProcessingItems?: boolean;
+  } = {},
 ): Promise<DeclarationRunItem[]> {
   if (action !== "simples_emitir_guia" || items.length === 0) {
     return items;
@@ -1078,6 +1136,9 @@ async function hydrateGuideMetadataForItems(
 
   const lookupRequests = new Map<string, { companyIds: Set<string>; items: DeclarationRunItem[] }>();
   for (const item of items) {
+    const canHydrateItem =
+      item.status === "sucesso" || (options.includeProcessingItems === true && item.status === "processando");
+    if (!canHydrateItem) continue;
     const summary = asObject(item.meta ?? null);
     const needsMetadata =
       extractDueDateFromSummary(action, summary) === "-"
@@ -1138,11 +1199,15 @@ async function hydrateGuideMetadataForItems(
   }
 
   return items.map((item) => {
+    const canHydrateItem =
+      item.status === "sucesso" || (options.includeProcessingItems === true && item.status === "processando");
+    if (!canHydrateItem) return item;
     const summary = asObject(item.meta ?? null);
     const competence = extractReferenceFromSummary(action, summary);
     if (!competence) return item;
     const document = guideLookup.get(buildGuideLookupKey(item.companyId, competence));
     if (!document) return item;
+    if (!isGuideDocumentFreshForRun(document, options)) return item;
     const mergedMeta = mergeGuideMetadataIntoSummary(summary, document);
     const artifact = item.artifact ?? {
       label: document.fileName || "Baixar documento",
@@ -1162,7 +1227,10 @@ async function hydrateGuideMetadataForRun(run: DeclarationRunState): Promise<Dec
   if (run.action !== "simples_emitir_guia" || run.items.length === 0) {
     return run;
   }
-  const items = await hydrateGuideMetadataForItems(run.action, run.items);
+  const items = await hydrateGuideMetadataForItems(run.action, run.items, {
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+  });
   if (items === run.items) return run;
   return { ...run, items };
 }
@@ -1334,22 +1402,13 @@ async function promoteSequentialRuntimeArtifacts(params: {
       .filter((item) => hasArtifact(item))
       .map((item) => [item.companyId, item.artifact ?? null] as const),
   );
-  const unresolvedItems = provisionalItems.filter((item) => !provisionalArtifactMap.has(item.companyId));
-  const storageArtifactMap =
-    unresolvedItems.length > 0
-      ? await resolveArtifactsFromStorage({
-          action: params.action,
-          items: unresolvedItems,
-        }).catch(() => new Map<string, DeclarationRunItem["artifact"]>())
-      : new Map<string, DeclarationRunItem["artifact"]>();
-
-  if (provisionalArtifactMap.size === 0 && storageArtifactMap.size === 0) {
+  if (provisionalArtifactMap.size === 0) {
     return params.items;
   }
 
   return params.items.map((item) => {
     if (!candidateCompanyIds.has(item.companyId) || item.status === "erro") return item;
-    const artifact = item.artifact ?? provisionalArtifactMap.get(item.companyId) ?? storageArtifactMap.get(item.companyId) ?? null;
+    const artifact = item.artifact ?? provisionalArtifactMap.get(item.companyId) ?? null;
     if (!artifact) return item;
     return {
       ...item,
@@ -1373,6 +1432,13 @@ export async function hydrateDeclarationRunArtifacts(run: DeclarationRunState): 
   }));
 
   if (!extractedItems.some((item) => item.status === "sucesso" && !item.artifact)) {
+    return {
+      ...runWithGuideMetadata,
+      items: extractedItems,
+    };
+  }
+
+  if (run.action === "simples_emitir_guia") {
     return {
       ...runWithGuideMetadata,
       items: extractedItems,
@@ -1896,7 +1962,7 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     requestIds: current.requestIds,
   });
 
-  if (nextItems.some((item) => item.status === "sucesso" && !item.artifact)) {
+  if (current.action !== "simples_emitir_guia" && nextItems.some((item) => item.status === "sucesso" && !item.artifact)) {
     const artifactMap = await resolveArtifactsFromStorage({
       action: current.action,
       items: nextItems,
@@ -1909,7 +1975,10 @@ export async function getDeclarationRunState(current: DeclarationRunState): Prom
     }
   }
 
-  nextItems = await hydrateGuideMetadataForItems(current.action, nextItems);
+  nextItems = await hydrateGuideMetadataForItems(current.action, nextItems, {
+    startedAt: current.startedAt,
+    finishedAt: current.finishedAt,
+  });
 
   nextItems = stabilizeRunItems(current.items, nextItems);
 

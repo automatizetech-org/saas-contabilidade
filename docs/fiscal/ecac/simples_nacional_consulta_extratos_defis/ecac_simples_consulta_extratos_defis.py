@@ -15,7 +15,7 @@ import traceback
 import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -3021,6 +3021,231 @@ def cleanup_runtime_artifacts(runtime_env: RuntimeEnvironment) -> None:
             pass
 
 
+def _bridge_coerce_object(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _bridge_compute_period_for_robot(robot_row: dict[str, Any]) -> tuple[str, str]:
+    date_execution_mode = str(robot_row.get("date_execution_mode") or "").strip().lower()
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if date_execution_mode == "today":
+        return today, today
+    if date_execution_mode == "month":
+        month_start = now.replace(day=1).strftime("%Y-%m-%d")
+        next_month = now.replace(year=now.year + 1, month=1, day=1) if now.month == 12 else now.replace(month=now.month + 1, day=1)
+        month_end = (next_month - timedelta(days=1)).strftime("%Y-%m-%d")
+        return month_start, month_end
+    if date_execution_mode == "interval":
+        initial_start = str(robot_row.get("initial_period_start") or "").strip()
+        initial_end = str(robot_row.get("initial_period_end") or "").strip()
+        last_period_end = str(robot_row.get("last_period_end") or "").strip()
+        if last_period_end:
+            return yesterday, yesterday
+        if initial_start and initial_end:
+            return initial_start, initial_end
+    return yesterday, yesterday
+
+
+def _bridge_get_robot_row(client: Any, technical_id: str) -> dict[str, Any]:
+    select_candidates = [
+        "id,technical_id,display_name,segment_path,notes_mode,date_execution_mode,initial_period_start,initial_period_end,last_period_end,execution_defaults",
+        "id,technical_id,display_name,segment_path,notes_mode,date_execution_mode,initial_period_start,initial_period_end,last_period_end",
+        "id,technical_id,display_name,segment_path,notes_mode",
+    ]
+    last_error: Exception | None = None
+    for select_clause in select_candidates:
+        try:
+            response = client.table("robots").select(select_clause).eq("technical_id", technical_id).limit(1).execute()
+            rows = getattr(response, "data", None) or []
+            if not rows:
+                continue
+            row = rows[0] if isinstance(rows[0], dict) else {}
+            row.setdefault("execution_defaults", {})
+            return row
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise RuntimeError(str(last_error))
+    raise RuntimeError(f"Robo '{technical_id}' nao encontrado no Supabase.")
+
+
+def _bridge_build_job_payload(
+    robot_row: dict[str, Any],
+    company_ids: list[str],
+    trigger_kind: str,
+    *,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    notes_mode: str | None = None,
+    extra_payload: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    resolved_period_start, resolved_period_end = _bridge_compute_period_for_robot(robot_row)
+    final_period_start = str(period_start or resolved_period_start or "").strip()
+    final_period_end = str(period_end or resolved_period_end or final_period_start).strip()
+    return {
+        "execution_defaults": _bridge_coerce_object(robot_row.get("execution_defaults")),
+        "company_ids": company_ids,
+        "period_start": final_period_start,
+        "period_end": final_period_end,
+        "date_execution_mode": robot_row.get("date_execution_mode"),
+        "segment_path": robot_row.get("segment_path"),
+        "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+        "ui_origin": "robot_vm",
+        "trigger_kind": trigger_kind,
+        **_bridge_coerce_object(extra_payload),
+    }
+
+
+def bridge_enqueue_execution_request(
+    client: Any,
+    office_id: str,
+    technical_id: str,
+    company_ids: list[str],
+    source: str = "robot_vm_manual",
+    schedule_rule_id: Optional[str] = None,
+    *,
+    notes_mode: Optional[str] = None,
+    job_payload_extra: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    if not office_id:
+        raise RuntimeError("office_id do escritorio nao foi resolvido.")
+    if not company_ids:
+        raise RuntimeError("Nenhuma empresa elegivel foi selecionada para o robo.")
+    robot_row = _bridge_get_robot_row(client, technical_id)
+    period_start, period_end = _bridge_compute_period_for_robot(robot_row)
+    row = {
+        "office_id": office_id,
+        "company_ids": company_ids,
+        "robot_technical_ids": [technical_id],
+        "period_start": period_start,
+        "period_end": period_end,
+        "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+        "execution_mode": "sequential",
+        "job_payload": _bridge_build_job_payload(
+            robot_row,
+            company_ids,
+            "manual" if source == "robot_vm_manual" else "scheduler",
+            period_start=period_start,
+            period_end=period_end,
+            notes_mode=notes_mode,
+            extra_payload=job_payload_extra,
+        ),
+        "source": source,
+        "status": "pending",
+        "created_by": None,
+    }
+    if schedule_rule_id:
+        row["schedule_rule_id"] = schedule_rule_id
+    response = client.table("execution_requests").insert(row).execute()
+    rows = getattr(response, "data", None) or []
+    if not rows:
+        raise RuntimeError("Nao foi possivel enfileirar a execucao do robo.")
+    return rows[0]
+
+
+def bridge_upsert_schedule_rule(
+    client: Any,
+    office_id: str,
+    technical_id: str,
+    company_ids: list[str],
+    run_at_date: str,
+    run_at_time: str,
+    *,
+    notes_mode: Optional[str] = None,
+) -> dict[str, Any]:
+    if not office_id:
+        raise RuntimeError("office_id do escritorio nao foi resolvido.")
+    robot_row = _bridge_get_robot_row(client, technical_id)
+    settings = {
+        "scope": "robot_operation",
+        "robot_technical_id": technical_id,
+        "selection_mode": "manual_companies",
+        "auto_daily": True,
+        "robot_snapshots": {
+            technical_id: {
+                "execution_defaults": _bridge_coerce_object(robot_row.get("execution_defaults")),
+                "date_execution_mode": robot_row.get("date_execution_mode"),
+                "segment_path": robot_row.get("segment_path"),
+                "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+            }
+        },
+    }
+    payload = {
+        "office_id": office_id,
+        "company_ids": company_ids,
+        "robot_technical_ids": [technical_id],
+        "notes_mode": notes_mode if notes_mode is not None else robot_row.get("notes_mode"),
+        "period_start": None,
+        "period_end": None,
+        "run_at_date": run_at_date,
+        "run_at_time": run_at_time,
+        "run_daily": True,
+        "execution_mode": "sequential",
+        "status": "active",
+        "settings": settings,
+        "created_by": None,
+    }
+    existing_res = client.table("schedule_rules").select("id").eq("office_id", office_id).contains("robot_technical_ids", [technical_id]).limit(1).execute()
+    existing_rows = getattr(existing_res, "data", None) or []
+    if existing_rows:
+        rule_id = existing_rows[0]["id"]
+        updated = client.table("schedule_rules").update(payload).eq("id", rule_id).execute()
+        rows = getattr(updated, "data", None) or []
+        return rows[0] if rows else {"id": rule_id, **payload}
+    created = client.table("schedule_rules").insert(payload).execute()
+    rows = getattr(created, "data", None) or []
+    if not rows:
+        raise RuntimeError("Nao foi possivel salvar o agendamento do robo.")
+    return rows[0]
+
+
+def bridge_pause_schedule_rule(client: Any, office_id: str, technical_id: str) -> None:
+    if not office_id:
+        return
+    existing_res = client.table("schedule_rules").select("id").eq("office_id", office_id).contains("robot_technical_ids", [technical_id]).limit(1).execute()
+    rows = getattr(existing_res, "data", None) or []
+    if not rows:
+        return
+    rule_id = rows[0]["id"]
+    client.table("schedule_rules").update({"status": "paused", "last_run_at": None}).eq("id", rule_id).execute()
+    client.table("execution_requests").delete().eq("office_id", office_id).eq("status", "pending").eq("schedule_rule_id", rule_id).execute()
+    client.table("execution_requests").update({
+        "status": "failed",
+        "completed_at": utc_now_iso(),
+        "error_message": "Agendamento desativado manualmente no robo",
+        "result_summary": {
+            "cancelled": True,
+            "cancelled_reason": "Agendamento desativado manualmente no robo",
+        },
+    }).eq("office_id", office_id).eq("status", "running").eq("schedule_rule_id", rule_id).execute()
+
+
+def bridge_compute_countdown_label(target_at: datetime) -> str:
+    delta = int(max(0, (target_at - datetime.now()).total_seconds()))
+    hours = delta // 3600
+    minutes = (delta % 3600) // 60
+    seconds = delta % 60
+    return f"Inicio em {hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def get_stop_signal_path(runtime_env: RuntimeEnvironment) -> Path:
+    return Path(runtime_env.paths.json_dir) / "stop.json"
+
+
+def read_stop_signal(runtime_env: RuntimeEnvironment) -> Optional[dict[str, Any]]:
+    payload = read_json(get_stop_signal_path(runtime_env), default=None)
+    return payload if isinstance(payload, dict) else None
+
+
+def clear_stop_signal(runtime_env: RuntimeEnvironment) -> None:
+    try:
+        get_stop_signal_path(runtime_env).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def ensure_default_certificate(
     runtime_env: RuntimeEnvironment,
     companies: list[CompanyRecord],
@@ -3132,7 +3357,7 @@ def start_heartbeat_loop(
                 progress=dict(state),
             )
             dashboard.update_robot_presence(status="processing", robot_id=robot_id)
-            stop_event.wait(30)
+            stop_event.wait(5)
 
     thread = threading.Thread(target=_loop, name=f"{dashboard.technical_id}-heartbeat", daemon=True)
     thread.start()
@@ -3775,11 +4000,12 @@ def process_company(automation: SimplesEcacAutomation, company: CompanyRecord, c
 
 
 try:
-    from PySide6.QtCore import QThread, QTimer, Signal
+    from PySide6.QtCore import QDateTime, QThread, QTimer, Signal
     from PySide6.QtWidgets import (
         QApplication,
         QAbstractItemView,
         QCheckBox,
+        QDateTimeEdit,
         QFormLayout,
         QGroupBox,
         QHBoxLayout,
@@ -3847,9 +4073,13 @@ class MainWindow(QMainWindow):
         self.worker: Optional[SimplesWorker] = None
         self.companies: list[CompanyRecord] = []
         self.filtered_companies: list[CompanyRecord] = []
+        self.schedule_timer = QTimer(self)
+        self.schedule_timer.timeout.connect(self._on_schedule_tick)
+        self._schedule_pending = False
+        self._scheduled_start_dt: Optional[datetime] = None
         self.robot_dashboard_id: Optional[str] = None
         self.robot_heartbeat_timer = QTimer(self)
-        self.robot_heartbeat_timer.setInterval(30000)
+        self.robot_heartbeat_timer.setInterval(5000)
         self.robot_heartbeat_timer.timeout.connect(self._on_robot_heartbeat)
         self.job_poll_timer = QTimer(self)
         self.job_poll_timer.setInterval(5000)
@@ -3879,9 +4109,22 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Pronto"); self.progress_label = QLabel("0 / 0"); self.office_label = QLabel(self.office_context.office_id or "office_id nao resolvido")
         for label, widget in (("Status", self.status_label), ("Progresso", self.progress_label), ("office_id", self.office_label)):
             right.addWidget(QLabel(label)); right.addWidget(widget)
-        controls = QHBoxLayout(); self.start_button = QPushButton("Iniciar"); self.start_button.clicked.connect(self.start_worker); self.stop_button = QPushButton("Parar"); self.stop_button.clicked.connect(self.stop_worker); self.stop_button.setEnabled(False); controls.addWidget(self.start_button); controls.addWidget(self.stop_button); right.addLayout(controls)
+        schedule_row = QHBoxLayout()
+        self.chk_schedule = QCheckBox("Agendar")
+        self.chk_schedule.toggled.connect(self._on_schedule_toggle)
+        self.schedule_datetime_edit = QDateTimeEdit()
+        self.schedule_datetime_edit.setDisplayFormat("dd/MM/yyyy HH:mm")
+        self.schedule_datetime_edit.setCalendarPopup(True)
+        self.schedule_datetime_edit.setEnabled(False)
+        self.lbl_schedule_countdown = QLabel("")
+        schedule_row.addWidget(self.chk_schedule)
+        schedule_row.addWidget(self.schedule_datetime_edit)
+        schedule_row.addWidget(self.lbl_schedule_countdown, 1)
+        right.addLayout(schedule_row)
+        controls = QHBoxLayout(); self.start_button = QPushButton("Iniciar"); self.start_button.clicked.connect(self.start_execution); self.stop_button = QPushButton("Parar"); self.stop_button.clicked.connect(self.stop_execution); self.stop_button.setEnabled(False); controls.addWidget(self.start_button); controls.addWidget(self.stop_button); right.addLayout(controls)
         top.addWidget(right_box, 1)
         self.log_panel = QTextEdit(); self.log_panel.setReadOnly(True); layout.addWidget(self.log_panel)
+        self._init_schedule_defaults()
 
     def append_log(self, message: str) -> None:
         self.log_panel.append(message)
@@ -3901,7 +4144,6 @@ class MainWindow(QMainWindow):
 
     def reload_companies(self) -> None:
         self.job = self.runtime.json_runtime.load_job()
-        self._last_job_execution_request_id = self._job_execution_request_id(self.job)
         self.office_context = self.dashboard.resolve_office_context(self.job, force_refresh=True)
         try:
             if self.job:
@@ -3927,6 +4169,148 @@ class MainWindow(QMainWindow):
     def _build_manual_job(self) -> JobPayload:
         execution_id = f"manual_{uuid.uuid4().hex}"; company_ids = [c.company_id for c in self.companies if str(c.company_id).strip()]; company_rows = [c.to_dict() for c in self.companies]
         return JobPayload(job_id=execution_id, execution_request_id=execution_id, office_id=self.office_context.office_id, company_ids=company_ids, companies=company_rows, raw={"job_id": execution_id, "execution_request_id": execution_id, "office_id": self.office_context.office_id, "company_ids": company_ids, "companies": company_rows, "source": "manual_ui"})
+
+    def _init_schedule_defaults(self) -> None:
+        self.schedule_datetime_edit.setDateTime(QDateTime.currentDateTime().addSecs(120))
+        self.schedule_datetime_edit.setEnabled(False)
+        self.lbl_schedule_countdown.clear()
+
+    def _on_schedule_toggle(self, checked: bool) -> None:
+        self.schedule_datetime_edit.setEnabled(checked)
+        if not checked:
+            self._pause_vm_schedule()
+            self.schedule_timer.stop()
+            self._schedule_pending = False
+            self._scheduled_start_dt = None
+            self.lbl_schedule_countdown.clear()
+            self._reset_idle_controls()
+            return
+        self._init_schedule_defaults()
+        self.schedule_datetime_edit.setEnabled(True)
+
+    def _parse_schedule_dt(self) -> Optional[datetime]:
+        try:
+            selected = self.schedule_datetime_edit.dateTime()
+            return datetime(
+                selected.date().year(),
+                selected.date().month(),
+                selected.date().day(),
+                selected.time().hour(),
+                selected.time().minute(),
+            )
+        except Exception:
+            return None
+
+    def _selected_company_ids_for_vm(self) -> list[str]:
+        return [
+            company.company_id
+            for company in self.companies
+            if str(company.company_id).strip() and company.active and company.eligible
+        ]
+
+    def _supabase_client(self) -> Any:
+        return self.dashboard._supabase()
+
+    def _enqueue_vm_execution(self) -> bool:
+        if not self.office_context.office_id:
+            QMessageBox.warning(self, "Fila global", "office_id nao resolvido nesta VM.")
+            return False
+        company_ids = self._selected_company_ids_for_vm()
+        if not company_ids:
+            QMessageBox.information(self, "Selecao", "Nenhuma empresa elegivel foi carregada para este robo.")
+            return False
+        try:
+            bridge_enqueue_execution_request(
+                self._supabase_client(),
+                self.office_context.office_id,
+                ROBOT_TECHNICAL_ID,
+                company_ids,
+                source="robot_vm_manual",
+                notes_mode=self.office_context.notes_mode or None,
+            )
+            self.append_log(f"[FILA] Robo enviado para a fila global com {len(company_ids)} empresa(s).")
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, "Fila global", f"Nao foi possivel enfileirar o robo.\n\n{exc}")
+            self.append_log(f"[FILA] Falha ao enfileirar execucao manual: {exc}")
+            return False
+
+    def _save_vm_schedule(self, scheduled_at: datetime) -> bool:
+        if not self.office_context.office_id:
+            QMessageBox.warning(self, "Agendamento", "office_id nao resolvido nesta VM.")
+            return False
+        company_ids = self._selected_company_ids_for_vm()
+        if not company_ids:
+            QMessageBox.information(self, "Agendamento", "Nenhuma empresa elegivel foi carregada para este robo.")
+            return False
+        try:
+            client = self._supabase_client()
+            rule = bridge_upsert_schedule_rule(
+                client,
+                self.office_context.office_id,
+                ROBOT_TECHNICAL_ID,
+                company_ids,
+                scheduled_at.strftime("%Y-%m-%d"),
+                scheduled_at.strftime("%H:%M"),
+                notes_mode=self.office_context.notes_mode or None,
+            )
+            self._schedule_pending = True
+            self._scheduled_start_dt = scheduled_at
+            if scheduled_at <= datetime.now():
+                bridge_enqueue_execution_request(
+                    client,
+                    self.office_context.office_id,
+                    ROBOT_TECHNICAL_ID,
+                    company_ids,
+                    source="scheduler",
+                    schedule_rule_id=(rule or {}).get("id"),
+                    notes_mode=self.office_context.notes_mode or None,
+                )
+                if (rule or {}).get("id"):
+                    now_iso = utc_now_iso()
+                    client.table("schedule_rules").update({
+                        "last_run_at": now_iso,
+                        "updated_at": now_iso,
+                    }).eq("id", rule["id"]).execute()
+                self.schedule_timer.stop()
+                self.lbl_schedule_countdown.setText("Aguardando fila...")
+                self.append_log("[FILA] Horario do agendamento ja alcancado. Execucao enviada para a fila do agendador.")
+            else:
+                self.schedule_timer.start(1000)
+                self._on_schedule_tick()
+            self.start_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+            self.append_log(f"[FILA] Agendamento salvo para {scheduled_at.strftime('%d/%m/%Y %H:%M')}.")
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, "Agendamento", f"Nao foi possivel salvar o agendamento.\n\n{exc}")
+            self.append_log(f"[FILA] Falha ao salvar agendamento: {exc}")
+            return False
+
+    def _pause_vm_schedule(self) -> None:
+        if not self.office_context.office_id:
+            return
+        try:
+            bridge_pause_schedule_rule(self._supabase_client(), self.office_context.office_id, ROBOT_TECHNICAL_ID)
+        except Exception as exc:
+            self.append_log(f"[FILA] Falha ao pausar agendamento remoto: {exc}")
+
+    def _reset_idle_controls(self) -> None:
+        self.start_button.setEnabled(bool(self.companies))
+        self.stop_button.setEnabled(False)
+
+    def start_execution(self) -> None:
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "Execucao", "Ja existe uma execucao em andamento.")
+            return
+        if self.chk_schedule.isChecked():
+            scheduled_at = self._parse_schedule_dt()
+            if not scheduled_at:
+                QMessageBox.information(self, "Agendamento", "Preencha a data e hora do agendamento.")
+                return
+            self._save_vm_schedule(scheduled_at)
+            return
+        self._enqueue_vm_execution()
 
     def start_worker(self, auto_triggered: bool = False) -> None:
         if self.worker is not None and self.worker.isRunning():
@@ -3960,6 +4344,31 @@ class MainWindow(QMainWindow):
             self.worker.request_stop()
             self.status_label.setText("Parando")
 
+    def stop_execution(self) -> None:
+        if self._schedule_pending and (not self.worker or not self.worker.isRunning()):
+            self._pause_vm_schedule()
+            self._schedule_pending = False
+            self._scheduled_start_dt = None
+            self.schedule_timer.stop()
+            self.lbl_schedule_countdown.clear()
+            self._reset_idle_controls()
+            self.append_log("Agendamento cancelado.")
+            return
+        self.stop_worker()
+
+    def _on_schedule_tick(self) -> None:
+        if not self._schedule_pending or not self._scheduled_start_dt:
+            self.schedule_timer.stop()
+            self.lbl_schedule_countdown.clear()
+            return
+        if (self._scheduled_start_dt - datetime.now()).total_seconds() <= 0:
+            self.schedule_timer.stop()
+            self._schedule_pending = False
+            self._scheduled_start_dt = None
+            self.lbl_schedule_countdown.setText("Aguardando fila...")
+            return
+        self.lbl_schedule_countdown.setText(bridge_compute_countdown_label(self._scheduled_start_dt))
+
     def _on_progress(self, payload: object) -> None:
         if isinstance(payload, dict): self.progress_label.setText(f"{payload.get('current', 0)} / {payload.get('total', 0)}")
 
@@ -3968,17 +4377,46 @@ class MainWindow(QMainWindow):
 
     def _on_worker_error(self, message: str) -> None:
         self.append_log(f"Erro: {message}")
-        QMessageBox.critical(self, "Execucao", message)
+        self.status_label.setText("Falha")
         self.dashboard.update_robot_presence(status="active", robot_id=self.robot_dashboard_id or "")
 
     def _on_worker_finished(self) -> None:
-        self.start_button.setEnabled(bool(self.companies))
-        self.stop_button.setEnabled(False)
+        self._reset_idle_controls()
         self.worker = None
         self.dashboard.update_robot_presence(status="active", robot_id=self.robot_dashboard_id or "")
         self.reload_companies()
+        pending_execution_request_id = self._job_execution_request_id(self.job)
+        if pending_execution_request_id and pending_execution_request_id != self._last_job_execution_request_id:
+            self.append_log(
+                f"Novo job pendente detectado apos a conclusao: {pending_execution_request_id}. Iniciando automaticamente."
+            )
+            QTimer.singleShot(250, lambda: self.start_worker(auto_triggered=True))
+
+    def _consume_stop_signal(self) -> bool:
+        payload = read_stop_signal(self.runtime)
+        if not payload:
+            return False
+        clear_stop_signal(self.runtime)
+        reason = str(payload.get("reason") or "Solicitacao de parada recebida do SaaS.").strip()
+        self.append_log(f"Sinal remoto de parada recebido: {reason}")
+        try:
+            self.runtime.json_runtime.job_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        self.job = None
+        self._last_job_execution_request_id = ""
+        if self.worker is not None and self.worker.isRunning():
+            self.stop_worker()
+        else:
+            self.status_label.setText("Pronto")
+            self.runtime.json_runtime.write_heartbeat(status="active", message="stop_signal_consumed")
+            self.dashboard.update_robot_presence(status="active", robot_id=self.robot_dashboard_id or "")
+            self.reload_companies()
+        return True
 
     def _on_job_poll(self) -> None:
+        if self._consume_stop_signal():
+            return
         if self.worker is not None and self.worker.isRunning():
             return
         pending_job = self.runtime.json_runtime.load_job()
@@ -3991,6 +4429,7 @@ class MainWindow(QMainWindow):
             self.start_worker(auto_triggered=True)
 
     def _on_robot_heartbeat(self) -> None:
+        self._consume_stop_signal()
         status = "processing" if self.worker is not None and self.worker.isRunning() else "active"
         self.runtime.json_runtime.write_heartbeat(status=status, message="ui_heartbeat")
         self.dashboard.update_robot_presence(status=status, robot_id=self.robot_dashboard_id or "")
@@ -4001,6 +4440,7 @@ class MainWindow(QMainWindow):
             self.worker.wait(3000)
         self.robot_heartbeat_timer.stop()
         self.job_poll_timer.stop()
+        self.schedule_timer.stop()
         self.dashboard.update_robot_presence(status="inactive", robot_id=self.robot_dashboard_id or "")
         self.runtime.mark_inactive()
         cleanup_runtime_artifacts(self.runtime)

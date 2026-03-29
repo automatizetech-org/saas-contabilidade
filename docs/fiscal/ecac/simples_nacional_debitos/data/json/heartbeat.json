@@ -1,8 +1,8 @@
 {
-  "robot_technical_id": "ecac_simples_debitos",
-  "display_name": "e-CAC - Simples Nacional - Consulta Debitos",
+  "robot_technical_id": "ecac_simples_consulta_extratos_defis",
+  "display_name": "e-CAC - Simples Nacional - Consulta Extratos e DEFIS",
   "status": "inactive",
-  "updated_at": "2026-03-27T04:36:16.013642+00:00",
+  "updated_at": "2026-03-29T01:54:56.178195+00:00",
   "current_job_id": null,
   "current_execution_request_id": null,
   "message": "application_exit",

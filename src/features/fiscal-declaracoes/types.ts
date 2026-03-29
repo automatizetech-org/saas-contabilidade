@@ -27,6 +27,13 @@ export type OverdueGuide = {
   dueDate: string;
   status: "vencido";
   amountCents: number | null;
+  declaredAmountCents?: number | null;
+  principalAmountCents?: number | null;
+  penaltyAmountCents?: number | null;
+  interestAmountCents?: number | null;
+  totalAmountCents?: number | null;
+  installmentLabel?: string | null;
+  suspendedExigibilityLabel?: string | null;
   referenceLabel: string | null;
 };
 
