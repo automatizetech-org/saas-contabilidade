@@ -116,6 +116,74 @@ function sanitizeCompanyPayload(params: {
   }
 }
 
+function asObject(value: Json | null | undefined): Record<string, Json> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  return value as Record<string, Json>
+}
+
+function asArray(value: Json | null | undefined): Json[] {
+  return Array.isArray(value) ? value : []
+}
+
+function companyHasCertificateDefaults(company: Pick<Company, "auth_mode" | "cert_blob_b64" | "cert_password">) {
+  return (
+    String(company.auth_mode ?? "").trim().toLowerCase() === "certificate" ||
+    (String(company.cert_blob_b64 ?? "").trim().length > 0 && String(company.cert_password ?? "").trim().length > 0)
+  )
+}
+
+function robotPrefersCertificateDefaults(
+  robot: Pick<Tables<"robots">, "capabilities" | "company_form_schema">,
+) {
+  const capabilities = asObject(robot.capabilities)
+  const authBehavior = String(capabilities.auth_behavior ?? "").trim().toLowerCase()
+  const explicitDefault = String(
+    capabilities.default_auth_mode ?? capabilities.preferred_auth_mode ?? "",
+  )
+    .trim()
+    .toLowerCase()
+  const hasAuthModeField = asArray(robot.company_form_schema).some((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false
+    const row = item as Record<string, Json>
+    return (
+      String(row.type ?? "").trim().toLowerCase() === "auth_mode" ||
+      String(row.key ?? "").trim().toLowerCase() === "auth_mode"
+    )
+  })
+  return authBehavior === "choice" || explicitDefault === "certificate" || hasAuthModeField
+}
+
+async function ensureDefaultCompanyRobotConfigs(company: Company) {
+  const { data, error } = await supabase
+    .from("robots")
+    .select("technical_id, capabilities, company_form_schema")
+
+  if (error) return
+
+  const rows = ((data ?? []) as Array<Pick<Tables<"robots">, "technical_id" | "capabilities" | "company_form_schema">>)
+    .map((robot) => {
+      const authMode: "password" | "certificate" =
+        robotPrefersCertificateDefaults(robot) && companyHasCertificateDefaults(company)
+          ? "certificate"
+          : "password"
+
+      return {
+        office_id: company.office_id,
+        company_id: company.id,
+        robot_technical_id: robot.technical_id,
+        enabled: true,
+        auth_mode: authMode,
+        settings: { auth_mode: authMode } satisfies Record<string, Json>,
+      }
+    })
+
+  if (rows.length === 0) return
+
+  await supabase
+    .from("company_robot_config")
+    .upsert(rows, { onConflict: "company_id,robot_technical_id" })
+}
+
 export async function getCompanyRobotConfig(
   companyId: string,
   robotTechnicalId: string = ROBOT_NFS_TECHNICAL_ID
@@ -245,7 +313,9 @@ export async function createCompany(params: {
     .select()
     .single()
   if (error) throw error
-  return data as Company
+  const company = data as Company
+  await ensureDefaultCompanyRobotConfigs(company)
+  return company
 }
 
 export async function updateCompany(

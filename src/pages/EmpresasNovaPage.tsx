@@ -121,9 +121,15 @@ export default function EmpresasNovaPage() {
     setPendingAutoCityName("")
   }, [pendingAutoCityName, cities])
 
-  const [nfsRobotEnabled, setNfsRobotEnabled] = useState(false)
+  const [nfsRobotEnabled, setNfsRobotEnabled] = useState(true)
   const [nfsRobotAuthMode, setNfsRobotAuthMode] = useState<"password" | "certificate">("password")
   const [nfsRobotPassword, setNfsRobotPassword] = useState("")
+  const [nfsAuthModeTouched, setNfsAuthModeTouched] = useState(false)
+
+  useEffect(() => {
+    if (nfsAuthModeTouched) return
+    setNfsRobotAuthMode(useCertificate ? "certificate" : "password")
+  }, [useCertificate, nfsAuthModeTouched])
 
   const fetchByCnpj = async () => {
     const digits = onlyDigits(document)
@@ -419,7 +425,10 @@ export default function EmpresasNovaPage() {
                       type="radio"
                       name="nfs-auth"
                       checked={nfsRobotAuthMode === "password"}
-                      onChange={() => setNfsRobotAuthMode("password")}
+                      onChange={() => {
+                        setNfsAuthModeTouched(true)
+                        setNfsRobotAuthMode("password")
+                      }}
                       disabled={loading}
                       className="rounded-full border-input"
                     />
@@ -430,7 +439,10 @@ export default function EmpresasNovaPage() {
                       type="radio"
                       name="nfs-auth"
                       checked={nfsRobotAuthMode === "certificate"}
-                      onChange={() => setNfsRobotAuthMode("certificate")}
+                      onChange={() => {
+                        setNfsAuthModeTouched(true)
+                        setNfsRobotAuthMode("certificate")
+                      }}
                       disabled={loading}
                       className="rounded-full border-input"
                     />
